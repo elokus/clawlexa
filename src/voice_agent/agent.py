@@ -228,6 +228,11 @@ class VoiceAgent:
     async def _audio_capture_loop(self) -> None:
         """Background task for capturing and processing audio."""
         while self._running:
+            # When tool is executing, it reads audio directly - we skip
+            if self.state == AgentState.TOOL_EXECUTING:
+                await asyncio.sleep(0.05)
+                continue
+
             audio_chunk = self.audio_capture.read(timeout=0.1)
             if not audio_chunk:
                 await asyncio.sleep(0.01)
@@ -337,6 +342,9 @@ class VoiceAgent:
         self.audio_capture.start()
         self.audio_player.start()
         self.led.heartbeat()  # Heartbeat = listening for wake word
+
+        # Pass shared audio capture to tools
+        self.tool_registry.set_audio_capture(self.audio_capture)
 
         try:
             # Run all tasks concurrently

@@ -2,7 +2,10 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from ..audio import AudioCapture
 
 
 @dataclass
@@ -47,6 +50,10 @@ class BaseTool(ABC):
 
     on_audio_output: Callable[[bytes], None] | None = None
     """Callback for streaming audio output."""
+
+    # Shared audio capture from agent (set by registry)
+    audio_capture: "AudioCapture | None" = None
+    """Shared audio capture instance from the agent."""
 
     @abstractmethod
     async def execute(self, arguments: dict[str, Any]) -> ToolResult:
@@ -106,3 +113,8 @@ class ToolRegistry:
         for tool in self._tools.values():
             tool.on_status = on_status
             tool.on_audio_output = on_audio_output
+
+    def set_audio_capture(self, audio_capture: "AudioCapture") -> None:
+        """Set the shared audio capture on all registered tools."""
+        for tool in self._tools.values():
+            tool.audio_capture = audio_capture

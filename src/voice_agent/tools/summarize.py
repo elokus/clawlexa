@@ -10,7 +10,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from .base import BaseTool, ToolResult
-from ..audio import AudioCapture, DEVICE_SAMPLE_RATE, CHANNELS
+from ..audio import DEVICE_SAMPLE_RATE, CHANNELS
 
 
 # Stop words that end the braindump capture (German + English)
@@ -159,52 +159,50 @@ class SummarizeRequirementsTool(BaseTool):
     async def _capture_audio(self) -> bytes:
         """Capture audio until stop word or silence.
 
+        Uses the shared audio capture from the agent (already running).
+
         Returns:
             Raw PCM16 audio bytes
         """
         from ..audio import get_audio_level
 
-        audio_capture = AudioCapture()
-        audio_capture.start()
+        if self.audio_capture is None:
+            raise RuntimeError("No audio capture available. Tool must be registered with agent.")
 
         audio_chunks: list[bytes] = []
         silence_start: float | None = None
         recording_start = asyncio.get_event_loop().time()
 
-        try:
-            while True:
-                current_time = asyncio.get_event_loop().time()
-                elapsed = current_time - recording_start
+        while True:
+            current_time = asyncio.get_event_loop().time()
+            elapsed = current_time - recording_start
 
-                # Check max recording time
-                if elapsed > MAX_RECORDING_SECONDS:
-                    self._status("Maximum recording time reached.")
+            # Check max recording time
+            if elapsed > MAX_RECORDING_SECONDS:
+                self._status("Maximum recording time reached.")
+                break
+
+            # Read audio chunk from shared capture
+            chunk = self.audio_capture.read(timeout=0.1)
+            if not chunk:
+                await asyncio.sleep(0.01)
+                continue
+
+            audio_chunks.append(chunk)
+
+            # Check audio level for silence detection
+            level = get_audio_level(chunk)
+
+            if level < 0.01:  # Silence threshold
+                if silence_start is None:
+                    silence_start = current_time
+                elif current_time - silence_start > SILENCE_THRESHOLD_SECONDS:
+                    self._status("Silence detected, ending capture.")
                     break
+            else:
+                silence_start = None
 
-                # Read audio chunk
-                chunk = audio_capture.read(timeout=0.1)
-                if not chunk:
-                    await asyncio.sleep(0.01)
-                    continue
-
-                audio_chunks.append(chunk)
-
-                # Check audio level for silence detection
-                level = get_audio_level(chunk)
-
-                if level < 0.01:  # Silence threshold
-                    if silence_start is None:
-                        silence_start = current_time
-                    elif current_time - silence_start > SILENCE_THRESHOLD_SECONDS:
-                        self._status("Silence detected, ending capture.")
-                        break
-                else:
-                    silence_start = None
-
-                await asyncio.sleep(0.001)
-
-        finally:
-            audio_capture.close()
+            await asyncio.sleep(0.001)
 
         return b"".join(audio_chunks)
 
