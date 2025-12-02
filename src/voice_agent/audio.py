@@ -228,6 +228,21 @@ class AudioPlayer:
             except queue.Empty:
                 break
 
+    def is_playing(self) -> bool:
+        """Check if there's audio in the buffer waiting to be played."""
+        return not self._buffer.empty()
+
+    def wait_until_done(self, timeout: float = 30.0) -> None:
+        """Block until playback buffer is empty.
+
+        Args:
+            timeout: Maximum time to wait in seconds
+        """
+        import time
+        start = time.time()
+        while not self._buffer.empty() and (time.time() - start) < timeout:
+            time.sleep(0.1)
+
     def stop(self) -> None:
         """Stop playback."""
         self._running = False
