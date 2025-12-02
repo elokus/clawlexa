@@ -77,6 +77,7 @@ voice-agent/
         ├── audio.py    # AudioCapture and AudioPlayer classes
         ├── wakeword.py # Wake word detection using openwakeword
         ├── realtime.py # OpenAI Realtime WebSocket client with function calling
+        ├── tts.py      # OpenAI TTS client for tool output (cost-efficient)
         ├── led.py      # Status LED control
         └── tools/      # Tool system for agent capabilities
             ├── __init__.py
@@ -123,23 +124,66 @@ voice-agent/
 
 ## Tool System
 
-Tools extend agent capabilities using a STT → LLM → TTS pattern:
+Tools extend agent capabilities using a cost-efficient handoff pattern.
+
+### Cost-Efficient Tool Handoff
+
+When a tool is called, the agent disconnects from the expensive Realtime API to save costs:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  TOOL HANDOFF FLOW                                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. User request processed by Realtime API                      │
+│     └─> Model decides to call a tool                            │
+│                                                                 │
+│  2. 🔌 DISCONNECT Realtime (stop paying!)                       │
+│                                                                 │
+│  3. Tool executes independently:                                │
+│     └─> Whisper STT for audio input (~$0.006/min)              │
+│     └─> GPT-4o-mini for processing (~$0.15/1M tokens)          │
+│                                                                 │
+│  4. 🔊 TTS API speaks result (~$0.015/1K chars)                │
+│                                                                 │
+│  5. 🔌 RECONNECT Realtime for continued conversation            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Cost Comparison
+
+| Component | Realtime API | Tool Handoff |
+|-----------|--------------|--------------|
+| Audio Input | $0.06/min | $0.006/min (Whisper) |
+| Processing | included | $0.15/1M tokens (GPT-4o-mini) |
+| Audio Output | $0.24/min | $0.015/1K chars (TTS-1) |
+| **1-min tool execution** | **~$0.30** | **~$0.02-0.05** |
 
 ### SummarizeRequirementsTool
+
 Captures and summarizes braindumps/requirements:
+
 1. User triggers via voice ("Ich möchte Anforderungen sammeln")
 2. Realtime API calls the tool via function calling
-3. Tool captures audio until stop word ("fertig", "done") or 3s silence
-4. Audio transcribed via Whisper
-5. Transcript summarized via GPT-4o-mini
-6. Summary returned to Realtime API for TTS output
+3. **Realtime disconnects** (cost saving starts)
+4. Tool captures audio using shared AudioCapture
+5. Audio transcribed via Whisper API
+6. Transcript summarized via GPT-4o-mini
+7. Summary spoken via TTS API (tts-1 model)
+8. **Realtime reconnects** for continued conversation
+
+Stop words: "fertig", "done", "ende", or 3 seconds of silence.
 
 ### Adding New Tools
+
 1. Create a new file in `src/voice_agent/tools/`
 2. Extend `BaseTool` class
 3. Implement `execute(arguments)` method
-4. Register in `VoiceAgent._register_tools()`
-5. Update instructions to inform the model about the tool
+4. Use `self.audio_capture` for audio input (shared with agent)
+5. Use `self._status(msg)` for user feedback
+6. Register in `VoiceAgent._register_tools()`
+7. Update instructions to inform the model about the tool
 
 ## Development Commands
 
