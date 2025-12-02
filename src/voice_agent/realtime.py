@@ -19,8 +19,8 @@ def _log(msg: str) -> None:
 
 # Available realtime models - mini is cheaper for routing
 REALTIME_MODELS = {
-    "default": "gpt-4o-realtime-preview-2024-12-17",
-    "mini": "gpt-4o-mini-realtime-preview-2024-12-17",
+    "default": "gpt-realtime",
+    "mini": "gpt-realtime-mini",
 }
 
 REALTIME_URL_BASE = "wss://api.openai.com/v1/realtime?model="

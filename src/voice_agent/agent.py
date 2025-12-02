@@ -16,6 +16,7 @@ from .audio import AudioCapture, AudioPlayer, DEVICE_SAMPLE_RATE, API_SAMPLE_RAT
 from .led import StatusLED
 from .wakeword import WakeWordDetector, WAKEWORD_SAMPLE_RATE
 from .realtime import RealtimeClient, FunctionCall
+from .tts import TTSClient
 from .tools import ToolRegistry, SummarizeRequirementsTool
 
 
@@ -94,6 +95,12 @@ class VoiceAgent:
             model=model,
             tools=self.tool_registry.get_function_definitions(),
         )
+        self.tts_client = TTSClient(voice=voice)  # For tool output (cheaper than realtime)
+
+        # Store config for reconnection after tool execution
+        self._instructions = instructions
+        self._voice = voice
+        self._model = model
 
         # Wire up callbacks
         self.realtime_client.on_audio_delta = self._on_audio_delta
@@ -146,54 +153,85 @@ class VoiceAgent:
         self._pending_function_call = func_call
 
     async def _execute_tool(self, func_call: FunctionCall) -> None:
-        """Execute a tool and send the result back to the model."""
+        """Execute a tool with cost-efficient handoff.
+
+        Flow:
+        1. Disconnect realtime session (stop paying for it)
+        2. Execute tool (Whisper STT + GPT-4 - much cheaper)
+        3. Use TTS API to speak the result (cheaper than realtime)
+        4. Reconnect realtime for continued conversation
+        """
         tool = self.tool_registry.get(func_call.name)
         if not tool:
             log(f"\n❌ Unknown tool: {func_call.name}")
-            # Send error back to model
-            await self.realtime_client.send_function_result(
-                func_call.call_id,
-                json.dumps({"error": f"Unknown tool: {func_call.name}"}),
-            )
             return
 
         # Mark state as tool executing
-        previous_state = self.state
         self.state = AgentState.TOOL_EXECUTING
         self.led.start_blink(0.05, 0.05)  # Very fast blink = tool running
 
         try:
+            # === DISCONNECT REALTIME (stop paying) ===
+            log(f"\n🔌 Disconnecting realtime for tool execution...")
+            await self.realtime_client.disconnect()
+
+            # === EXECUTE TOOL (Whisper + GPT-4) ===
             log(f"\n🔧 Executing tool: {func_call.name}")
             result = await tool.execute(func_call.arguments)
 
+            # === SPEAK RESULT WITH TTS (cheaper than realtime) ===
             if result.success:
                 log(f"\n✅ Tool completed: {func_call.name}")
-                # Send the output back to the model for TTS
-                output_json = json.dumps({
-                    "success": True,
-                    "output": result.output,
-                    "data": result.data,
-                })
+                log(f"\n🔊 Speaking result via TTS...")
+                await self._speak_with_tts(result.output)
             else:
                 log(f"\n❌ Tool failed: {func_call.name}")
-                output_json = json.dumps({
-                    "success": False,
-                    "error": result.output,
-                })
-
-            await self.realtime_client.send_function_result(func_call.call_id, output_json)
+                await self._speak_with_tts(f"Tool error: {result.output}")
 
         except Exception as e:
             log(f"\n❌ Tool error: {e}")
-            await self.realtime_client.send_function_result(
-                func_call.call_id,
-                json.dumps({"error": str(e)}),
-            )
+            try:
+                await self._speak_with_tts(f"An error occurred: {str(e)}")
+            except Exception:
+                pass  # Don't fail if TTS also fails
 
         finally:
-            self.state = AgentState.CONVERSATION
-            self.led.start_blink(0.1, 0.1)  # Back to normal blink
+            # === RECONNECT REALTIME ===
+            log(f"\n🔌 Reconnecting realtime...")
+            try:
+                await self.realtime_client.connect()
+                self.state = AgentState.CONVERSATION
+                self.led.start_blink(0.1, 0.1)  # Back to normal blink
+                log("💬 Back to conversation mode")
+            except Exception as e:
+                log(f"\n❌ Failed to reconnect: {e}")
+                self.state = AgentState.LISTENING_FOR_WAKEWORD
+                self.led.heartbeat()
+
             self._last_activity_time = asyncio.get_event_loop().time()
+
+    async def _speak_with_tts(self, text: str) -> None:
+        """Speak text using OpenAI TTS API (cheaper than realtime).
+
+        Args:
+            text: Text to speak
+        """
+        self.state = AgentState.SPEAKING
+
+        try:
+            # Stream TTS audio to player
+            # TTS outputs 24kHz PCM, AudioPlayer.play() handles resampling to 16kHz
+            async for audio_chunk in self.tts_client.synthesize_stream(text):
+                self.audio_player.play(audio_chunk)
+
+            # Wait for playback buffer to drain
+            # Estimate: ~150 words/min, ~5 chars/word
+            estimated_duration = len(text) / 5 / 150 * 60
+            await asyncio.sleep(max(estimated_duration + 0.5, 1.5))
+
+        except Exception as e:
+            log(f"\n❌ TTS error: {e}")
+            raise
 
     def _check_stop_phrase(self, transcript: str) -> bool:
         """Check if transcript contains a stop phrase."""
