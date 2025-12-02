@@ -162,6 +162,32 @@ class RealtimeClient:
         """Request a response from the model (used when VAD is disabled)."""
         await self._send({"type": "response.create"})
 
+    async def send_user_message(self, text: str) -> None:
+        """Send a text message as the user and trigger a response.
+
+        This is useful for triggering the model to speak first (e.g., greeting).
+
+        Args:
+            text: The text message to send as user input
+        """
+        # Add a user message to the conversation
+        event = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": text,
+                    }
+                ],
+            },
+        }
+        await self._send(event)
+        # Trigger the model to respond
+        await self.create_response()
+
     async def cancel_response(self) -> None:
         """Cancel an in-progress response."""
         if self._response_in_progress:

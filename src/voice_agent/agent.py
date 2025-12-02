@@ -317,10 +317,12 @@ class VoiceAgent:
                         self.state = AgentState.CONVERSATION
                         self._last_activity_time = asyncio.get_event_loop().time()
                         self.led.start_blink(0.1, 0.1)  # Fast blink = conversation active
-                        log("💬 Listening... (speak your request)")
+                        log("💬 Connected! Triggering greeting...")
 
-                        # Speak greeting via TTS (cheaper than realtime response)
-                        await self._speak_with_tts("Hi, wie kann ich dir helfen?")
+                        # Trigger the model to greet the user
+                        await self.realtime_client.send_user_message(
+                            "[Conversation started - user just said the wake word 'Hey Jarvis']"
+                        )
                     except Exception as e:
                         log(f"❌ Connection failed: {e}")
                         self.state = AgentState.LISTENING_FOR_WAKEWORD
@@ -443,8 +445,13 @@ async def main():
         wake_word_threshold=0.5,
         instructions=(
             "Du bist Jarvis, ein hilfreicher Sprachassistent auf einem Raspberry Pi. "
-            "Antworte auf Deutsch. Sei präzise, freundlich und hilfreich. "
+            "Antworte auf Deutsch. Sei präzise, freundlich und hilfreich. Rede schnell."
             "Halte Antworten kurz, außer es wird nach Details gefragt.\n\n"
+            "# Konversationsflow\n"
+            "Begrüße bei Beginn einer Konversation den Benutzer und frage nach seinen Anforderungen.\n"
+            "Beispiel: 'Hallo, wie kann ich dir helfen?'\n\n"
+            "# Tools\n"
+            "Bevor du ein Tool nutzt, sage kurz 'Ich werde dich an das Tool XY weiterleiten''"
             "Du hast Zugang zu Tools:\n"
             "- summarize_requirements: Nutze dieses Tool wenn der Benutzer Anforderungen, "
             "Ideen oder Gedanken sammeln und zusammenfassen möchte. Der Benutzer kann "
