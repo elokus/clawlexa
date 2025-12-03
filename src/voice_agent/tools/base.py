@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from ..audio import AudioCapture
+    from ..audio import AudioCapture, AudioPlayer
 
 
 @dataclass
@@ -54,6 +54,10 @@ class BaseTool(ABC):
     # Shared audio capture from agent (set by registry)
     audio_capture: "AudioCapture | None" = None
     """Shared audio capture instance from the agent."""
+
+    # Shared audio player from agent (set by registry)
+    audio_player: "AudioPlayer | None" = None
+    """Shared audio player instance from the agent."""
 
     @abstractmethod
     async def execute(self, arguments: dict[str, Any]) -> ToolResult:
@@ -118,3 +122,8 @@ class ToolRegistry:
         """Set the shared audio capture on all registered tools."""
         for tool in self._tools.values():
             tool.audio_capture = audio_capture
+
+    def set_audio_player(self, audio_player: "AudioPlayer") -> None:
+        """Set the shared audio player on all registered tools."""
+        for tool in self._tools.values():
+            tool.audio_player = audio_player

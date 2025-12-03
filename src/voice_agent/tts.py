@@ -17,8 +17,9 @@ class TTSClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "tts-1",  # tts-1 is fast and cheap, tts-1-hd for quality
-        voice: str = "alloy",
+        model: str = "gpt-4o-mini-tts",  # tts-1 is fast and cheap, tts-1-hd for quality
+        voice: str = "echo",
+        instructions: str = "Speak in a cheerful and positive tone.",
     ):
         """Initialize TTS client.
 
@@ -26,10 +27,12 @@ class TTSClient:
             api_key: OpenAI API key (uses env var if not provided)
             model: TTS model (tts-1 or tts-1-hd)
             voice: Voice to use (alloy, echo, fable, onyx, nova, shimmer)
+            instructions: Global instructions for speech style/tone
         """
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
         self.model = model
         self.voice = voice
+        self.instructions = instructions
         self._client: AsyncOpenAI | None = None
 
     @property
@@ -52,6 +55,7 @@ class TTSClient:
             model=self.model,
             voice=self.voice,
             input=text,
+            instructions=self.instructions,
             response_format="pcm",  # Raw PCM16 at 24kHz
         )
 
@@ -71,6 +75,7 @@ class TTSClient:
             model=self.model,
             voice=self.voice,
             input=text,
+            instructions=self.instructions,
             response_format="pcm",
         ) as response:
             async for chunk in response.iter_bytes(chunk_size=4096):

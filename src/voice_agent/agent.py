@@ -38,6 +38,7 @@ STOP_PHRASES = [
     "danke jarvis",
     "das wäre alles",
     "das war's",
+    "das war alles",
     "ende",
 ]
 
@@ -156,10 +157,9 @@ class VoiceAgent:
         """Execute a tool with cost-efficient handoff.
 
         Flow:
-        1. Announce tool start via TTS (user feedback)
-        2. Execute tool (Whisper STT + GPT-4 - much cheaper than realtime)
-        3. Speak result via TTS
-        4. Send summary back to realtime for conversation continuity
+        1. Execute tool (plays beep signal, then Whisper STT + GPT-4)
+        2. Speak result via TTS
+        3. Send summary back to realtime for conversation continuity
         """
         tool = self.tool_registry.get(func_call.name)
         if not tool:
@@ -175,17 +175,19 @@ class VoiceAgent:
         self.state = AgentState.TOOL_EXECUTING
         self.led.start_blink(0.05, 0.05)  # Very fast blink = tool running
 
+        # Wait for any model speech to finish before starting tool
+        # The model might be saying "I'll redirect you to the tool..."
+        if self.audio_player.is_playing():
+            log("\n⏳ Waiting for assistant speech to finish...")
+            await asyncio.to_thread(self.audio_player.wait_until_done, 10.0)
+            await asyncio.sleep(0.3)  # Small buffer for audio hardware
+
         result_summary = "Tool execution failed."
         tool_success = False
 
         try:
-            # === ANNOUNCE TOOL START (user feedback) ===
-            log(f"\n🔊 Announcing tool start...")
-            await self._speak_with_tts(
-                "Teile mir deine Gedanken mit und sage fertig oder ende wenn du fertig bist."
-            )
-
             # === EXECUTE TOOL (Whisper + GPT-4) ===
+            # Tool plays its own start signal (beep tone)
             log(f"\n🔧 Executing tool: {func_call.name}")
             result = await tool.execute(func_call.arguments)
             tool_success = result.success
@@ -413,8 +415,9 @@ class VoiceAgent:
         self.audio_player.start()
         self.led.heartbeat()  # Heartbeat = listening for wake word
 
-        # Pass shared audio capture to tools
+        # Pass shared audio capture and player to tools
         self.tool_registry.set_audio_capture(self.audio_capture)
+        self.tool_registry.set_audio_player(self.audio_player)
 
         try:
             # Run all tasks concurrently
@@ -451,7 +454,7 @@ async def main():
             "Begrüße bei Beginn einer Konversation den Benutzer und frage nach seinen Anforderungen.\n"
             "Beispiel: 'Hallo, wie kann ich dir helfen?'\n\n"
             "# Tools\n"
-            "Bevor du ein Tool nutzt, sage kurz 'Ich werde dich an das Tool XY weiterleiten''"
+            "Bevor du ein Tool nutzt, sage kurz 'Ich werde dich an das Tool XY weiterleiten'."
             "Du hast Zugang zu Tools:\n"
             "- summarize_requirements: Nutze dieses Tool wenn der Benutzer Anforderungen, "
             "Ideen oder Gedanken sammeln und zusammenfassen möchte. Der Benutzer kann "

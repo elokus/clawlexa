@@ -272,3 +272,72 @@ def get_audio_level(audio_data: bytes) -> float:
     rms = np.sqrt(np.mean(samples.astype(np.float32) ** 2))
     # Normalize to 0-1 range
     return min(rms / 32768.0, 1.0)
+
+
+def generate_tone(
+    frequency: float = 880.0,
+    duration_ms: int = 150,
+    sample_rate: int = DEVICE_SAMPLE_RATE,
+    volume: float = 0.3,
+) -> bytes:
+    """Generate a simple sine wave tone as PCM16 audio.
+
+    Args:
+        frequency: Tone frequency in Hz (default 880 = A5)
+        duration_ms: Duration in milliseconds
+        sample_rate: Sample rate for output
+        volume: Volume level 0.0-1.0
+
+    Returns:
+        PCM16 audio bytes
+    """
+    num_samples = int(sample_rate * duration_ms / 1000)
+    t = np.linspace(0, duration_ms / 1000, num_samples, dtype=np.float32)
+
+    # Generate sine wave with fade in/out to avoid clicks
+    wave = np.sin(2 * np.pi * frequency * t)
+
+    # Apply fade in/out (10ms each)
+    fade_samples = int(sample_rate * 0.01)
+    if fade_samples > 0 and len(wave) > 2 * fade_samples:
+        fade_in = np.linspace(0, 1, fade_samples)
+        fade_out = np.linspace(1, 0, fade_samples)
+        wave[:fade_samples] *= fade_in
+        wave[-fade_samples:] *= fade_out
+
+    # Scale to int16 range with volume
+    wave = (wave * volume * 32767).astype(np.int16)
+    return wave.tobytes()
+
+
+def generate_beep_sequence(
+    frequencies: list[float] | None = None,
+    duration_ms: int = 100,
+    gap_ms: int = 50,
+    sample_rate: int = DEVICE_SAMPLE_RATE,
+    volume: float = 0.3,
+) -> bytes:
+    """Generate a sequence of beep tones.
+
+    Args:
+        frequencies: List of frequencies (default: ascending two-tone)
+        duration_ms: Duration of each tone
+        gap_ms: Gap between tones
+        sample_rate: Sample rate for output
+        volume: Volume level 0.0-1.0
+
+    Returns:
+        PCM16 audio bytes
+    """
+    if frequencies is None:
+        frequencies = [660.0, 880.0]  # E5 -> A5 (pleasant ascending)
+
+    audio_parts = []
+    silence = np.zeros(int(sample_rate * gap_ms / 1000), dtype=np.int16).tobytes()
+
+    for i, freq in enumerate(frequencies):
+        audio_parts.append(generate_tone(freq, duration_ms, sample_rate, volume))
+        if i < len(frequencies) - 1:
+            audio_parts.append(silence)
+
+    return b"".join(audio_parts)

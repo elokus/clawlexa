@@ -108,18 +108,20 @@ class RealtimeClient:
             "type": "session.update",
             "session": {
                 "modalities": ["audio", "text"],
-                "instructions": self.instructions,
                 "voice": self.voice,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
-                    "model": "whisper-1",
+                    "model": "gpt-4o-transcribe",
+                    "language": "de",
                 },
                 "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 500,
+                    "type": "semantic_vad",
+                },
+                # Use remote prompt from OpenAI
+                "prompt": {
+                    "id": "pmpt_693042aafdcc8194bfd305307bcda48f0aace211731a2053",
+                    "version": "2",
                 },
             },
         }
@@ -231,6 +233,30 @@ class RealtimeClient:
         await self._send(event)
         # Trigger a response after providing function output
         await self._send({"type": "response.create"})
+
+    async def add_context(self, context: str, role: str = "assistant") -> None:
+        """Add context to the conversation without triggering a response.
+
+        Useful for restoring conversation state after reconnection.
+
+        Args:
+            context: Text to add as context
+            role: Role for the message ("user" or "assistant")
+        """
+        event = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": role,
+                "content": [
+                    {
+                        "type": "input_text" if role == "user" else "text",
+                        "text": context,
+                    }
+                ],
+            },
+        }
+        await self._send(event)
 
     async def listen(self) -> AsyncIterator[dict]:
         """

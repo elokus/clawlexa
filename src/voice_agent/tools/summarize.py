@@ -10,7 +10,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from .base import BaseTool, ToolResult
-from ..audio import DEVICE_SAMPLE_RATE, CHANNELS
+from ..audio import DEVICE_SAMPLE_RATE, CHANNELS, generate_beep_sequence
 
 
 # Stop words that end the braindump capture (German + English)
@@ -89,6 +89,20 @@ class SummarizeRequirementsTool(BaseTool):
             self._client = AsyncOpenAI(api_key=self.api_key)
         return self._client
 
+    def _play_start_tone(self) -> None:
+        """Play a short beep sequence to signal recording start."""
+        if self.audio_player is None:
+            return
+
+        # Ascending two-tone beep (E5 -> A5)
+        beep = generate_beep_sequence(
+            frequencies=[660.0, 880.0],
+            duration_ms=80,
+            gap_ms=40,
+            volume=0.25,
+        )
+        self.audio_player._buffer.put(beep)
+
     async def execute(self, arguments: dict[str, Any]) -> ToolResult:
         """Execute the summarize requirements tool.
 
@@ -101,7 +115,10 @@ class SummarizeRequirementsTool(BaseTool):
         context = arguments.get("context", "general requirements")
         language = arguments.get("language", "auto")
 
-        self._status("Starting braindump capture. Speak freely, say 'fertig' or 'done' when finished...")
+        self._status("Starting braindump capture...")
+
+        # Play a signal tone to indicate recording is starting
+        self._play_start_tone()
 
         # Capture audio
         try:
