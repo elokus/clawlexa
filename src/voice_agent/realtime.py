@@ -17,12 +17,6 @@ def _log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-# Available realtime models - mini is cheaper for routing
-REALTIME_MODELS = {
-    "default": "gpt-realtime",
-    "mini": "gpt-realtime-mini",
-}
-
 REALTIME_URL_BASE = "wss://api.openai.com/v1/realtime?model="
 
 
@@ -46,18 +40,22 @@ class RealtimeClient:
         api_key: str | None = None,
         instructions: str = "You are a helpful voice assistant. Be concise.",
         voice: str = "alloy",
-        model: str = "mini",
+        model: str = "gpt-realtime-mini-2025-10-06",
         tools: list[dict[str, Any]] | None = None,
+        prompt_id: str | None = None,
+        prompt_version: str | None = None,
     ):
         """
         Initialize the Realtime client.
 
         Args:
             api_key: OpenAI API key. If None, reads from OPENAI_API_KEY env var.
-            instructions: System instructions for the assistant.
+            instructions: System instructions for the assistant (used if no prompt_id).
             voice: Voice to use for responses (alloy, ash, ballad, coral, echo, sage, shimmer, verse).
-            model: Model to use ("mini" for routing, "default" for full capability).
+            model: Realtime model name (e.g., gpt-4o-mini-realtime-preview-2024-12-17).
             tools: List of tool definitions for function calling.
+            prompt_id: OpenAI remote prompt ID (overrides instructions if set).
+            prompt_version: Version of the remote prompt to use.
         """
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self.api_key:
@@ -65,8 +63,10 @@ class RealtimeClient:
 
         self.instructions = instructions
         self.voice = voice
-        self.model = REALTIME_MODELS.get(model, model)
+        self.model = model
         self.tools = tools or []
+        self.prompt_id = prompt_id
+        self.prompt_version = prompt_version
         self.ws: ClientConnection | None = None
         self._response_in_progress = False
 
@@ -90,6 +90,8 @@ class RealtimeClient:
         self.ws = await websockets.connect(
             url,
             additional_headers=headers,
+            ping_interval=20,  # Send ping every 20 seconds
+            ping_timeout=30,   # Wait 30 seconds for pong response
         )
         _log(f"Connected to OpenAI Realtime API (model: {self.model})")
 
@@ -112,25 +114,30 @@ class RealtimeClient:
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
-                    "model": "gpt-4o-transcribe",
+                    "model": "gpt-4o-mini-transcribe",
                     "language": "de",
                 },
                 "turn_detection": {
                     "type": "semantic_vad",
                 },
-                # Use remote prompt from OpenAI
-                "prompt": {
-                    "id": "pmpt_693042aafdcc8194bfd305307bcda48f0aace211731a2053",
-                    "version": "2",
-                },
             },
         }
+
+        # Use remote prompt if configured, otherwise use instructions
+        if self.prompt_id:
+            prompt_config = {"id": self.prompt_id}
+            # Only add version if explicitly set, otherwise use latest
+            if self.prompt_version:
+                prompt_config["version"] = self.prompt_version
+            session_config["session"]["prompt"] = prompt_config
+        elif self.instructions:
+            session_config["session"]["instructions"] = self.instructions
 
         # Add tools if configured
         if self.tools:
             session_config["session"]["tools"] = self.tools
             session_config["session"]["tool_choice"] = "auto"
-
+            
         await self._send(session_config)
 
     def update_tools(self, tools: list[dict[str, Any]]) -> None:
@@ -330,6 +337,7 @@ class RealtimeClient:
 
         except websockets.exceptions.ConnectionClosed:
             _log("WebSocket connection closed")
+            self.ws = None  # Mark as disconnected to prevent repeated listen attempts
 
     async def disconnect(self) -> None:
         """Disconnect from the API."""

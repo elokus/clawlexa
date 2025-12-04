@@ -92,6 +92,88 @@ class WakeWordDetector:
         self.model.reset()
 
 
+class MultiWakeWordDetector:
+    """Detects multiple wake words simultaneously using openwakeword."""
+
+    def __init__(
+        self,
+        wake_words: list[str],
+        threshold: float = 0.5,
+    ):
+        """
+        Initialize multi-wake-word detector.
+
+        Args:
+            wake_words: List of wake words to detect. Options: alexa, hey_mycroft,
+                       hey_jarvis, hey_marvin, timer, weather
+            threshold: Detection threshold (0-1). Higher = fewer false positives.
+        """
+        self.wake_words = wake_words
+        self.threshold = threshold
+
+        # Load all models
+        model_paths = [get_model_path(ww) for ww in wake_words]
+        self.model = Model(wakeword_model_paths=model_paths)
+
+        # Map model keys to wake word names
+        self._key_to_wake_word = {}
+        for ww in wake_words:
+            model_file = WAKE_WORD_MODELS[ww]
+            model_key = os.path.splitext(model_file)[0]
+            self._key_to_wake_word[model_key] = ww
+
+    def process_audio(self, audio_chunk: bytes) -> dict[str, float]:
+        """
+        Process audio chunk and return confidence scores for all wake words.
+
+        Args:
+            audio_chunk: PCM16 audio bytes at 16kHz
+
+        Returns:
+            Dict mapping wake word names to confidence scores (0-1)
+        """
+        # Convert bytes to int16 numpy array
+        audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
+
+        # Run prediction
+        prediction = self.model.predict(audio_data)
+
+        # Map model keys back to wake word names
+        scores = {}
+        for model_key, score in prediction.items():
+            if model_key in self._key_to_wake_word:
+                scores[self._key_to_wake_word[model_key]] = score
+
+        return scores
+
+    def detected(self, audio_chunk: bytes) -> str | None:
+        """
+        Check if any wake word was detected in audio chunk.
+
+        Args:
+            audio_chunk: PCM16 audio bytes at 16kHz
+
+        Returns:
+            Name of detected wake word, or None if none detected
+        """
+        scores = self.process_audio(audio_chunk)
+
+        # Find the highest scoring wake word above threshold
+        best_word = None
+        best_score = self.threshold
+
+        for wake_word, score in scores.items():
+            if score >= best_score:
+                best_score = score
+                best_word = wake_word
+
+        return best_word
+
+    def reset(self) -> None:
+        """Reset the detector state."""
+        self.model.reset()
+
+
 def resample_audio(audio_data: bytes, from_rate: int, to_rate: int) -> bytes:
     """
     Resample audio data from one sample rate to another.

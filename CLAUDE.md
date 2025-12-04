@@ -5,11 +5,13 @@ Real-time voice agent running on Raspberry Pi 5 using OpenAI's Realtime API with
 ## Quick Start
 
 ```bash
-# Run the voice agent
+# Run the voice agent (Jarvis)
 uv run python main.py
 
+# Run multi-profile agent (multiple wake words)
+uv run python main.py --multi
+
 # Say "Hey Jarvis" to activate, then speak your request
-# Say "Ich möchte Anforderungen sammeln" to start a braindump session
 ```
 
 ## Project Setup
@@ -73,16 +75,20 @@ voice-agent/
 └── src/
     └── voice_agent/
         ├── __init__.py
-        ├── agent.py    # Main VoiceAgent class with state machine
-        ├── audio.py    # AudioCapture and AudioPlayer classes
-        ├── wakeword.py # Wake word detection using openwakeword
-        ├── realtime.py # OpenAI Realtime WebSocket client with function calling
-        ├── tts.py      # OpenAI TTS client for tool output (cost-efficient)
-        ├── led.py      # Status LED control
-        └── tools/      # Tool system for agent capabilities
+        ├── agent.py        # Single-profile VoiceAgent class
+        ├── multi_agent.py  # Multi-profile agent (different wake words → different tools)
+        ├── profiles.py     # AgentProfile definitions (wake word → prompt/tools mapping)
+        ├── audio.py        # AudioCapture and AudioPlayer classes
+        ├── wakeword.py     # Wake word detection (single and multi)
+        ├── realtime.py     # OpenAI Realtime WebSocket client with function calling
+        ├── tts.py          # OpenAI TTS client for tool output (cost-efficient)
+        ├── led.py          # Status LED control
+        └── tools/          # Tool system for agent capabilities
             ├── __init__.py
             ├── base.py       # BaseTool, ToolResult, ToolRegistry
-            └── summarize.py  # SummarizeRequirementsTool
+            ├── summarize.py  # SummarizeRequirementsTool
+            ├── web_search.py # WebSearchTool (uses Responses API)
+            └── todo.py       # Todo list tools (add, view, delete)
 ```
 
 ## Architecture
@@ -114,10 +120,10 @@ voice-agent/
 │                          ┌─────────────┴─────────────┐             │
 │                          ▼                           ▼             │
 │              ┌───────────────────┐       ┌───────────────────┐    │
-│              │SummarizeRequirements│       │   Future Tools   │    │
-│              │ - Whisper STT      │       │                   │    │
-│              │ - GPT-4 summary    │       │                   │    │
-│              │ - Result to TTS    │       │                   │    │
+│              │SummarizeRequirements│       │    WebSearch      │    │
+│              │ - Whisper STT      │       │ - Responses API   │    │
+│              │ - GPT-4 summary    │       │ - gpt-4.1-mini    │    │
+│              │ - Result to TTS    │       │ - web_search tool │    │
 │              └───────────────────┘       └───────────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -128,7 +134,7 @@ Tools extend agent capabilities using a cost-efficient handoff pattern.
 
 ### Cost-Efficient Tool Handoff
 
-When a tool is called, the agent disconnects from the expensive Realtime API to save costs:
+When a tool is called, audio input to Realtime is paused (no input tokens = no cost):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -138,15 +144,16 @@ When a tool is called, the agent disconnects from the expensive Realtime API to 
 │  1. User request processed by Realtime API                      │
 │     └─> Model decides to call a tool                            │
 │                                                                 │
-│  2. 🔌 DISCONNECT Realtime (stop paying!)                       │
+│  2. ⏸️  PAUSE audio input to Realtime (no tokens = no cost)     │
 │                                                                 │
 │  3. Tool executes independently:                                │
 │     └─> Whisper STT for audio input (~$0.006/min)              │
 │     └─> GPT-4o-mini for processing (~$0.15/1M tokens)          │
+│     └─> Or Responses API with web_search                        │
 │                                                                 │
 │  4. 🔊 TTS API speaks result (~$0.015/1K chars)                │
 │                                                                 │
-│  5. 🔌 RECONNECT Realtime for continued conversation            │
+│  5. 📤 Send result back to Realtime for conversation continuity │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -166,14 +173,46 @@ Captures and summarizes braindumps/requirements:
 
 1. User triggers via voice ("Ich möchte Anforderungen sammeln")
 2. Realtime API calls the tool via function calling
-3. **Realtime disconnects** (cost saving starts)
+3. **Audio input paused** (cost saving starts)
 4. Tool captures audio using shared AudioCapture
 5. Audio transcribed via Whisper API
 6. Transcript summarized via GPT-4o-mini
 7. Summary spoken via TTS API (tts-1 model)
-8. **Realtime reconnects** for continued conversation
+8. **Result sent back to Realtime** for conversation continuity
 
 Stop words: "fertig", "done", "ende", or 3 seconds of silence.
+
+### WebSearchTool
+
+Searches the web for current information:
+
+1. User asks about news, current events, or live data
+2. Realtime API calls the tool with `query` parameter
+3. **Audio input paused** (cost saving starts)
+4. Tool uses Responses API with `gpt-4.1-mini` + `web_search`
+5. Result spoken via TTS API
+6. **Result sent back to Realtime** for conversation continuity
+
+Example triggers: "Was gibt es Neues?", "Wie ist das Wetter?", "Aktuelle Nachrichten"
+
+### Todo List Tools
+
+Simple JSON-based task management with three tools:
+
+**add_todo** - Add a new task:
+- `task` (required): Task description
+- `due_date` (optional): Due date in YYYY-MM-DD format
+- `assignee` (optional): "Lukasz" or "Hannah" (default: Lukasz)
+
+**view_todos** - View/query tasks:
+- `assignee` (optional): Filter by assignee
+
+**delete_todo** - Delete a task:
+- `id` (required): Task ID to delete
+
+Data stored in `~/todos.json`. Each task has: id, task, assignee, created_at, due_date (optional).
+
+Example triggers: "Füge eine Aufgabe hinzu", "Zeige meine Todos", "Lösche Aufgabe 3"
 
 ### Adding New Tools
 
@@ -212,7 +251,13 @@ Edit `src/voice_agent/agent.py` to change:
 - `voice`: Change assistant voice (alloy, ash, ballad, coral, echo, sage, shimmer, verse)
 - `model`: Realtime model ("mini" for cost-effective, "default" for full capability)
 - `conversation_timeout`: Seconds before returning to wake word mode (default: 60)
-- `instructions`: System prompt for the assistant (include tool descriptions)
+
+### Remote Prompt Management
+
+The system prompt is managed remotely via OpenAI's prompt storage:
+- **Prompt ID**: `pmpt_693042aafdcc8194bfd305307bcda48f0aace211731a2053`
+- **Version**: Always uses latest (no pinned version)
+- Configure in `src/voice_agent/realtime.py` `_configure_session()` method
 
 ## Notes
 

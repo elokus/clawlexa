@@ -1,8 +1,7 @@
-"""Voice Agent - Main application."""
+"""Multi-Profile Voice Agent - Different agents based on wake word."""
 
 import asyncio
 import json
-import sys
 from enum import Enum, auto
 
 from dotenv import load_dotenv
@@ -12,12 +11,22 @@ def log(msg: str) -> None:
     """Print with immediate flush."""
     print(msg, flush=True)
 
+
 from .audio import AudioCapture, AudioPlayer, DEVICE_SAMPLE_RATE, API_SAMPLE_RATE, resample_audio
 from .led import StatusLED
-from .wakeword import WakeWordDetector, WAKEWORD_SAMPLE_RATE
+from .wakeword import MultiWakeWordDetector
 from .realtime import RealtimeClient, FunctionCall
 from .tts import TTSClient
-from .tools import ToolRegistry, SummarizeRequirementsTool, WebSearchTool, AddTodoTool, ViewTodosTool, DeleteTodoTool
+from .tools import (
+    ToolRegistry,
+    BaseTool,
+    SummarizeRequirementsTool,
+    WebSearchTool,
+    AddTodoTool,
+    ViewTodosTool,
+    DeleteTodoTool,
+)
+from .profiles import AgentProfile, DEFAULT_PROFILES
 
 
 class AgentState(Enum):
@@ -26,7 +35,7 @@ class AgentState(Enum):
     CONNECTING = auto()
     CONVERSATION = auto()
     SPEAKING = auto()
-    TOOL_EXECUTING = auto()  # Tool is running (audio capture paused for realtime)
+    TOOL_EXECUTING = auto()
 
 
 # Stop phrases that end the conversation (German)
@@ -34,91 +43,135 @@ STOP_PHRASES = [
     "konversation beenden",
     "gespräch beenden",
     "auf wiedersehen",
-    "tschüss jarvis",
-    "danke jarvis",
+    "tschüss",
+    "danke",
     "das wäre alles",
     "das war's",
     "das war alles",
     "ende",
 ]
 
+# All available tools mapped by name
+ALL_TOOLS: dict[str, type[BaseTool]] = {
+    "summarize_requirements": SummarizeRequirementsTool,
+    "web_search": WebSearchTool,
+    "add_todo": AddTodoTool,
+    "view_todos": ViewTodosTool,
+    "delete_todo": DeleteTodoTool,
+}
 
-class VoiceAgent:
-    """Real-time voice agent with wake word activation and tool support."""
+
+class MultiProfileVoiceAgent:
+    """Voice agent that supports multiple profiles based on wake word.
+
+    Different wake words activate different assistant personas with
+    their own prompts, voices, and available tools.
+    """
 
     def __init__(
         self,
-        wake_word: str = "hey_jarvis",
+        profiles: dict[str, AgentProfile] | None = None,
         wake_word_threshold: float = 0.5,
-        voice: str = "echo",
         conversation_timeout: float = 60.0,
         stop_phrases: list[str] | None = None,
-        prompt_id: str = "pmpt_693042aafdcc8194bfd305307bcda48f0aace211731a2053",
     ):
         """
-        Initialize the voice agent.
+        Initialize the multi-profile voice agent.
 
         Args:
-            wake_word: Wake word to listen for (hey_jarvis, alexa, etc.)
+            profiles: Dict mapping wake words to AgentProfile configs.
+                     If None, uses DEFAULT_PROFILES.
             wake_word_threshold: Detection threshold (0-1)
-            voice: Voice to use (alloy, ash, ballad, coral, echo, sage, shimmer, verse)
             conversation_timeout: Seconds of silence before returning to wake word mode
-            stop_phrases: Phrases that end the conversation (default: goodbye, bye jarvis, etc.)
-            prompt_id: OpenAI remote prompt ID
+            stop_phrases: Phrases that end the conversation
         """
         load_dotenv()
 
-        self.state = AgentState.LISTENING_FOR_WAKEWORD
+        self.profiles = profiles or DEFAULT_PROFILES
         self.conversation_timeout = conversation_timeout
         self.stop_phrases = stop_phrases or STOP_PHRASES
+
+        self.state = AgentState.LISTENING_FOR_WAKEWORD
         self._last_activity_time = 0.0
         self._running = False
         self._pending_disconnect = False
         self._pending_function_call: FunctionCall | None = None
 
-        # Initialize tool registry and register tools
-        self.tool_registry = ToolRegistry()
-        self._register_tools()
+        # Current active profile (set when wake word detected)
+        self._active_profile: AgentProfile | None = None
 
-        # Initialize components
-        self.wake_detector = WakeWordDetector(
-            wake_word=wake_word,
+        # Initialize multi-wake-word detector
+        wake_words = list(self.profiles.keys())
+        self.wake_detector = MultiWakeWordDetector(
+            wake_words=wake_words,
             threshold=wake_word_threshold,
         )
+
+        # Initialize shared components
         self.audio_capture = AudioCapture()
         self.audio_player = AudioPlayer()
         self.led = StatusLED()
-        self.realtime_client = RealtimeClient(
-            voice=voice,
-            tools=self.tool_registry.get_function_definitions(),
-            prompt_id=prompt_id,
-        )
-        self.tts_client = TTSClient(voice=voice)
 
-        # Store config for reconnection after tool execution
-        self._voice = voice
-        self._prompt_id = prompt_id
+        # Tool registry and realtime client are created per-profile
+        self.tool_registry: ToolRegistry | None = None
+        self.realtime_client: RealtimeClient | None = None
+        self.tts_client: TTSClient | None = None
+
+    def _create_tool_registry(self, profile: AgentProfile) -> ToolRegistry:
+        """Create a tool registry with only the tools for this profile."""
+        registry = ToolRegistry()
+        for tool_name in profile.tools:
+            if tool_name in ALL_TOOLS:
+                registry.register(ALL_TOOLS[tool_name]())
+        return registry
+
+    def _create_realtime_client(self, profile: AgentProfile) -> RealtimeClient:
+        """Create a realtime client configured for this profile."""
+        tool_definitions = self.tool_registry.get_function_definitions() if self.tool_registry else []
+
+        client = RealtimeClient(
+            voice=profile.voice,
+            tools=tool_definitions,
+            prompt_id=profile.prompt_id,
+            prompt_version=profile.prompt_version,
+        )
 
         # Wire up callbacks
-        self.realtime_client.on_audio_delta = self._on_audio_delta
-        self.realtime_client.on_response_done = self._on_response_done
-        self.realtime_client.on_speech_started = self._on_speech_started
-        self.realtime_client.on_speech_stopped = self._on_speech_stopped
-        self.realtime_client.on_function_call = self._on_function_call
+        client.on_audio_delta = self._on_audio_delta
+        client.on_response_done = self._on_response_done
+        client.on_speech_started = self._on_speech_started
+        client.on_speech_stopped = self._on_speech_stopped
+        client.on_function_call = self._on_function_call
 
-        # Set tool callbacks
+        return client
+
+    def _activate_profile(self, wake_word: str) -> None:
+        """Activate the profile for the given wake word."""
+        profile = self.profiles.get(wake_word)
+        if not profile:
+            log(f"❌ No profile for wake word: {wake_word}")
+            return
+
+        self._active_profile = profile
+        log(f"\n🎭 Activating profile: {profile.name}")
+
+        # Create tool registry for this profile
+        self.tool_registry = self._create_tool_registry(profile)
         self.tool_registry.set_callbacks(
             on_status=self._on_tool_status,
             on_audio_output=self._on_audio_delta,
         )
+        self.tool_registry.set_audio_capture(self.audio_capture)
+        self.tool_registry.set_audio_player(self.audio_player)
 
-    def _register_tools(self) -> None:
-        """Register available tools."""
-        self.tool_registry.register(SummarizeRequirementsTool())
-        self.tool_registry.register(WebSearchTool())
-        self.tool_registry.register(AddTodoTool())
-        self.tool_registry.register(ViewTodosTool())
-        self.tool_registry.register(DeleteTodoTool())
+        # Create realtime client for this profile
+        self.realtime_client = self._create_realtime_client(profile)
+
+        # Create TTS client with profile's voice
+        self.tts_client = TTSClient(voice=profile.voice)
+
+        log(f"   Voice: {profile.voice}")
+        log(f"   Tools: {', '.join(profile.tools)}")
 
     def _on_tool_status(self, message: str) -> None:
         """Handle status updates from tools."""
@@ -139,7 +192,6 @@ class VoiceAgent:
     def _on_speech_started(self) -> None:
         """Handle user speech start (interruption)."""
         log("\n[User speaking - interrupting]")
-        # Clear playback buffer on interruption
         self.audio_player.clear()
         self.state = AgentState.CONVERSATION
         self._last_activity_time = asyncio.get_event_loop().time()
@@ -154,47 +206,37 @@ class VoiceAgent:
         self._pending_function_call = func_call
 
     async def _execute_tool(self, func_call: FunctionCall) -> None:
-        """Execute a tool with cost-efficient handoff.
+        """Execute a tool."""
+        if not self.tool_registry or not self.realtime_client:
+            return
 
-        Flow:
-        1. Execute tool (plays beep signal, then Whisper STT + GPT-4)
-        2. Speak result via TTS
-        3. Send summary back to realtime for conversation continuity
-        """
         tool = self.tool_registry.get(func_call.name)
         if not tool:
             log(f"\n❌ Unknown tool: {func_call.name}")
-            # Send error back to realtime
             await self.realtime_client.send_function_result(
                 func_call.call_id,
                 json.dumps({"error": f"Unknown tool: {func_call.name}"}),
             )
             return
 
-        # Mark state as tool executing
         self.state = AgentState.TOOL_EXECUTING
-        self.led.start_blink(0.05, 0.05)  # Very fast blink = tool running
+        self.led.start_blink(0.05, 0.05)
 
-        # Wait for any model speech to finish before starting tool
-        # The model might be saying "I'll redirect you to the tool..."
         if self.audio_player.is_playing():
             log("\n⏳ Waiting for assistant speech to finish...")
             await asyncio.to_thread(self.audio_player.wait_until_done, 10.0)
-            await asyncio.sleep(0.3)  # Small buffer for audio hardware
+            await asyncio.sleep(0.3)
 
         result_summary = "Tool execution failed."
         tool_success = False
         skip_tts = False
 
         try:
-            # === EXECUTE TOOL (Whisper + GPT-4) ===
-            # Tool plays its own start signal (beep tone)
             log(f"\n🔧 Executing tool: {func_call.name}")
             result = await tool.execute(func_call.arguments)
             tool_success = result.success
             skip_tts = result.skip_tts
 
-            # === SPEAK RESULT WITH TTS (unless skip_tts) ===
             if result.success:
                 log(f"\n✅ Tool completed: {func_call.name}")
                 if result.skip_tts:
@@ -220,10 +262,8 @@ class VoiceAgent:
             tool_success = False
 
         finally:
-            # === SEND RESULT BACK TO REALTIME FOR CONTINUITY ===
             log(f"\n📤 Sending tool result back to realtime...")
             try:
-                # Different instructions based on whether TTS was used
                 if skip_tts:
                     note = "Sprich dieses Ergebnis dem Benutzer vor. Fasse es kurz zusammen."
                 else:
@@ -241,29 +281,24 @@ class VoiceAgent:
                 log(f"\n⚠️ Could not send result to realtime: {e}")
 
             self.state = AgentState.CONVERSATION
-            self.led.start_blink(0.1, 0.1)  # Back to normal blink
+            self.led.start_blink(0.1, 0.1)
             self._last_activity_time = asyncio.get_event_loop().time()
             log("💬 Back to conversation mode")
 
     async def _speak_with_tts(self, text: str) -> None:
-        """Speak text using OpenAI TTS API (cheaper than realtime).
+        """Speak text using TTS API."""
+        if not self.tts_client:
+            return
 
-        Args:
-            text: Text to speak
-        """
         previous_state = self.state
         self.state = AgentState.SPEAKING
 
         try:
-            # Stream TTS audio to player
-            # TTS outputs 24kHz PCM, AudioPlayer.play() handles resampling to 16kHz
             async for audio_chunk in self.tts_client.synthesize_stream(text):
                 self.audio_player.play(audio_chunk)
 
-            # Wait for playback buffer to actually drain
             log(f"\n⏳ Waiting for TTS playback to finish...")
             await asyncio.to_thread(self.audio_player.wait_until_done, 30.0)
-            # Small extra buffer for audio hardware latency
             await asyncio.sleep(0.3)
             log(f"\n✅ TTS playback complete")
 
@@ -271,7 +306,6 @@ class VoiceAgent:
             log(f"\n❌ TTS error: {e}")
             raise
         finally:
-            # Restore previous state (tool might set it back to TOOL_EXECUTING)
             if previous_state == AgentState.TOOL_EXECUTING:
                 self.state = previous_state
 
@@ -284,31 +318,20 @@ class VoiceAgent:
         return False
 
     async def _disconnect_conversation(self) -> None:
-        """Disconnect from the conversation and return to wake word mode."""
-        log("\n👋 Ending conversation. Say 'Hey Jarvis' to wake me up!")
+        """Disconnect and return to wake word mode."""
+        profile_name = self._active_profile.name if self._active_profile else "Assistant"
+        log(f"\n👋 {profile_name} signing off. Say a wake word to start again!")
         self.audio_player.clear()
-        await self.realtime_client.disconnect()
+        if self.realtime_client:
+            await self.realtime_client.disconnect()
         self.state = AgentState.LISTENING_FOR_WAKEWORD
         self._pending_disconnect = False
-        self.led.heartbeat()  # Back to heartbeat = listening
-
-    async def _process_wake_word(self, audio_chunk: bytes) -> bool:
-        """
-        Process audio for wake word detection.
-
-        Args:
-            audio_chunk: Audio at device sample rate (16kHz)
-
-        Returns:
-            True if wake word detected
-        """
-        # Device is already 16kHz, same as wake word detector expects
-        return self.wake_detector.detected(audio_chunk)
+        self._active_profile = None
+        self.led.heartbeat()
 
     async def _audio_capture_loop(self) -> None:
         """Background task for capturing and processing audio."""
         while self._running:
-            # When tool is executing, it reads audio directly - we skip
             if self.state == AgentState.TOOL_EXECUTING:
                 await asyncio.sleep(0.05)
                 continue
@@ -319,42 +342,49 @@ class VoiceAgent:
                 continue
 
             if self.state == AgentState.LISTENING_FOR_WAKEWORD:
-                # Check for wake word
-                if await self._process_wake_word(audio_chunk):
-                    log("\n🎤 Wake word detected! Connecting...")
+                # Check for any wake word
+                detected_wake_word = self.wake_detector.detected(audio_chunk)
+                if detected_wake_word:
+                    log(f"\n🎤 Wake word detected: {detected_wake_word}")
                     self.state = AgentState.CONNECTING
-                    self.led.on()  # Solid = connecting
+                    self.led.on()
                     self.wake_detector.reset()
+
+                    # Activate the profile for this wake word
+                    self._activate_profile(detected_wake_word)
+
+                    if not self.realtime_client:
+                        log("❌ Failed to create realtime client")
+                        self.state = AgentState.LISTENING_FOR_WAKEWORD
+                        self.led.heartbeat()
+                        continue
 
                     # Connect to OpenAI Realtime API
                     try:
                         await self.realtime_client.connect()
                         self.state = AgentState.CONVERSATION
                         self._last_activity_time = asyncio.get_event_loop().time()
-                        self.led.start_blink(0.1, 0.1)  # Fast blink = conversation active
+                        self.led.start_blink(0.1, 0.1)
                         log("💬 Connected! Triggering greeting...")
 
                         # Trigger the model to greet the user
-                        await self.realtime_client.send_user_message(
-                            "[Conversation started - user just said the wake word 'Hey Jarvis']"
-                        )
+                        greeting = self._active_profile.greeting_trigger if self._active_profile else ""
+                        if greeting:
+                            await self.realtime_client.send_user_message(greeting)
                     except Exception as e:
                         log(f"❌ Connection failed: {e}")
                         self.state = AgentState.LISTENING_FOR_WAKEWORD
-                        self.led.heartbeat()  # Back to heartbeat
+                        self.led.heartbeat()
 
             elif self.state in (AgentState.CONVERSATION, AgentState.SPEAKING):
-                # Send audio to OpenAI Realtime API (resample from 16kHz to 24kHz)
-                # Only send if WebSocket is still connected
-                if self.realtime_client.ws is not None:
+                if self.realtime_client and self.realtime_client.ws is not None:
                     api_audio = resample_audio(audio_chunk, DEVICE_SAMPLE_RATE, API_SAMPLE_RATE)
                     try:
                         await self.realtime_client.send_audio(api_audio)
                     except Exception:
-                        # WebSocket closed, go back to wake word mode
                         self.state = AgentState.LISTENING_FOR_WAKEWORD
 
-            await asyncio.sleep(0.001)  # Yield to other tasks
+            await asyncio.sleep(0.001)
 
     async def _timeout_monitor(self) -> None:
         """Monitor for conversation timeout."""
@@ -362,9 +392,8 @@ class VoiceAgent:
             if self.state == AgentState.CONVERSATION:
                 current_time = asyncio.get_event_loop().time()
                 if current_time - self._last_activity_time > self.conversation_timeout:
-                    log("\n⏰ Conversation timeout. Say 'Hey Jarvis' to wake me up!")
-                    await self.realtime_client.disconnect()
-                    self.state = AgentState.LISTENING_FOR_WAKEWORD
+                    log("\n⏰ Conversation timeout.")
+                    await self._disconnect_conversation()
 
             await asyncio.sleep(1.0)
 
@@ -372,24 +401,25 @@ class VoiceAgent:
         """Listen for events from the Realtime API."""
         while self._running:
             if self.state in (AgentState.CONVERSATION, AgentState.SPEAKING, AgentState.TOOL_EXECUTING):
+                if not self.realtime_client:
+                    await asyncio.sleep(0.1)
+                    continue
+
                 try:
                     async for event in self.realtime_client.listen():
                         if not self._running:
                             break
 
-                        # Check if we have a pending function call to execute
                         if self._pending_function_call is not None:
                             func_call = self._pending_function_call
                             self._pending_function_call = None
                             await self._execute_tool(func_call)
                             continue
 
-                        # Check if we need to disconnect after response
                         if self._pending_disconnect and self.state == AgentState.CONVERSATION:
                             await self._disconnect_conversation()
-                            break  # Break inner loop, outer loop continues
+                            break
 
-                        # Events are handled by callbacks
                         event_type = event.get("type", "")
                         if event_type == "response.audio_transcript.done":
                             transcript = event.get("transcript", "")
@@ -399,44 +429,38 @@ class VoiceAgent:
                             transcript = event.get("transcript", "")
                             if transcript:
                                 log(f"\n👤 You: {transcript}")
-                                # Check for stop phrase in user input
                                 if self._check_stop_phrase(transcript):
                                     log("\n🛑 Stop phrase detected...")
                                     self._pending_disconnect = True
                 except Exception:
-                    # Connection closed or error
-                    if self.realtime_client.ws is None:
-                        # WebSocket is closed, go back to wake word mode
-                        log("\n🔌 Connection lost. Say 'Hey Jarvis' to reconnect.")
+                    if self.realtime_client and self.realtime_client.ws is None:
+                        log("\n🔌 Connection lost. Say a wake word to reconnect.")
                         self.state = AgentState.LISTENING_FOR_WAKEWORD
                         self.led.heartbeat()
             else:
                 await asyncio.sleep(0.1)
 
     async def run(self) -> None:
-        """Run the voice agent."""
+        """Run the multi-profile voice agent."""
+        wake_words = list(self.profiles.keys())
+        profile_names = [p.name for p in self.profiles.values()]
+
         log("=" * 50)
-        log("🚀 Voice Agent Starting")
+        log("🚀 Multi-Profile Voice Agent Starting")
         log("=" * 50)
-        log("Wake word: 'Hey Jarvis'")
-        log("Stop: 'Konversation beenden' oder 'Ende'")
+        log(f"Profiles: {', '.join(profile_names)}")
+        log(f"Wake words: {', '.join(wake_words)}")
         log(f"Timeout: {self.conversation_timeout}s of silence")
         log("=" * 50)
-        log("\n👂 Listening for wake word...")
+        log("\n👂 Listening for wake words...")
 
         self._running = True
 
-        # Start audio capture/playback
         self.audio_capture.start()
         self.audio_player.start()
-        self.led.heartbeat()  # Heartbeat = listening for wake word
-
-        # Pass shared audio capture and player to tools
-        self.tool_registry.set_audio_capture(self.audio_capture)
-        self.tool_registry.set_audio_player(self.audio_player)
+        self.led.heartbeat()
 
         try:
-            # Run all tasks concurrently
             await asyncio.gather(
                 self._audio_capture_loop(),
                 self._timeout_monitor(),
@@ -446,10 +470,11 @@ class VoiceAgent:
             log("\n\n👋 Shutting down...")
         finally:
             self._running = False
-            await self.realtime_client.disconnect()
+            if self.realtime_client:
+                await self.realtime_client.disconnect()
             self.audio_capture.close()
             self.audio_player.close()
-            self.led.restore()  # Restore original LED state
+            self.led.restore()
             log("Goodbye!")
 
     def stop(self) -> None:
@@ -458,8 +483,8 @@ class VoiceAgent:
 
 
 async def main():
-    """Main entry point."""
-    agent = VoiceAgent()
+    """Main entry point for multi-profile agent."""
+    agent = MultiProfileVoiceAgent()
     await agent.run()
 
 

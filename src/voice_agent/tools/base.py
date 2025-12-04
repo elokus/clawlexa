@@ -21,6 +21,9 @@ class ToolResult:
     audio_response: bytes | None = None
     """Optional pre-generated audio response (skips TTS if provided)."""
 
+    skip_tts: bool = False
+    """Skip TTS and let Realtime speak the result instead."""
+
     data: dict[str, Any] = field(default_factory=dict)
     """Additional structured data from the tool."""
 
