@@ -5,6 +5,7 @@
  * - Profile-based activation via wake word
  * - Session lifecycle management
  * - Event routing to consumers
+ * - Agent run logging to database
  */
 
 import { VoiceSession, type AgentState } from '../realtime/session.js';
@@ -15,6 +16,7 @@ import {
   type AgentProfile,
 } from './profiles.js';
 import type { TransportLayerAudio, RealtimeItem } from '@openai/agents/realtime';
+import { getDatabase, AgentRunsRepository } from '../db/index.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
@@ -28,6 +30,14 @@ export class VoiceAgent {
   private currentProfile: AgentProfile | null = null;
   private state: AgentState = 'idle';
   private eventHandlers: Partial<VoiceAgentEvents> = {};
+  private agentRunsRepo: AgentRunsRepository;
+  private transcriptBuffer: string[] = [];
+
+  constructor() {
+    // Initialize database and repositories
+    getDatabase();
+    this.agentRunsRepo = new AgentRunsRepository();
+  }
 
   on<K extends keyof VoiceAgentEvents>(event: K, handler: VoiceAgentEvents[K]): void {
     this.eventHandlers[event] = handler;
@@ -102,6 +112,8 @@ export class VoiceAgent {
     });
 
     this.session.on('transcript', (text, role) => {
+      // Collect transcripts for logging
+      this.transcriptBuffer.push(`${role}: ${text}`);
       this.emit('transcript', text, role);
     });
 
@@ -110,6 +122,8 @@ export class VoiceAgent {
     });
 
     this.session.on('disconnected', () => {
+      // Log the agent run to database before resetting state
+      this.logAgentRun();
       this.state = 'idle';
       this.emit('stateChange', 'idle', null);
     });
@@ -142,12 +156,36 @@ export class VoiceAgent {
 
   deactivate(): void {
     if (this.session) {
+      // Log the agent run before disconnecting
+      this.logAgentRun();
       this.session.disconnect();
       this.session = null;
     }
     this.currentProfile = null;
     this.state = 'idle';
     this.emit('stateChange', 'idle', null);
+  }
+
+  /**
+   * Log the current agent run to the database.
+   */
+  private logAgentRun(): void {
+    if (this.transcriptBuffer.length === 0) {
+      return; // Nothing to log
+    }
+
+    try {
+      this.agentRunsRepo.create({
+        profile: this.currentProfile?.name ?? undefined,
+        transcript: this.transcriptBuffer.join('\n'),
+      });
+      console.log(`[Agent] Logged run for profile: ${this.currentProfile?.name ?? 'unknown'}`);
+    } catch (error) {
+      console.error('[Agent] Failed to log agent run:', error);
+    }
+
+    // Clear the buffer
+    this.transcriptBuffer = [];
   }
 
   isActive(): boolean {

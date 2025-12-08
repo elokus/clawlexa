@@ -6,12 +6,14 @@ export { webSearchTool } from './web-search.js';
 export { addTodoTool, viewTodosTool, deleteTodoTool } from './todo.js';
 export { controlLightTool } from './govee.js';
 export { reasoningTool } from './reasoning.js';
+export { setTimerTool, listTimersTool, cancelTimerTool } from './timer.js';
 
 // Tool registry by name for easy lookup
 import { webSearchTool } from './web-search.js';
 import { addTodoTool, viewTodosTool, deleteTodoTool } from './todo.js';
 import { controlLightTool } from './govee.js';
 import { reasoningTool } from './reasoning.js';
+import { setTimerTool, listTimersTool, cancelTimerTool } from './timer.js';
 
 export const toolsByName = {
   web_search: webSearchTool,
@@ -20,6 +22,9 @@ export const toolsByName = {
   delete_todo: deleteTodoTool,
   control_light: controlLightTool,
   deep_thinking: reasoningTool,
+  set_timer: setTimerTool,
+  list_timers: listTimersTool,
+  cancel_timer: cancelTimerTool,
 } as const;
 
 export type ToolName = keyof typeof toolsByName;

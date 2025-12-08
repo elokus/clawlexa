@@ -80,7 +80,7 @@ voice-agent/
 ├── docs/               # Documentation
 │   └── IMPLEMENTATION_PLAN.md
 │
-├── pi-agent/           # TypeScript agent (NEW - Phase 1)
+├── pi-agent/           # TypeScript agent (Phase 1 + 2)
 │   ├── src/
 │   │   ├── index.ts        # Main entry point
 │   │   ├── config.ts       # Configuration
@@ -89,8 +89,19 @@ voice-agent/
 │   │   │   └── voice-agent.ts  # Main VoiceAgent class
 │   │   ├── realtime/       # OpenAI Realtime SDK wrapper
 │   │   │   └── session.ts      # RealtimeSession + state machine
-│   │   └── api/            # HTTP APIs
-│   │       └── wakeword-bridge.ts  # Python wakeword bridge
+│   │   ├── db/             # SQLite database layer (Phase 2)
+│   │   │   ├── index.ts        # Module exports
+│   │   │   ├── database.ts     # Connection manager
+│   │   │   ├── schema.ts       # Migrations
+│   │   │   └── repositories/   # Data access layer
+│   │   │       ├── cli-sessions.ts  # CLI session CRUD
+│   │   │       ├── cli-events.ts    # Session event log
+│   │   │       ├── timers.ts        # Timer/reminder CRUD
+│   │   │       └── agent-runs.ts    # Agent run history
+│   │   └── tools/          # Agent tools
+│   │       ├── todo.ts         # Todo list tools
+│   │       ├── web-search.ts   # Web search tool
+│   │       └── govee.ts        # Govee light control
 │   ├── package.json
 │   └── tsconfig.json
 │
@@ -306,6 +317,49 @@ The system prompt is managed remotely via OpenAI's prompt storage:
 - **Prompt ID**: `pmpt_693042aafdcc8194bfd305307bcda48f0aace211731a2053`
 - **Version**: Always uses latest (no pinned version)
 - Configure in `src/voice_agent/realtime.py` `_configure_session()` method
+
+## Database (Phase 2)
+
+SQLite database at `~/voice-agent.db` serves as the control plane for the system.
+
+### Tables
+
+| Table | Purpose |
+|-------|---------|
+| `cli_sessions` | Mac CLI session metadata |
+| `cli_events` | Session event log |
+| `timers` | Timers and reminders |
+| `agent_runs` | Agent interaction history |
+
+### Usage
+
+```typescript
+import { getDatabase, CliSessionsRepository, TimersRepository } from './db/index.js';
+
+// Database auto-initializes on first access
+const db = getDatabase();
+
+// Use repositories for CRUD operations
+const sessions = new CliSessionsRepository(db);
+const session = sessions.create({ goal: 'Implement feature X' });
+sessions.updateStatus(session.id, 'running');
+
+const timers = new TimersRepository(db);
+const timer = timers.create({
+  fire_at: new Date(Date.now() + 60000),
+  message: 'Reminder!',
+  mode: 'tts'
+});
+```
+
+### Test Commands
+
+```bash
+cd pi-agent
+
+# Test database functionality
+npm run test:db
+```
 
 ## Notes
 

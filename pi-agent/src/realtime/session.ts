@@ -174,13 +174,17 @@ export class VoiceSession {
     this.session.on('agent_tool_start', (_ctx, _agent, tool, details) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const args = (details as any)?.toolCall?.arguments;
-      let parsedArgs: unknown;
+      let parsedArgs: Record<string, unknown> = {};
       try {
         parsedArgs = args ? JSON.parse(args) : {};
       } catch {
-        parsedArgs = args;
+        parsedArgs = { raw: args };
       }
-      console.log(`[Tool] ${tool.name} called with:`, JSON.stringify(parsedArgs));
+      // Format parameters nicely
+      const paramStr = Object.entries(parsedArgs)
+        .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+        .join(', ');
+      console.log(`[Tool] ${tool.name}(${paramStr})`);
       this.setState('thinking');
     });
 
