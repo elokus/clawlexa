@@ -17,7 +17,7 @@ from .led import StatusLED
 from .wakeword import WakeWordDetector, WAKEWORD_SAMPLE_RATE
 from .realtime import RealtimeClient, FunctionCall
 from .tts import TTSClient
-from .tools import ToolRegistry, SummarizeRequirementsTool, WebSearchTool, AddTodoTool, ViewTodosTool, DeleteTodoTool
+from .tools import ToolRegistry, SummarizeRequirementsTool, WebSearchTool, AddTodoTool, ViewTodosTool, DeleteTodoTool, GoveeLightTool
 
 
 class AgentState(Enum):
@@ -119,6 +119,7 @@ class VoiceAgent:
         self.tool_registry.register(AddTodoTool())
         self.tool_registry.register(ViewTodosTool())
         self.tool_registry.register(DeleteTodoTool())
+        self.tool_registry.register(GoveeLightTool())
 
     def _on_tool_status(self, message: str) -> None:
         """Handle status updates from tools."""

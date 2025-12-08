@@ -43,7 +43,7 @@ JARVIS_PROFILE = AgentProfile(
     wake_word="hey_jarvis",
     prompt_id="pmpt_693042aafdcc8194bfd305307bcda48f0aace211731a2053",
     voice="echo",
-    tools=["web_search", "add_todo", "view_todos", "delete_todo"],
+    tools=["web_search", "add_todo", "view_todos", "delete_todo", "control_light"],
     greeting_trigger="[Conversation started - user just said the wake word 'Hey Jarvis']",
 )
 

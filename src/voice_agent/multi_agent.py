@@ -25,6 +25,7 @@ from .tools import (
     AddTodoTool,
     ViewTodosTool,
     DeleteTodoTool,
+    GoveeLightTool,
 )
 from .profiles import AgentProfile, DEFAULT_PROFILES
 
@@ -58,6 +59,7 @@ ALL_TOOLS: dict[str, type[BaseTool]] = {
     "add_todo": AddTodoTool,
     "view_todos": ViewTodosTool,
     "delete_todo": DeleteTodoTool,
+    "control_light": GoveeLightTool,
 }
 
 
