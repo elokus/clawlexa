@@ -5,10 +5,13 @@ Real-time voice agent running on Raspberry Pi 5 using OpenAI's Realtime API with
 ## Quick Start
 
 ```bash
-# Run the voice agent (Jarvis)
+# Run TypeScript agent (NEW - recommended)
+cd pi-agent && npm run dev
+
+# Run Python voice agent (Jarvis) - legacy
 uv run python main.py
 
-# Run multi-profile agent (multiple wake words)
+# Run multi-profile agent (multiple wake words) - legacy
 uv run python main.py --multi
 
 # Say "Hey Jarvis" to activate, then speak your request
@@ -16,6 +19,12 @@ uv run python main.py --multi
 
 ## Project Setup
 
+### TypeScript Agent (pi-agent/)
+- **Node.js**: 20.x
+- **Package Manager**: npm
+- **Framework**: OpenAI Agents SDK (`@openai/agents`)
+
+### Python Agent (legacy)
 - **Python**: 3.13.5
 - **Package Manager**: uv
 - **Virtual Environment**: `.venv/` (created with uv)
@@ -67,28 +76,38 @@ OPENAI_API_KEY=sk-proj-...
 ```
 voice-agent/
 ├── CLAUDE.md           # This file
-├── main.py             # Entry point
-├── pyproject.toml      # Project dependencies
 ├── .env                # API keys (not in git)
-├── .venv/              # Virtual environment
 ├── docs/               # Documentation
+│   └── IMPLEMENTATION_PLAN.md
+│
+├── pi-agent/           # TypeScript agent (NEW - Phase 1)
+│   ├── src/
+│   │   ├── index.ts        # Main entry point
+│   │   ├── config.ts       # Configuration
+│   │   ├── agent/          # Agent definitions
+│   │   │   ├── profiles.ts     # Wakeword → profile mapping
+│   │   │   └── voice-agent.ts  # Main VoiceAgent class
+│   │   ├── realtime/       # OpenAI Realtime SDK wrapper
+│   │   │   └── session.ts      # RealtimeSession + state machine
+│   │   └── api/            # HTTP APIs
+│   │       └── wakeword-bridge.ts  # Python wakeword bridge
+│   ├── package.json
+│   └── tsconfig.json
+│
+├── main.py             # Python entry point (legacy)
+├── pyproject.toml      # Python dependencies (legacy)
+├── .venv/              # Python virtual environment
 └── src/
-    └── voice_agent/
-        ├── __init__.py
+    └── voice_agent/    # Python agent (legacy)
         ├── agent.py        # Single-profile VoiceAgent class
-        ├── multi_agent.py  # Multi-profile agent (different wake words → different tools)
-        ├── profiles.py     # AgentProfile definitions (wake word → prompt/tools mapping)
-        ├── audio.py        # AudioCapture and AudioPlayer classes
-        ├── wakeword.py     # Wake word detection (single and multi)
-        ├── realtime.py     # OpenAI Realtime WebSocket client with function calling
-        ├── tts.py          # OpenAI TTS client for tool output (cost-efficient)
+        ├── multi_agent.py  # Multi-profile agent
+        ├── profiles.py     # AgentProfile definitions
+        ├── audio.py        # AudioCapture and AudioPlayer
+        ├── wakeword.py     # Wake word detection
+        ├── realtime.py     # OpenAI Realtime WebSocket client
+        ├── tts.py          # OpenAI TTS client
         ├── led.py          # Status LED control
-        └── tools/          # Tool system for agent capabilities
-            ├── __init__.py
-            ├── base.py       # BaseTool, ToolResult, ToolRegistry
-            ├── summarize.py  # SummarizeRequirementsTool
-            ├── web_search.py # WebSearchTool (uses Responses API)
-            └── todo.py       # Todo list tools (add, view, delete)
+        └── tools/          # Tool system
 ```
 
 ## Architecture
@@ -225,6 +244,35 @@ Example triggers: "Füge eine Aufgabe hinzu", "Zeige meine Todos", "Lösche Aufg
 7. Update instructions to inform the model about the tool
 
 ## Development Commands
+
+### TypeScript Agent (pi-agent/)
+
+```bash
+cd pi-agent
+
+# Install dependencies
+npm install
+
+# Run in development mode
+npm run dev
+
+# Run text-only test (no audio)
+npm run test:text
+
+# Type check
+npm run typecheck
+
+# Build for production
+npm run build
+npm start
+
+# Test wakeword bridge
+curl -X POST http://localhost:8765/wakeword \
+  -H "Content-Type: application/json" \
+  -d '{"wakeword": "hey_jarvis", "timestamp": 1234567890}'
+```
+
+### Python Agent (legacy)
 
 ```bash
 # Install/sync dependencies

@@ -1,0 +1,46 @@
+{
+  "name": "pi-agent",
+  "version": "1.0.0",
+  "description": "TypeScript realtime voice agent for Raspberry Pi",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test:text": "tsx src/test-text.ts",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "voice-agent",
+    "openai",
+    "realtime",
+    "raspberry-pi"
+  ],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.3.4",
+    "@picovoice/porcupine-node": "^3.0.6",
+    "@picovoice/pvrecorder-node": "^1.2.8",
+    "dotenv": "^17.2.3",
+    "node-record-lpcm16": "^1.0.1",
+    "ws": "^8.18.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.48.1",
+    "@typescript-eslint/parser": "^8.48.1",
+    "eslint": "^9.39.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.48.1"
+  }
+}
