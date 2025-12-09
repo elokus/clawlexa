@@ -35,6 +35,8 @@ interface WSMessage {
 
 let wss: WebSocketServer | null = null;
 const clients = new Set<WebSocket>();
+// Track connections by IP to prevent duplicates
+const clientsByIp = new Map<string, WebSocket>();
 
 /**
  * Start the WebSocket server for real-time dashboard updates.
@@ -60,9 +62,19 @@ export function startWebSocketServer(): Promise<void> {
     });
 
     wss.on('connection', (ws, req) => {
-      const clientAddr = req.socket.remoteAddress;
+      const clientAddr = req.socket.remoteAddress ?? 'unknown';
+
+      // Close existing connection from same IP (prevent duplicates)
+      const existingClient = clientsByIp.get(clientAddr);
+      if (existingClient) {
+        console.log(`[WS] Closing existing connection from ${clientAddr}`);
+        existingClient.close(1000, 'New connection from same IP');
+        clients.delete(existingClient);
+      }
+
       console.log(`[WS] Client connected from ${clientAddr}`);
       clients.add(ws);
+      clientsByIp.set(clientAddr, ws);
 
       // Send current state on connect
       ws.send(JSON.stringify({
@@ -74,11 +86,18 @@ export function startWebSocketServer(): Promise<void> {
       ws.on('close', () => {
         console.log(`[WS] Client disconnected: ${clientAddr}`);
         clients.delete(ws);
+        // Only remove from IP map if it's still this connection
+        if (clientsByIp.get(clientAddr) === ws) {
+          clientsByIp.delete(clientAddr);
+        }
       });
 
       ws.on('error', (err) => {
         console.error(`[WS] Client error: ${err.message}`);
         clients.delete(ws);
+        if (clientsByIp.get(clientAddr) === ws) {
+          clientsByIp.delete(clientAddr);
+        }
       });
 
       // Handle incoming messages from dashboard
@@ -109,6 +128,7 @@ export function stopWebSocketServer(): Promise<void> {
       client.close();
     }
     clients.clear();
+    clientsByIp.clear();
 
     wss.close(() => {
       console.log('[WS] Server stopped');

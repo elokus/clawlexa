@@ -16,10 +16,15 @@ export function App() {
   const { connected, state, profile, messages, events, currentTool, loadMockConversation } = useAgentStore();
   const [activeTab, setActiveTab] = useState<'sessions' | 'tools' | 'events'>('events');
 
-  // Load mock data on mount for demo
+  // Check if we're in demo mode (no WS_URL set)
+  const isDemoMode = !import.meta.env.VITE_WS_URL;
+
+  // Load mock data only in demo mode
   useEffect(() => {
-    loadMockConversation();
-  }, [loadMockConversation]);
+    if (isDemoMode) {
+      loadMockConversation();
+    }
+  }, [isDemoMode, loadMockConversation]);
 
   const stateConfig = {
     idle: { label: 'STANDBY', color: 'var(--color-text-dim)', glow: 'transparent' },
