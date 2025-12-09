@@ -13,6 +13,7 @@ interface CommandPanelProps {
   events: RealtimeEvent[];
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
+  onClearEvents: () => void;
 }
 
 // Tab button component
@@ -340,7 +341,7 @@ function getTimeAgo(date: Date): string {
 }
 
 // Events Tab Content
-function EventsTab({ events }: { events: RealtimeEvent[] }) {
+function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -364,14 +365,58 @@ function EventsTab({ events }: { events: RealtimeEvent[] }) {
   };
 
   return (
-    <div className="events-tab" ref={scrollRef}>
+    <div className="events-tab">
       <style>{`
         .events-tab {
           display: flex;
           flex-direction: column;
-          padding: 12px;
-          overflow-y: auto;
           height: 100%;
+        }
+
+        .events-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 8px 12px;
+          border-bottom: 1px solid var(--color-border);
+          background: var(--color-surface);
+        }
+
+        .events-count {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: var(--color-text-ghost);
+        }
+
+        .events-clear-btn {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 3px 6px;
+          background: transparent;
+          border: 1px solid var(--color-border);
+          color: var(--color-text-dim);
+          font-family: var(--font-mono);
+          font-size: 9px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .events-clear-btn:hover {
+          border-color: var(--color-rose);
+          color: var(--color-rose);
+          background: rgba(251, 113, 133, 0.1);
+        }
+
+        .events-clear-btn svg {
+          width: 10px;
+          height: 10px;
+        }
+
+        .events-list {
+          flex: 1;
+          overflow-y: auto;
+          padding: 8px 12px;
         }
 
         .event-item {
@@ -423,6 +468,19 @@ function EventsTab({ events }: { events: RealtimeEvent[] }) {
         }
       `}</style>
 
+      {events.length > 0 && (
+        <div className="events-header">
+          <span className="events-count">{events.length} events</span>
+          <button className="events-clear-btn" onClick={onClear} type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+            </svg>
+            CLEAR
+          </button>
+        </div>
+      )}
+
+      <div className="events-list" ref={scrollRef}>
       {events.length === 0 ? (
         <div className="empty-sessions">
           <span className="empty-sessions-text">No events recorded</span>
@@ -456,6 +514,7 @@ function EventsTab({ events }: { events: RealtimeEvent[] }) {
           );
         })
       )}
+      </div>
     </div>
   );
 }
@@ -547,7 +606,7 @@ function ToolsTab() {
   );
 }
 
-export function CommandPanel({ events, activeTab, onTabChange }: CommandPanelProps) {
+export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: CommandPanelProps) {
   const { sessions } = useSessionsStore();
 
   return (
@@ -618,7 +677,7 @@ export function CommandPanel({ events, activeTab, onTabChange }: CommandPanelPro
       <div className="tab-content">
         {activeTab === 'sessions' && <SessionsTab />}
         {activeTab === 'tools' && <ToolsTab />}
-        {activeTab === 'events' && <EventsTab events={events} />}
+        {activeTab === 'events' && <EventsTab events={events} onClear={onClearEvents} />}
       </div>
     </div>
   );

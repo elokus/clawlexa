@@ -13,7 +13,7 @@ import { CommandPanel } from './components/CommandPanel';
 export function App() {
   useWebSocket();
 
-  const { connected, state, profile, messages, events, currentTool, loadMockConversation } = useAgentStore();
+  const { connected, state, profile, messages, events, currentTool, loadMockConversation, clearMessages, clearEvents } = useAgentStore();
   const [activeTab, setActiveTab] = useState<'sessions' | 'tools' | 'events'>('events');
 
   // Check if we're in demo mode (no WS_URL set)
@@ -307,6 +307,39 @@ export function App() {
           border: 1px solid var(--color-border);
         }
 
+        .section-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .clear-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 4px 8px;
+          background: transparent;
+          border: 1px solid var(--color-border);
+          color: var(--color-text-dim);
+          font-family: var(--font-mono);
+          font-size: 9px;
+          letter-spacing: 0.05em;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .clear-btn:hover {
+          border-color: var(--color-rose);
+          color: var(--color-rose);
+          background: rgba(251, 113, 133, 0.1);
+        }
+
+        .clear-btn svg {
+          width: 10px;
+          height: 10px;
+          margin-right: 4px;
+        }
+
         .conversation-scroll {
           flex: 1;
           overflow-y: auto;
@@ -464,7 +497,17 @@ export function App() {
               </svg>
               TRANSMISSION LOG
             </div>
-            <span className="message-counter">{messages.length} ENTRIES</span>
+            <div className="section-actions">
+              <span className="message-counter">{messages.length} ENTRIES</span>
+              {messages.length > 0 && (
+                <button className="clear-btn" onClick={clearMessages} type="button">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                  </svg>
+                  CLEAR
+                </button>
+              )}
+            </div>
           </div>
           <div className="conversation-scroll">
             <ConversationStream messages={messages} currentTool={currentTool} />
@@ -478,6 +521,7 @@ export function App() {
           events={events}
           activeTab={activeTab}
           onTabChange={setActiveTab}
+          onClearEvents={clearEvents}
         />
       </aside>
 

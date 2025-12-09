@@ -6,6 +6,7 @@ import { closeDatabase } from './db/index.js';
 import { Scheduler } from './scheduler/index.js';
 import { startWebhookServer, stopWebhookServer, onWebhookEvent } from './api/webhooks.js';
 import { startWebSocketServer, stopWebSocketServer, wsBroadcast } from './api/websocket.js';
+import { startStaticServer, stopStaticServer } from './api/static.js';
 
 async function main() {
   console.log('Starting Pi Voice Agent (TypeScript)...');
@@ -160,6 +161,14 @@ async function main() {
     console.warn('Failed to start WebSocket server:', error);
   }
 
+  // Start static file server for web dashboard
+  try {
+    await startStaticServer();
+    console.log('Static dashboard server started');
+  } catch (error) {
+    console.warn('Failed to start static server:', error);
+  }
+
   // Start webhook server for Mac daemon callbacks
   try {
     await startWebhookServer();
@@ -191,6 +200,7 @@ async function main() {
   const shutdown = async () => {
     console.log('\nShutting down...');
     scheduler.stop();
+    await stopStaticServer();
     await stopWebSocketServer();
     await stopWebhookServer();
     agent.deactivate();
