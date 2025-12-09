@@ -1,0 +1,191 @@
+import { Router, Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
+import { SessionManager } from '../sessions/manager.js';
+import {
+  CreateSessionSchema,
+  SessionInputSchema,
+  SessionIdParamSchema,
+} from './validation.js';
+
+export function createSessionRoutes(sessionManager: SessionManager): Router {
+  const router = Router();
+
+  /**
+   * POST /sessions - Create a new session
+   */
+  router.post('/sessions', async (req: Request, res: Response) => {
+    try {
+      const input = CreateSessionSchema.parse(req.body);
+
+      const session = await sessionManager.createSession({
+        sessionId: input.sessionId,
+        goal: input.goal,
+        command: input.command,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          sessionId: session.sessionId,
+          tmuxSession: session.tmuxSession,
+          goal: session.goal,
+          status: session.status,
+          createdAt: session.createdAt,
+        },
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          details: error.errors,
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
+  /**
+   * GET /sessions - List all sessions
+   */
+  router.get('/sessions', async (_req: Request, res: Response) => {
+    try {
+      const sessions = sessionManager.listSessions();
+      res.json({
+        success: true,
+        data: sessions,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
+  /**
+   * GET /sessions/:id - Get session details
+   */
+  router.get('/sessions/:id', async (req: Request, res: Response) => {
+    try {
+      const { id } = SessionIdParamSchema.parse(req.params);
+
+      const session = sessionManager.getSession(id);
+      if (!session) {
+        res.status(404).json({
+          success: false,
+          error: `Session ${id} not found`,
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: session,
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          details: error.errors,
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
+  /**
+   * POST /sessions/:id/input - Send input to a session
+   */
+  router.post('/sessions/:id/input', async (req: Request, res: Response) => {
+    try {
+      const { id } = SessionIdParamSchema.parse(req.params);
+      const { input } = SessionInputSchema.parse(req.body);
+
+      await sessionManager.sendInput(id, input);
+
+      res.json({
+        success: true,
+        message: 'Input sent',
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          details: error.errors,
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const status = message.includes('not found') ? 404 : 500;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  /**
+   * GET /sessions/:id/output - Read output from a session
+   */
+  router.get('/sessions/:id/output', async (req: Request, res: Response) => {
+    try {
+      const { id } = SessionIdParamSchema.parse(req.params);
+
+      const output = await sessionManager.readOutput(id);
+
+      res.json({
+        success: true,
+        data: output,
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          details: error.errors,
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const status = message.includes('not found') ? 404 : 500;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  /**
+   * DELETE /sessions/:id - Terminate a session
+   */
+  router.delete('/sessions/:id', async (req: Request, res: Response) => {
+    try {
+      const { id } = SessionIdParamSchema.parse(req.params);
+
+      await sessionManager.terminateSession(id);
+
+      res.json({
+        success: true,
+        message: `Session ${id} terminated`,
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          details: error.errors,
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const status = message.includes('not found') ? 404 : 500;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  return router;
+}
