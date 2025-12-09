@@ -1,0 +1,244 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VΞRTΞX Voice Interface - Indie Dark Game Aesthetic
+   Inspired by: Transistor, Hyper Light Drifter, terminal UIs, retro-futurism
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Custom Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700&display=swap');
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CSS CUSTOM PROPERTIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Deep dark palette - noir atmosphere */
+  --color-void: #05050a;
+  --color-abyss: #0a0a12;
+  --color-deep: #0f0f1a;
+  --color-surface: #161622;
+  --color-raised: #1e1e2e;
+  --color-hover: #262638;
+
+  /* Text hierarchy */
+  --color-text-bright: #e4e4f0;
+  --color-text-normal: #b8b8cc;
+  --color-text-dim: #6e6e88;
+  --color-text-ghost: #3a3a50;
+
+  /* Accent spectrum - muted but distinctive */
+  --color-cyan: #38bdf8;
+  --color-cyan-dim: #0c4a6e;
+  --color-amber: #f59e0b;
+  --color-amber-dim: #78350f;
+  --color-violet: #a78bfa;
+  --color-violet-dim: #4c1d95;
+  --color-emerald: #34d399;
+  --color-emerald-dim: #064e3b;
+  --color-rose: #fb7185;
+  --color-rose-dim: #881337;
+
+  /* Functional */
+  --color-border: #1f1f30;
+  --color-border-active: #2a2a44;
+  --color-glow: rgba(56, 189, 248, 0.15);
+
+  /* Typography */
+  --font-display: 'Orbitron', monospace;
+  --font-ui: 'Rajdhani', sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+
+  /* Timing */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-elastic: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE RESET
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  background: var(--color-void);
+  color: var(--color-text-normal);
+  min-height: 100vh;
+  overflow: hidden;
+  letter-spacing: 0.02em;
+}
+
+#root {
+  min-height: 100vh;
+  background: var(--color-void);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ATMOSPHERIC BACKGROUND
+   Subtle scanlines + vignette + noise for depth
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    /* Scanlines */
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.03) 2px,
+      rgba(0, 0, 0, 0.03) 4px
+    ),
+    /* Subtle grid */
+    linear-gradient(90deg, rgba(56, 189, 248, 0.015) 1px, transparent 1px),
+    linear-gradient(rgba(56, 189, 248, 0.015) 1px, transparent 1px);
+  background-size: 100% 4px, 80px 80px, 80px 80px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Vignette overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 0%,
+    transparent 50%,
+    rgba(5, 5, 10, 0.5) 100%
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCROLLBAR - Minimal, game-style
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-abyss);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-active);
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-cyan-dim);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--color-abyss);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SELECTION
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+::selection {
+  background: rgba(56, 189, 248, 0.3);
+  color: var(--color-text-bright);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TYPOGRAPHY UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: 0.8; }
+  94% { opacity: 1; }
+  96% { opacity: 0.9; }
+  97% { opacity: 1; }
+}
+
+/* CRT flicker effect - very subtle */
+.crt-flicker {
+  animation: flicker 8s infinite;
+}
+
+/* Glow text */
+.glow-text {
+  text-shadow:
+    0 0 10px currentColor,
+    0 0 20px currentColor,
+    0 0 40px currentColor;
+}
+
+.glow-text-subtle {
+  text-shadow: 0 0 20px currentColor;
+}
+
+/* Border glow */
+.glow-border {
+  box-shadow:
+    0 0 0 1px var(--color-border),
+    0 0 20px -5px var(--color-glow);
+}

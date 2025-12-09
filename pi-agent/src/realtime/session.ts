@@ -55,6 +55,8 @@ export interface SessionEvents {
   error: (error: Error) => void;
   connected: () => void;
   disconnected: () => void;
+  toolStart: (name: string, args: Record<string, unknown>) => void;
+  toolEnd: (name: string, result: string) => void;
 }
 
 export class VoiceSession {
@@ -186,12 +188,14 @@ export class VoiceSession {
         .join(', ');
       console.log(`[Tool] ${tool.name}(${paramStr})`);
       this.setState('thinking');
+      this.emit('toolStart', tool.name, parsedArgs);
     });
 
     this.session.on('agent_tool_end', (_ctx, _agent, tool, result) => {
       // Truncate long results for cleaner logs
       const displayResult = result.length > 200 ? result.substring(0, 200) + '...' : result;
       console.log(`[Tool] ${tool.name} returned: ${displayResult}`);
+      this.emit('toolEnd', tool.name, result);
     });
 
     // Tool approval - auto-approve all tools

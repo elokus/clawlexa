@@ -5,6 +5,7 @@ import { AudioCapture, AudioPlayback, speak } from './audio/index.js';
 import { closeDatabase } from './db/index.js';
 import { Scheduler } from './scheduler/index.js';
 import { startWebhookServer, stopWebhookServer, onWebhookEvent } from './api/webhooks.js';
+import { startWebSocketServer, stopWebSocketServer, wsBroadcast } from './api/websocket.js';
 
 async function main() {
   console.log('Starting Pi Voice Agent (TypeScript)...');
@@ -61,6 +62,9 @@ async function main() {
   agent.on('stateChange', (state, profile) => {
     console.log(`[State] ${state}${profile ? ` (${profile})` : ''}`);
 
+    // Broadcast to WebSocket clients
+    wsBroadcast.stateChange(state, profile);
+
     // Manage audio based on state
     if (state === 'listening') {
       // Start capturing mic audio when listening
@@ -82,6 +86,8 @@ async function main() {
 
   agent.on('transcript', (text, role) => {
     console.log(`[${role}] ${text}`);
+    // Broadcast transcript to WebSocket clients
+    wsBroadcast.transcript(text, role);
   });
 
   agent.on('audio', (audio) => {
@@ -93,6 +99,15 @@ async function main() {
 
   agent.on('error', (error) => {
     console.error('[Error]', error.message);
+    wsBroadcast.error(error.message);
+  });
+
+  agent.on('toolStart', (name, args) => {
+    wsBroadcast.toolStart(name, args);
+  });
+
+  agent.on('toolEnd', (name, result) => {
+    wsBroadcast.toolEnd(name, result);
   });
 
   // Send captured audio to the agent
@@ -137,6 +152,14 @@ async function main() {
   scheduler.start();
   console.log('Timer scheduler started');
 
+  // Start WebSocket server for dashboard
+  try {
+    await startWebSocketServer();
+    console.log('WebSocket server started');
+  } catch (error) {
+    console.warn('Failed to start WebSocket server:', error);
+  }
+
   // Start webhook server for Mac daemon callbacks
   try {
     await startWebhookServer();
@@ -168,6 +191,7 @@ async function main() {
   const shutdown = async () => {
     console.log('\nShutting down...');
     scheduler.stop();
+    await stopWebSocketServer();
     await stopWebhookServer();
     agent.deactivate();
     audioCapture.stop();

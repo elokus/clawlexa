@@ -48,6 +48,28 @@ voice-agent/
 ├── docs/
 │   └── IMPLEMENTATION_PLAN.md
 │
+├── web/                   # Web Dashboard (React + Vite + Bun)
+│   ├── src/
+│   │   ├── main.tsx          # Entry point
+│   │   ├── App.tsx           # Main dashboard layout
+│   │   ├── components/       # UI components
+│   │   │   ├── VoiceVisualizer.tsx  # Audio waveform animation
+│   │   │   ├── StatusIndicator.tsx  # Connection/state display
+│   │   │   ├── TranscriptView.tsx   # Conversation history
+│   │   │   ├── SessionSidebar.tsx   # CLI sessions panel
+│   │   │   └── EventLog.tsx         # Real-time event stream
+│   │   ├── hooks/
+│   │   │   └── useWebSocket.ts      # WebSocket connection
+│   │   ├── stores/           # Zustand state management
+│   │   │   ├── agent.ts          # Agent state/transcripts
+│   │   │   └── sessions.ts       # CLI sessions
+│   │   ├── styles/
+│   │   │   └── index.css         # Tailwind + dark theme
+│   │   └── types/
+│   │       └── index.ts          # TypeScript types
+│   ├── package.json
+│   └── vite.config.ts
+│
 └── pi-agent/              # TypeScript agent
     ├── src/
     │   ├── index.ts           # Main entry point
@@ -87,7 +109,8 @@ voice-agent/
     │   │   └── time-parser.ts     # Natural language time parsing
     │   │
     │   ├── api/               # HTTP API
-    │   │   └── webhooks.ts        # Mac daemon webhook receiver
+    │   │   ├── webhooks.ts        # Mac daemon webhook receiver
+    │   │   └── websocket.ts       # WebSocket server for dashboard
     │   │
     │   └── tools/             # Agent tools
     │       ├── index.ts           # Tool registry
@@ -219,6 +242,7 @@ SQLite at `~/voice-agent.db`:
 
 ## Development Commands
 
+### Pi Agent (on Raspberry Pi)
 ```bash
 cd pi-agent
 
@@ -238,6 +262,27 @@ npm run test:db
 npm run test:timer
 ```
 
+### Web Dashboard (on Mac or any machine)
+```bash
+cd web
+
+# Install dependencies
+bun install
+
+# Run development server (accessible at http://localhost:5173)
+bun run dev
+
+# Build for production
+bun run build
+
+# Preview production build
+bun run preview
+```
+
+The web dashboard connects to the Pi via WebSocket on port 3001. Configure the connection URL:
+- Default: `ws://marlon.local:3001`
+- Override: Set `VITE_WS_URL` environment variable
+
 ## Configuration
 
 ### Environment Variables (.env)
@@ -252,6 +297,7 @@ GOVEE_API_KEY=...
 MAC_DAEMON_URL=http://MacBook-Pro-von-Lukasz.local:3100
 PI_HOSTNAME=marlon.local
 WEBHOOK_PORT=3000
+WS_PORT=3001
 ```
 
 ### Profile Configuration

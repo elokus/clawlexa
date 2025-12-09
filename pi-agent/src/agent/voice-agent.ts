@@ -23,6 +23,8 @@ export interface VoiceAgentEvents {
   audio: (audio: TransportLayerAudio) => void;
   transcript: (text: string, role: 'user' | 'assistant') => void;
   error: (error: Error) => void;
+  toolStart: (name: string, args: Record<string, unknown>) => void;
+  toolEnd: (name: string, result: string) => void;
 }
 
 export class VoiceAgent {
@@ -119,6 +121,14 @@ export class VoiceAgent {
 
     this.session.on('error', (error) => {
       this.emit('error', error);
+    });
+
+    this.session.on('toolStart', (name, args) => {
+      this.emit('toolStart', name, args);
+    });
+
+    this.session.on('toolEnd', (name, result) => {
+      this.emit('toolEnd', name, result);
     });
 
     this.session.on('disconnected', () => {
