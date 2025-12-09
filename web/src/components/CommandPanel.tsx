@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Command Panel - Tabbed interface for Sessions, Tools, Events, Agent
-// Right side panel with game-inspired console aesthetic
+// Command Panel - Mobile-optimized bottom sheet with tabs
+// Touch-friendly, swipeable, with smooth animations
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useRef, useEffect, useState } from 'react';
@@ -17,16 +17,18 @@ interface CommandPanelProps {
   onClearEvents: () => void;
 }
 
-// Tab button component
+// Compact tab button
 function TabButton({
   tab,
   label,
+  icon,
   count,
   active,
   onClick,
 }: {
   tab: TabType;
   label: string;
+  icon: React.ReactNode;
   count?: number;
   active: boolean;
   onClick: () => void;
@@ -41,58 +43,92 @@ function TabButton({
         .tab-btn {
           flex: 1;
           display: flex;
+          flex-direction: column;
           align-items: center;
-          justify-content: center;
-          gap: 6px;
-          padding: 12px 8px;
+          gap: 4px;
+          padding: 10px 8px;
           background: transparent;
           border: none;
           border-bottom: 2px solid transparent;
-          font-family: var(--font-display);
-          font-size: 10px;
-          letter-spacing: 0.15em;
           color: var(--color-text-dim);
           cursor: pointer;
           transition: all 0.2s ease;
+          position: relative;
+          min-height: 56px;
         }
 
-        .tab-btn:hover {
-          color: var(--color-text-normal);
-          background: var(--color-surface);
+        .tab-btn:active {
+          transform: scale(0.95);
         }
 
         .tab-btn.active {
           color: var(--color-cyan);
           border-bottom-color: var(--color-cyan);
-          background: var(--color-surface);
+          background: rgba(56, 189, 248, 0.05);
         }
 
-        .tab-count {
+        .tab-icon {
+          width: 20px;
+          height: 20px;
+          transition: all 0.2s ease;
+        }
+
+        .tab-btn.active .tab-icon {
+          filter: drop-shadow(0 0 6px var(--color-cyan));
+        }
+
+        .tab-label {
           font-family: var(--font-mono);
           font-size: 9px;
-          padding: 1px 5px;
-          background: var(--color-abyss);
-          border: 1px solid var(--color-border);
-          color: var(--color-text-ghost);
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
         }
 
-        .tab-btn.active .tab-count {
-          background: var(--color-cyan-dim);
-          border-color: var(--color-cyan);
-          color: var(--color-cyan);
+        .tab-badge {
+          position: absolute;
+          top: 6px;
+          right: calc(50% - 16px);
+          min-width: 16px;
+          height: 16px;
+          padding: 0 4px;
+          background: var(--color-cyan);
+          border-radius: 8px;
+          font-family: var(--font-mono);
+          font-size: 9px;
+          font-weight: 600;
+          color: var(--color-void);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        @media (min-width: 769px) {
+          .tab-btn {
+            flex-direction: row;
+            gap: 8px;
+            padding: 12px 16px;
+            min-height: auto;
+          }
+
+          .tab-badge {
+            position: static;
+            margin-left: 4px;
+          }
         }
       `}</style>
-      {label}
-      {count !== undefined && <span className="tab-count">{count}</span>}
+      <span className="tab-icon">{icon}</span>
+      <span className="tab-label">{label}</span>
+      {count !== undefined && count > 0 && (
+        <span className="tab-badge">{count > 99 ? '99+' : count}</span>
+      )}
     </button>
   );
 }
 
-// Sessions Tab Content
+// Sessions Tab
 function SessionsTab() {
   const { sessions, selectedSessionId, selectSession, loading, error, fetchSessions } = useSessionsStore();
 
-  // Fetch sessions on mount
   useEffect(() => {
     fetchSessions();
   }, [fetchSessions]);
@@ -110,30 +146,71 @@ function SessionsTab() {
         .sessions-tab {
           display: flex;
           flex-direction: column;
-          gap: 16px;
-          padding: 16px;
+          gap: 12px;
+          padding: 12px;
+        }
+
+        .sessions-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .sessions-count {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: var(--color-text-ghost);
+        }
+
+        .refresh-btn {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 6px 10px;
+          background: transparent;
+          border: 1px solid var(--color-border);
+          border-radius: 6px;
+          color: var(--color-text-dim);
+          font-family: var(--font-mono);
+          font-size: 9px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .refresh-btn:active {
+          transform: scale(0.95);
+        }
+
+        .refresh-btn svg {
+          width: 12px;
+          height: 12px;
+        }
+
+        .refresh-btn.loading svg {
+          animation: spin 1s linear infinite;
         }
 
         .session-group {
           display: flex;
           flex-direction: column;
-          gap: 8px;
+          gap: 6px;
         }
 
         .group-label {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
           font-family: var(--font-display);
-          font-size: 10px;
+          font-size: 9px;
           letter-spacing: 0.1em;
           color: var(--color-text-ghost);
-          margin-bottom: 4px;
+          padding: 4px 0;
         }
 
         .group-dot {
           width: 6px;
           height: 6px;
+          border-radius: 50%;
         }
 
         .group-dot.active {
@@ -149,94 +226,36 @@ function SessionsTab() {
           display: flex;
           flex-direction: column;
           align-items: center;
-          justify-content: center;
-          padding: 40px 20px;
+          padding: 32px 16px;
           text-align: center;
-          gap: 12px;
+          gap: 10px;
         }
 
         .empty-sessions svg {
-          width: 32px;
-          height: 32px;
+          width: 28px;
+          height: 28px;
           color: var(--color-text-ghost);
-          opacity: 0.4;
+          opacity: 0.5;
         }
 
         .empty-sessions-text {
           font-family: var(--font-mono);
           font-size: 11px;
           color: var(--color-text-dim);
-          line-height: 1.8;
-        }
-
-        .sessions-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0 0 8px 0;
-        }
-
-        .sessions-refresh-btn {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          padding: 4px 8px;
-          background: transparent;
-          border: 1px solid var(--color-border);
-          color: var(--color-text-dim);
-          font-family: var(--font-mono);
-          font-size: 9px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .sessions-refresh-btn:hover {
-          border-color: var(--color-cyan);
-          color: var(--color-cyan);
-          background: rgba(34, 211, 238, 0.1);
-        }
-
-        .sessions-refresh-btn.loading {
-          opacity: 0.5;
-          pointer-events: none;
-        }
-
-        .sessions-refresh-btn svg {
-          width: 10px;
-          height: 10px;
-        }
-
-        .sessions-refresh-btn.loading svg {
-          animation: spin 1s linear infinite;
-        }
-
-        .sessions-error {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          padding: 20px;
-          text-align: center;
-          gap: 8px;
-        }
-
-        .sessions-error-text {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-rose);
+          line-height: 1.6;
         }
 
         @keyframes spin {
-          from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
       `}</style>
 
       <div className="sessions-header">
-        <span className="group-label">
-          {loading ? 'LOADING...' : `${sessions.length} SESSIONS`}
+        <span className="sessions-count">
+          {loading ? 'Loading...' : `${sessions.length} sessions`}
         </span>
         <button
-          className={`sessions-refresh-btn ${loading ? 'loading' : ''}`}
+          className={`refresh-btn ${loading ? 'loading' : ''}`}
           onClick={() => fetchSessions()}
           type="button"
           disabled={loading}
@@ -245,22 +264,9 @@ function SessionsTab() {
             <path d="M23 4v6h-6M1 20v-6h6" />
             <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
           </svg>
-          REFRESH
+          Refresh
         </button>
       </div>
-
-      {error && (
-        <div className="sessions-error">
-          <span className="sessions-error-text">{error}</span>
-          <button
-            className="sessions-refresh-btn"
-            onClick={() => fetchSessions()}
-            type="button"
-          >
-            RETRY
-          </button>
-        </div>
-      )}
 
       {!loading && !error && sessions.length === 0 ? (
         <div className="empty-sessions">
@@ -269,17 +275,17 @@ function SessionsTab() {
             <path d="M8 21h8M12 17v4" />
           </svg>
           <span className="empty-sessions-text">
-            No active sessions<br/>
-            Say "Computer" to spawn
+            No sessions yet<br />
+            Say "Computer" to start
           </span>
         </div>
-      ) : !loading && !error && (
+      ) : (
         <>
           {activeSessions.length > 0 && (
             <div className="session-group">
               <div className="group-label">
                 <span className="group-dot active" />
-                ACTIVE ({activeSessions.length})
+                Active ({activeSessions.length})
               </div>
               {activeSessions.map((session) => (
                 <SessionCard
@@ -296,9 +302,9 @@ function SessionsTab() {
             <div className="session-group">
               <div className="group-label">
                 <span className="group-dot completed" />
-                COMPLETED ({completedSessions.length})
+                Completed ({completedSessions.length})
               </div>
-              {completedSessions.slice(0, 5).map((session) => (
+              {completedSessions.slice(0, 3).map((session) => (
                 <SessionCard
                   key={session.id}
                   session={session}
@@ -324,13 +330,9 @@ function SessionCard({
   onClick: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const createdAt = new Date(session.created_at);
-  const timeAgo = getTimeAgo(createdAt);
-
+  const timeAgo = getTimeAgo(new Date(session.created_at));
   const isActive = ['pending', 'running', 'waiting_for_input'].includes(session.status);
-  const tmuxCommand = session.mac_session_id
-    ? `tmux attach -t ${session.mac_session_id}`
-    : null;
+  const tmuxCommand = session.mac_session_id ? `tmux attach -t ${session.mac_session_id}` : null;
 
   const copyCommand = async () => {
     if (tmuxCommand) {
@@ -340,8 +342,19 @@ function SessionCard({
     }
   };
 
+  const statusColors: Record<string, string> = {
+    running: 'var(--color-cyan)',
+    pending: 'var(--color-amber)',
+    waiting_for_input: 'var(--color-amber)',
+    finished: 'var(--color-emerald)',
+    error: 'var(--color-rose)',
+    cancelled: 'var(--color-text-ghost)',
+  };
+
+  const statusColor = statusColors[session.status] || 'var(--color-text-ghost)';
+
   return (
-    <div className={`session-card ${selected ? 'selected' : ''}`}>
+    <div className={`session-card ${selected ? 'selected' : ''}`} onClick={onClick}>
       <style>{`
         .session-card {
           display: flex;
@@ -350,21 +363,21 @@ function SessionCard({
           padding: 12px;
           background: var(--color-surface);
           border: 1px solid var(--color-border);
+          border-radius: 10px;
           cursor: pointer;
           transition: all 0.2s ease;
         }
 
-        .session-card:hover {
-          border-color: var(--color-border-active);
-          background: var(--color-hover);
+        .session-card:active {
+          transform: scale(0.98);
         }
 
         .session-card.selected {
           border-color: var(--color-cyan);
-          background: var(--color-cyan-dim);
+          background: rgba(56, 189, 248, 0.08);
         }
 
-        .session-header {
+        .session-top {
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -379,44 +392,28 @@ function SessionCard({
         .session-status {
           font-family: var(--font-mono);
           font-size: 9px;
-          padding: 2px 6px;
-          border: 1px solid;
-        }
-
-        .session-status.running {
-          color: var(--color-cyan);
-          border-color: var(--color-cyan);
-          background: var(--color-cyan-dim);
-        }
-
-        .session-status.finished {
-          color: var(--color-emerald);
-          border-color: var(--color-emerald);
-          background: var(--color-emerald-dim);
-        }
-
-        .session-status.error {
-          color: var(--color-rose);
-          border-color: var(--color-rose);
-          background: var(--color-rose-dim);
-        }
-
-        .session-status.pending,
-        .session-status.waiting_for_input {
-          color: var(--color-amber);
-          border-color: var(--color-amber);
-          background: var(--color-amber-dim);
+          padding: 3px 8px;
+          border-radius: 4px;
+          background: color-mix(in srgb, ${statusColor} 15%, transparent);
+          color: ${statusColor};
+          border: 1px solid ${statusColor}40;
         }
 
         .session-goal {
-          font-size: 12px;
+          font-size: 13px;
           color: var(--color-text-normal);
-          line-height: 1.5;
+          line-height: 1.4;
           display: -webkit-box;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
           overflow: hidden;
           margin: 0;
+        }
+
+        .session-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
         }
 
         .session-time {
@@ -425,35 +422,33 @@ function SessionCard({
           color: var(--color-text-ghost);
         }
 
-        .session-tmux {
+        .tmux-row {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
           margin-top: 4px;
           padding-top: 8px;
           border-top: 1px solid var(--color-border);
         }
 
-        .tmux-command {
+        .tmux-cmd {
           flex: 1;
           font-family: var(--font-mono);
           font-size: 10px;
           color: var(--color-cyan);
           background: var(--color-abyss);
-          padding: 4px 8px;
-          border: 1px solid var(--color-border);
+          padding: 6px 8px;
+          border-radius: 4px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        .tmux-copy-btn {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 4px 8px;
+        .copy-btn {
+          padding: 6px 10px;
           background: var(--color-cyan-dim);
           border: 1px solid var(--color-cyan);
+          border-radius: 4px;
           color: var(--color-cyan);
           font-family: var(--font-mono);
           font-size: 9px;
@@ -461,60 +456,31 @@ function SessionCard({
           transition: all 0.2s ease;
         }
 
-        .tmux-copy-btn:hover {
-          background: var(--color-cyan);
-          color: var(--color-void);
+        .copy-btn:active {
+          transform: scale(0.95);
         }
 
-        .tmux-copy-btn.copied {
+        .copy-btn.copied {
           background: var(--color-emerald-dim);
           border-color: var(--color-emerald);
           color: var(--color-emerald);
         }
-
-        .tmux-copy-btn svg {
-          width: 12px;
-          height: 12px;
-          margin-right: 4px;
-        }
       `}</style>
-      <button
-        className="session-card-inner"
-        onClick={onClick}
-        type="button"
-        style={{ all: 'unset', cursor: 'pointer', display: 'contents' }}
-      >
-        <div className="session-header">
-          <span className="session-id">#{session.id.slice(0, 8)}</span>
-          <span className={`session-status ${session.status}`}>
-            {session.status.replace('_', ' ').toUpperCase()}
-          </span>
-        </div>
-        <p className="session-goal">{session.goal}</p>
-        <span className="session-time">{timeAgo}</span>
-      </button>
 
-      {/* Show tmux attach command for active sessions with mac_session_id */}
+      <div className="session-top">
+        <span className="session-id">#{session.id.slice(0, 8)}</span>
+        <span className="session-status">{session.status.replace('_', ' ')}</span>
+      </div>
+      <p className="session-goal">{session.goal}</p>
+      <div className="session-meta">
+        <span className="session-time">{timeAgo}</span>
+      </div>
+
       {selected && isActive && tmuxCommand && (
-        <div className="session-tmux">
-          <code className="tmux-command">{tmuxCommand}</code>
-          <button className={`tmux-copy-btn ${copied ? 'copied' : ''}`} onClick={copyCommand} type="button">
-            {copied ? (
-              <>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-                COPIED
-              </>
-            ) : (
-              <>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" />
-                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                </svg>
-                COPY
-              </>
-            )}
+        <div className="tmux-row" onClick={(e) => e.stopPropagation()}>
+          <code className="tmux-cmd">{tmuxCommand}</code>
+          <button className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copyCommand} type="button">
+            {copied ? '✓' : 'Copy'}
           </button>
         </div>
       )}
@@ -535,7 +501,7 @@ function getTimeAgo(date: Date): string {
   return `${diffDays}d ago`;
 }
 
-// Events Tab Content
+// Events Tab
 function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -555,8 +521,6 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
     error: 'var(--color-rose)',
     session_started: 'var(--color-amber)',
     session_ended: 'var(--color-amber)',
-    item_pending: 'var(--color-text-dim)',
-    item_completed: 'var(--color-emerald)',
   };
 
   return (
@@ -572,9 +536,9 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 8px 12px;
+          padding: 10px 12px;
           border-bottom: 1px solid var(--color-border);
-          background: var(--color-surface);
+          flex-shrink: 0;
         }
 
         .events-count {
@@ -583,13 +547,11 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
           color: var(--color-text-ghost);
         }
 
-        .events-clear-btn {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          padding: 3px 6px;
+        .clear-btn {
+          padding: 5px 8px;
           background: transparent;
           border: 1px solid var(--color-border);
+          border-radius: 4px;
           color: var(--color-text-dim);
           font-family: var(--font-mono);
           font-size: 9px;
@@ -597,21 +559,17 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
           transition: all 0.2s ease;
         }
 
-        .events-clear-btn:hover {
+        .clear-btn:active {
+          transform: scale(0.95);
           border-color: var(--color-rose);
           color: var(--color-rose);
-          background: rgba(251, 113, 133, 0.1);
-        }
-
-        .events-clear-btn svg {
-          width: 10px;
-          height: 10px;
         }
 
         .events-list {
           flex: 1;
           overflow-y: auto;
-          padding: 8px 12px;
+          -webkit-overflow-scrolling: touch;
+          padding: 8px;
         }
 
         .event-item {
@@ -619,12 +577,10 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
           align-items: flex-start;
           gap: 8px;
           padding: 8px;
-          border-bottom: 1px solid var(--color-border);
-          animation: slide-up 0.15s ease forwards;
-        }
-
-        .event-item:last-child {
-          border-bottom: none;
+          margin-bottom: 4px;
+          background: var(--color-surface);
+          border-radius: 6px;
+          animation: fade-in 0.15s ease;
         }
 
         .event-time {
@@ -632,7 +588,7 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
           font-family: var(--font-mono);
           font-size: 9px;
           color: var(--color-text-ghost);
-          width: 55px;
+          width: 50px;
         }
 
         .event-type {
@@ -640,11 +596,7 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
           font-family: var(--font-mono);
           font-size: 9px;
           padding: 2px 6px;
-          border: 1px solid;
-          max-width: 100px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          border-radius: 3px;
         }
 
         .event-data {
@@ -655,153 +607,146 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+          min-width: 0;
         }
 
-        @keyframes slide-up {
-          from { opacity: 0; transform: translateY(4px); }
-          to { opacity: 1; transform: translateY(0); }
+        .empty-events {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          font-family: var(--font-mono);
+          font-size: 11px;
+          color: var(--color-text-ghost);
+        }
+
+        @keyframes fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
       `}</style>
 
       {events.length > 0 && (
         <div className="events-header">
           <span className="events-count">{events.length} events</span>
-          <button className="events-clear-btn" onClick={onClear} type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-            </svg>
-            CLEAR
-          </button>
+          <button className="clear-btn" onClick={onClear} type="button">Clear</button>
         </div>
       )}
 
       <div className="events-list" ref={scrollRef}>
-      {events.length === 0 ? (
-        <div className="empty-sessions">
-          <span className="empty-sessions-text">No events recorded</span>
-        </div>
-      ) : (
-        events.map((event) => {
-          const color = eventColors[event.type] || 'var(--color-text-dim)';
-          return (
-            <div key={event.id} className="event-item">
-              <span className="event-time">
-                {new Date(event.timestamp).toLocaleTimeString('de-DE', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                })}
-              </span>
-              <span
-                className="event-type"
-                style={{
-                  color: color,
-                  borderColor: color,
-                  background: `color-mix(in srgb, ${color} 10%, transparent)`,
-                }}
-              >
-                {event.type}
-              </span>
-              <span className="event-data">
-                {JSON.stringify(event.data).slice(0, 40)}
-              </span>
-            </div>
-          );
-        })
-      )}
+        {events.length === 0 ? (
+          <div className="empty-events">No events yet</div>
+        ) : (
+          events.map((event) => {
+            const color = eventColors[event.type] || 'var(--color-text-dim)';
+            return (
+              <div key={event.id} className="event-item">
+                <span className="event-time">
+                  {new Date(event.timestamp).toLocaleTimeString('de-DE', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </span>
+                <span
+                  className="event-type"
+                  style={{
+                    color,
+                    background: `color-mix(in srgb, ${color} 15%, transparent)`,
+                  }}
+                >
+                  {event.type}
+                </span>
+                <span className="event-data">
+                  {JSON.stringify(event.data).slice(0, 35)}...
+                </span>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
 }
 
-// Tools Tab Content (placeholder for now)
+// Tools Tab
 function ToolsTab() {
   const tools = [
-    { name: 'add_todo', desc: 'Add task to registry', icon: '◈' },
-    { name: 'view_todos', desc: 'List all tasks', icon: '◈' },
-    { name: 'delete_todo', desc: 'Remove task', icon: '◈' },
-    { name: 'set_timer', desc: 'Start countdown', icon: '⧖' },
-    { name: 'list_timers', desc: 'View active timers', icon: '⧖' },
-    { name: 'cancel_timer', desc: 'Stop countdown', icon: '⧖' },
-    { name: 'web_search', desc: 'Search network', icon: '⌘' },
-    { name: 'control_light', desc: 'Adjust illumination', icon: '◉' },
-    { name: 'deep_thinking', desc: 'Complex analysis', icon: '◇' },
-    { name: 'developer_session', desc: 'Spawn dev session', icon: '▣' },
+    { name: 'add_todo', desc: 'Add task', icon: '◈', color: 'var(--color-violet)' },
+    { name: 'view_todos', desc: 'List tasks', icon: '◈', color: 'var(--color-violet)' },
+    { name: 'set_timer', desc: 'Set timer', icon: '⧖', color: 'var(--color-amber)' },
+    { name: 'web_search', desc: 'Search web', icon: '⌘', color: 'var(--color-cyan)' },
+    { name: 'control_light', desc: 'Control lights', icon: '◉', color: 'var(--color-emerald)' },
+    { name: 'deep_thinking', desc: 'Deep analysis', icon: '◇', color: 'var(--color-violet)' },
+    { name: 'developer_session', desc: 'Dev session', icon: '▣', color: 'var(--color-cyan)' },
   ];
 
   return (
     <div className="tools-tab">
       <style>{`
         .tools-tab {
-          display: flex;
-          flex-direction: column;
-          padding: 16px;
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
           gap: 8px;
+          padding: 12px;
+        }
+
+        @media (min-width: 769px) {
+          .tools-tab {
+            grid-template-columns: 1fr;
+          }
         }
 
         .tool-item {
           display: flex;
+          flex-direction: column;
           align-items: center;
-          gap: 12px;
-          padding: 10px 12px;
+          gap: 6px;
+          padding: 14px 10px;
           background: var(--color-surface);
           border: 1px solid var(--color-border);
+          border-radius: 10px;
           transition: all 0.2s ease;
         }
 
-        .tool-item:hover {
-          border-color: var(--color-border-active);
-          background: var(--color-hover);
-        }
-
         .tool-icon {
-          font-size: 14px;
-          color: var(--color-violet);
-          width: 20px;
-          text-align: center;
-        }
-
-        .tool-info {
-          flex: 1;
+          font-size: 18px;
         }
 
         .tool-name {
           font-family: var(--font-mono);
-          font-size: 11px;
+          font-size: 10px;
           color: var(--color-text-bright);
-          margin-bottom: 2px;
         }
 
         .tool-desc {
-          font-size: 10px;
-          color: var(--color-text-dim);
+          font-size: 9px;
+          color: var(--color-text-ghost);
         }
 
-        .tool-status {
+        .tool-ready {
           font-family: var(--font-mono);
-          font-size: 9px;
-          color: var(--color-emerald);
+          font-size: 8px;
           padding: 2px 6px;
+          border-radius: 3px;
           background: var(--color-emerald-dim);
-          border: 1px solid var(--color-emerald);
+          color: var(--color-emerald);
         }
       `}</style>
 
       {tools.map((tool) => (
         <div key={tool.name} className="tool-item">
-          <span className="tool-icon">{tool.icon}</span>
-          <div className="tool-info">
-            <div className="tool-name">{tool.name}</div>
-            <div className="tool-desc">{tool.desc}</div>
-          </div>
-          <span className="tool-status">READY</span>
+          <span className="tool-icon" style={{ color: tool.color }}>{tool.icon}</span>
+          <span className="tool-name">{tool.name}</span>
+          <span className="tool-desc">{tool.desc}</span>
+          <span className="tool-ready">Ready</span>
         </div>
       ))}
     </div>
   );
 }
 
-// Agent Tab - Shows CLI Agent activity stream
+// Agent Tab
 function AgentTab({ activities, isActive, onClear }: {
   activities: CliAgentActivity[];
   isActive: boolean;
@@ -815,43 +760,14 @@ function AgentTab({ activities, isActive, onClear }: {
     }
   }, [activities]);
 
-  const getActivityIcon = (type: CliAgentActivity['type']) => {
+  const getConfig = (type: CliAgentActivity['type']) => {
     switch (type) {
-      case 'thinking': return '◈';
-      case 'tool_call': return '▶';
-      case 'tool_result': return '◀';
-      case 'response': return '◉';
-      case 'session_created': return '▣';
-      default: return '•';
-    }
-  };
-
-  const getActivityColor = (type: CliAgentActivity['type']) => {
-    switch (type) {
-      case 'thinking': return 'var(--color-amber)';
-      case 'tool_call': return 'var(--color-cyan)';
-      case 'tool_result': return 'var(--color-emerald)';
-      case 'response': return 'var(--color-violet)';
-      case 'session_created': return 'var(--color-rose)';
-      default: return 'var(--color-text-dim)';
-    }
-  };
-
-  const formatActivityContent = (activity: CliAgentActivity) => {
-    const data = activity.data as Record<string, unknown>;
-    switch (activity.type) {
-      case 'thinking':
-        return `Processing: ${(data.request as string)?.substring(0, 60)}...`;
-      case 'tool_call':
-        return `Calling ${data.toolName}(${JSON.stringify(data.args).substring(0, 50)}...)`;
-      case 'tool_result':
-        return `${data.toolName} → ${(data.result as string)?.substring(0, 80)}...`;
-      case 'response':
-        return (data.response as string) || 'No response';
-      case 'session_created':
-        return `Session ${(data.id as string)?.substring(0, 8)} created in ${data.projectPath}`;
-      default:
-        return JSON.stringify(data).substring(0, 60);
+      case 'thinking': return { icon: '◈', color: 'var(--color-amber)' };
+      case 'tool_call': return { icon: '▶', color: 'var(--color-cyan)' };
+      case 'tool_result': return { icon: '◀', color: 'var(--color-emerald)' };
+      case 'response': return { icon: '◉', color: 'var(--color-violet)' };
+      case 'session_created': return { icon: '▣', color: 'var(--color-rose)' };
+      default: return { icon: '•', color: 'var(--color-text-dim)' };
     }
   };
 
@@ -868,89 +784,78 @@ function AgentTab({ activities, isActive, onClear }: {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 8px 12px;
+          padding: 10px 12px;
           border-bottom: 1px solid var(--color-border);
-          background: var(--color-surface);
+          flex-shrink: 0;
         }
 
         .agent-status {
           display: flex;
           align-items: center;
           gap: 6px;
-          font-family: var(--font-mono);
-          font-size: 10px;
         }
 
-        .agent-status-dot {
-          width: 6px;
-          height: 6px;
+        .agent-dot {
+          width: 8px;
+          height: 8px;
           border-radius: 50%;
           background: var(--color-text-ghost);
         }
 
-        .agent-status-dot.active {
+        .agent-dot.active {
           background: var(--color-amber);
-          box-shadow: 0 0 8px var(--color-amber);
+          box-shadow: 0 0 10px var(--color-amber);
           animation: pulse-glow 1s ease-in-out infinite;
         }
 
-        .agent-status-label {
+        .agent-label {
+          font-family: var(--font-mono);
+          font-size: 10px;
           color: var(--color-text-dim);
         }
 
-        .agent-status-label.active {
+        .agent-label.active {
           color: var(--color-amber);
         }
 
-        .agent-clear-btn {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          padding: 3px 6px;
+        .agent-clear {
+          padding: 5px 8px;
           background: transparent;
           border: 1px solid var(--color-border);
+          border-radius: 4px;
           color: var(--color-text-dim);
           font-family: var(--font-mono);
           font-size: 9px;
           cursor: pointer;
-          transition: all 0.2s ease;
         }
 
-        .agent-clear-btn:hover {
-          border-color: var(--color-rose);
-          color: var(--color-rose);
-          background: rgba(251, 113, 133, 0.1);
-        }
-
-        .agent-clear-btn svg {
-          width: 10px;
-          height: 10px;
-        }
-
-        .agent-activities {
+        .agent-list {
           flex: 1;
           overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
           padding: 8px;
         }
 
-        .agent-activity {
+        .activity-item {
           display: flex;
           gap: 8px;
-          padding: 8px;
+          padding: 10px;
           margin-bottom: 6px;
           background: var(--color-surface);
-          border: 1px solid var(--color-border);
+          border-radius: 8px;
           border-left: 3px solid;
-          animation: slide-up 0.15s ease forwards;
+          animation: slide-in 0.2s ease;
+        }
+
+        @keyframes slide-in {
+          from { opacity: 0; transform: translateX(-8px); }
+          to { opacity: 1; transform: translateX(0); }
         }
 
         .activity-icon {
           flex-shrink: 0;
           width: 20px;
-          height: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          text-align: center;
           font-size: 12px;
         }
 
@@ -963,16 +868,15 @@ function AgentTab({ activities, isActive, onClear }: {
           font-family: var(--font-mono);
           font-size: 9px;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
-          margin-bottom: 4px;
+          margin-bottom: 2px;
         }
 
         .activity-text {
           font-family: var(--font-mono);
           font-size: 10px;
           color: var(--color-text-normal);
-          word-break: break-word;
           line-height: 1.4;
+          word-break: break-word;
         }
 
         .activity-time {
@@ -987,28 +891,23 @@ function AgentTab({ activities, isActive, onClear }: {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          padding: 40px 20px;
+          height: 100%;
+          gap: 10px;
+          padding: 24px;
           text-align: center;
-          gap: 12px;
         }
 
         .empty-agent svg {
-          width: 32px;
-          height: 32px;
+          width: 28px;
+          height: 28px;
           color: var(--color-text-ghost);
-          opacity: 0.4;
+          opacity: 0.5;
         }
 
         .empty-agent-text {
           font-family: var(--font-mono);
           font-size: 11px;
           color: var(--color-text-dim);
-          line-height: 1.8;
-        }
-
-        @keyframes slide-up {
-          from { opacity: 0; transform: translateY(4px); }
-          to { opacity: 1; transform: translateY(0); }
         }
 
         @keyframes pulse-glow {
@@ -1019,22 +918,17 @@ function AgentTab({ activities, isActive, onClear }: {
 
       <div className="agent-header">
         <div className="agent-status">
-          <span className={`agent-status-dot ${isActive ? 'active' : ''}`} />
-          <span className={`agent-status-label ${isActive ? 'active' : ''}`}>
-            {isActive ? 'PROCESSING' : 'IDLE'}
+          <span className={`agent-dot ${isActive ? 'active' : ''}`} />
+          <span className={`agent-label ${isActive ? 'active' : ''}`}>
+            {isActive ? 'Processing' : 'Idle'}
           </span>
         </div>
         {activities.length > 0 && (
-          <button className="agent-clear-btn" onClick={onClear} type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-            </svg>
-            CLEAR
-          </button>
+          <button className="agent-clear" onClick={onClear} type="button">Clear</button>
         )}
       </div>
 
-      <div className="agent-activities" ref={scrollRef}>
+      <div className="agent-list" ref={scrollRef}>
         {activities.length === 0 ? (
           <div className="empty-agent">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -1042,35 +936,55 @@ function AgentTab({ activities, isActive, onClear }: {
               <path d="M12 6v6l4 2" />
             </svg>
             <span className="empty-agent-text">
-              CLI Agent inactive<br/>
-              Say "Computer" to start a dev session
+              CLI Agent idle<br />
+              Say "Computer" to start
             </span>
           </div>
         ) : (
           activities.map((activity) => {
-            const color = getActivityColor(activity.type);
+            const config = getConfig(activity.type);
+            const data = activity.data as Record<string, unknown>;
+            let text = '';
+
+            switch (activity.type) {
+              case 'thinking':
+                text = `Processing: ${(data.request as string)?.substring(0, 40)}...`;
+                break;
+              case 'tool_call':
+                text = `${data.toolName}()`;
+                break;
+              case 'tool_result':
+                text = `${data.toolName} completed`;
+                break;
+              case 'response':
+                text = (data.response as string)?.substring(0, 50) || 'Done';
+                break;
+              case 'session_created':
+                text = `Session in ${data.projectPath}`;
+                break;
+              default:
+                text = JSON.stringify(data).substring(0, 40);
+            }
+
             return (
               <div
                 key={activity.id}
-                className="agent-activity"
-                style={{ borderLeftColor: color }}
+                className="activity-item"
+                style={{ borderLeftColor: config.color }}
               >
-                <span className="activity-icon" style={{ color }}>
-                  {getActivityIcon(activity.type)}
+                <span className="activity-icon" style={{ color: config.color }}>
+                  {config.icon}
                 </span>
                 <div className="activity-content">
-                  <div className="activity-type" style={{ color }}>
+                  <div className="activity-type" style={{ color: config.color }}>
                     {activity.type.replace('_', ' ')}
                   </div>
-                  <div className="activity-text">
-                    {formatActivityContent(activity)}
-                  </div>
+                  <div className="activity-text">{text}</div>
                 </div>
                 <span className="activity-time">
                   {new Date(activity.timestamp).toLocaleTimeString('de-DE', {
                     hour: '2-digit',
                     minute: '2-digit',
-                    second: '2-digit',
                   })}
                 </span>
               </div>
@@ -1094,81 +1008,77 @@ export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: 
           flex-direction: column;
           height: 100%;
           background: var(--color-deep);
+          border-radius: 20px 20px 0 0;
+          overflow: hidden;
         }
 
-        .cmd-header {
-          display: flex;
-          align-items: center;
-          padding: 12px 16px;
-          background: var(--color-surface);
-          border-bottom: 1px solid var(--color-border);
-        }
-
-        .cmd-title {
-          font-family: var(--font-display);
-          font-size: 11px;
-          letter-spacing: 0.15em;
-          color: var(--color-text-dim);
+        @media (min-width: 769px) {
+          .cmd-panel {
+            border-radius: 0;
+          }
         }
 
         .tab-bar {
           display: flex;
           border-bottom: 1px solid var(--color-border);
           background: var(--color-abyss);
+          flex-shrink: 0;
         }
 
         .tab-content {
           flex: 1;
           overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
           min-height: 0;
         }
-
-        .tab-btn.agent-active {
-          color: var(--color-amber);
-          border-bottom-color: var(--color-amber);
-        }
-
-        .tab-btn.agent-active .tab-count {
-          background: var(--color-amber-dim);
-          border-color: var(--color-amber);
-          color: var(--color-amber);
-          animation: pulse-glow 1s ease-in-out infinite;
-        }
-
-        @keyframes pulse-glow {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.6; }
-        }
       `}</style>
-
-      <div className="cmd-header">
-        <span className="cmd-title">COMMAND CONSOLE</span>
-      </div>
 
       <div className="tab-bar">
         <TabButton
           tab="sessions"
-          label="SESSIONS"
+          label="Sessions"
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path d="M8 21h8M12 17v4" />
+            </svg>
+          }
           count={sessions.length}
           active={activeTab === 'sessions'}
           onClick={() => onTabChange('sessions')}
         />
         <TabButton
           tab="agent"
-          label="AGENT"
+          label="Agent"
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v6l4 2" />
+            </svg>
+          }
           count={cliAgentActivities.length || undefined}
           active={activeTab === 'agent'}
           onClick={() => onTabChange('agent')}
         />
         <TabButton
           tab="tools"
-          label="TOOLS"
+          label="Tools"
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+            </svg>
+          }
           active={activeTab === 'tools'}
           onClick={() => onTabChange('tools')}
         />
         <TabButton
           tab="events"
-          label="EVENTS"
+          label="Events"
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+          }
           count={events.length}
           active={activeTab === 'events'}
           onClick={() => onTabChange('events')}

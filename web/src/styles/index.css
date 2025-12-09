@@ -1,36 +1,36 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   VΞRTΞX Voice Interface - Indie Dark Game Aesthetic
-   Inspired by: Transistor, Hyper Light Drifter, terminal UIs, retro-futurism
+   VΞRTΞX Voice Interface - Obsidian Glass Mobile-First Design
+   Inspired by: Premium mobile apps, glass morphism, sci-fi interfaces
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Custom Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700&display=swap');
+/* Custom Fonts - Refined selection for mobile readability */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700&display=swap');
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CSS CUSTOM PROPERTIES
+   CSS CUSTOM PROPERTIES - Mobile-optimized with better contrast
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Deep dark palette - noir atmosphere */
-  --color-void: #05050a;
-  --color-abyss: #0a0a12;
-  --color-deep: #0f0f1a;
-  --color-surface: #161622;
-  --color-raised: #1e1e2e;
-  --color-hover: #262638;
+  /* Deep dark palette - true black for OLED screens */
+  --color-void: #000000;
+  --color-abyss: #050508;
+  --color-deep: #0a0a10;
+  --color-surface: #121218;
+  --color-raised: #1a1a24;
+  --color-hover: #222230;
 
-  /* Text hierarchy */
-  --color-text-bright: #e4e4f0;
-  --color-text-normal: #b8b8cc;
-  --color-text-dim: #6e6e88;
-  --color-text-ghost: #3a3a50;
+  /* Text hierarchy - higher contrast for mobile */
+  --color-text-bright: #f0f0f8;
+  --color-text-normal: #c4c4d4;
+  --color-text-dim: #7a7a94;
+  --color-text-ghost: #404058;
 
-  /* Accent spectrum - muted but distinctive */
+  /* Accent spectrum - vibrant for small screens */
   --color-cyan: #38bdf8;
   --color-cyan-dim: #0c4a6e;
-  --color-amber: #f59e0b;
+  --color-amber: #fbbf24;
   --color-amber-dim: #78350f;
   --color-violet: #a78bfa;
   --color-violet-dim: #4c1d95;
@@ -40,32 +40,55 @@
   --color-rose-dim: #881337;
 
   /* Functional */
-  --color-border: #1f1f30;
-  --color-border-active: #2a2a44;
-  --color-glow: rgba(56, 189, 248, 0.15);
+  --color-border: rgba(56, 189, 248, 0.08);
+  --color-border-active: rgba(56, 189, 248, 0.2);
+  --color-glow: rgba(56, 189, 248, 0.2);
 
-  /* Typography */
-  --font-display: 'Orbitron', monospace;
-  --font-ui: 'Rajdhani', sans-serif;
-  --font-mono: 'Share Tech Mono', monospace;
+  /* Typography - mobile-optimized fonts */
+  --font-display: 'Orbitron', system-ui, sans-serif;
+  --font-ui: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
   /* Timing */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-elastic: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Mobile spacing scale */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  /* Touch target sizes */
+  --touch-target: 44px;
+  --touch-target-sm: 36px;
+
+  /* Border radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BASE RESET
+   BASE RESET - Mobile-first foundation
    ═══════════════════════════════════════════════════════════════════════════ */
 
 *, *::before, *::after {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html {
-  font-size: 14px;
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  touch-action: manipulation;
 }
 
 body {
@@ -76,18 +99,21 @@ body {
   background: var(--color-void);
   color: var(--color-text-normal);
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  overscroll-behavior: none;
 }
 
 #root {
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--color-void);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ATMOSPHERIC BACKGROUND
-   Subtle scanlines + vignette + noise for depth
+   ATMOSPHERIC BACKGROUND - Subtle, performant on mobile
    ═══════════════════════════════════════════════════════════════════════════ */
 
 body::before {
@@ -95,23 +121,17 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    /* Scanlines */
-    repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0, 0, 0, 0.03) 2px,
-      rgba(0, 0, 0, 0.03) 4px
-    ),
-    /* Subtle grid */
-    linear-gradient(90deg, rgba(56, 189, 248, 0.015) 1px, transparent 1px),
-    linear-gradient(rgba(56, 189, 248, 0.015) 1px, transparent 1px);
-  background-size: 100% 4px, 80px 80px, 80px 80px;
+    /* Minimal noise texture */
+    radial-gradient(
+      ellipse 80% 60% at 50% 0%,
+      rgba(56, 189, 248, 0.03) 0%,
+      transparent 50%
+    );
   pointer-events: none;
   z-index: 1;
 }
 
-/* Vignette overlay */
+/* Vignette - subtle depth */
 body::after {
   content: '';
   position: fixed;
@@ -119,37 +139,45 @@ body::after {
   background: radial-gradient(
     ellipse at center,
     transparent 0%,
-    transparent 50%,
-    rgba(5, 5, 10, 0.5) 100%
+    transparent 60%,
+    rgba(0, 0, 0, 0.4) 100%
   );
   pointer-events: none;
   z-index: 2;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCROLLBAR - Minimal, game-style
+   SCROLLBAR - Minimal, mobile-friendly
    ═══════════════════════════════════════════════════════════════════════════ */
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-abyss);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border-active);
-  border-radius: 0;
+  background: var(--color-text-ghost);
+  border-radius: var(--radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-cyan-dim);
+  background: var(--color-text-dim);
 }
 
-::-webkit-scrollbar-corner {
-  background: var(--color-abyss);
+/* Hide scrollbars on mobile - use native momentum scrolling */
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  * {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -173,11 +201,32 @@ body::after {
 
 .font-mono {
   font-family: var(--font-mono);
-  letter-spacing: 0;
+  letter-spacing: -0.02em;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ANIMATIONS
+   BUTTON BASE - Touch-optimized
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+button {
+  font-family: inherit;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  min-height: var(--touch-target-sm);
+  min-width: var(--touch-target-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--color-cyan);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS - Mobile-optimized, respect reduced motion
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @keyframes fade-in {
@@ -186,12 +235,12 @@ body::after {
 }
 
 @keyframes slide-up {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes slide-in-left {
-  from { opacity: 0; transform: translateX(-12px); }
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
   to { opacity: 1; transform: translateX(0); }
 }
 
@@ -200,45 +249,245 @@ body::after {
   50% { opacity: 0.5; }
 }
 
-@keyframes scan {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
+@keyframes pulse-scale {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
 }
 
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
-@keyframes flicker {
-  0%, 100% { opacity: 1; }
-  92% { opacity: 1; }
-  93% { opacity: 0.8; }
-  94% { opacity: 1; }
-  96% { opacity: 0.9; }
-  97% { opacity: 1; }
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
 }
 
-/* CRT flicker effect - very subtle */
-.crt-flicker {
-  animation: flicker 8s infinite;
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
-/* Glow text */
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLASS MORPHISM UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.glass {
+  background: rgba(10, 10, 16, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--color-border);
+}
+
+.glass-dark {
+  background: rgba(5, 5, 8, 0.9);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-border);
+}
+
+.glass-light {
+  background: rgba(18, 18, 24, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLOW EFFECTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 .glow-text {
   text-shadow:
     0 0 10px currentColor,
-    0 0 20px currentColor,
-    0 0 40px currentColor;
+    0 0 30px currentColor;
 }
 
 .glow-text-subtle {
   text-shadow: 0 0 20px currentColor;
 }
 
-/* Border glow */
 .glow-border {
   box-shadow:
     0 0 0 1px var(--color-border),
     0 0 20px -5px var(--color-glow);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
+}
+
+.glow-violet {
+  box-shadow: 0 0 20px rgba(167, 139, 250, 0.3);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 20px rgba(52, 211, 153, 0.3);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SAFE AREA UTILITIES - For notched devices
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-left {
+  padding-left: env(safe-area-inset-left);
+}
+
+.safe-right {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOUCH FEEDBACK UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.touch-feedback {
+  transition: transform 0.15s var(--ease-out), opacity 0.15s ease;
+}
+
+.touch-feedback:active {
+  transform: scale(0.95);
+  opacity: 0.8;
+}
+
+.touch-feedback-subtle:active {
+  transform: scale(0.98);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE LAYOUT UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mobile-only {
+  display: block;
+}
+
+.desktop-only {
+  display: none;
+}
+
+@media (min-width: 769px) {
+  .mobile-only {
+    display: none;
+  }
+
+  .desktop-only {
+    display: block;
+  }
+}
+
+/* Full height accounting for mobile browser chrome */
+.full-height {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Stack for mobile, row for desktop */
+.responsive-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 769px) {
+  .responsive-stack {
+    flex-direction: row;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOADING STATES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 0%,
+    var(--color-raised) 50%,
+    var(--color-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+.loading-pulse {
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BADGE COMPONENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-cyan {
+  background: var(--color-cyan-dim);
+  color: var(--color-cyan);
+  border: 1px solid var(--color-cyan);
+}
+
+.badge-emerald {
+  background: var(--color-emerald-dim);
+  color: var(--color-emerald);
+  border: 1px solid var(--color-emerald);
+}
+
+.badge-amber {
+  background: var(--color-amber-dim);
+  color: var(--color-amber);
+  border: 1px solid var(--color-amber);
+}
+
+.badge-rose {
+  background: var(--color-rose-dim);
+  color: var(--color-rose);
+  border: 1px solid var(--color-rose);
+}
+
+.badge-violet {
+  background: var(--color-violet-dim);
+  color: var(--color-violet);
+  border: 1px solid var(--color-violet);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATION DOT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.notification-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background: var(--color-cyan);
+  border-radius: 50%;
+  border: 2px solid var(--color-void);
+}
+
+.notification-dot.pulse {
+  animation: pulse-scale 1.5s ease-in-out infinite;
 }

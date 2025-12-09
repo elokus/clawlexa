@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Voice Visualizer - Sci-fi audio spectrum with dramatic animations
-// Inspired by: Transistor, cyberpunk UIs, audio analyzers
+// Voice Visualizer - Radial audio visualization optimized for mobile orb
+// Inspired by: Siri, Hey Google, premium AI assistants
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useMemo } from 'react';
@@ -12,13 +12,13 @@ interface VoiceVisualizerProps {
 }
 
 export function VoiceVisualizer({ state, className = '' }: VoiceVisualizerProps) {
-  const barCount = 32;
+  const barCount = 24; // Fewer bars for cleaner mobile look
 
   const stateColors = {
-    idle: { primary: '#6e6e88', glow: 'transparent' },
-    listening: { primary: '#38bdf8', glow: '#38bdf8' },
-    thinking: { primary: '#a78bfa', glow: '#a78bfa' },
-    speaking: { primary: '#34d399', glow: '#34d399' },
+    idle: { primary: 'rgba(110, 110, 136, 0.6)', glow: 'transparent', gradient: 'rgba(110, 110, 136, 0.3)' },
+    listening: { primary: '#38bdf8', glow: '#38bdf8', gradient: '#0ea5e9' },
+    thinking: { primary: '#a78bfa', glow: '#a78bfa', gradient: '#8b5cf6' },
+    speaking: { primary: '#34d399', glow: '#34d399', gradient: '#10b981' },
   };
 
   const colors = stateColors[state] || stateColors.idle;
@@ -27,9 +27,9 @@ export function VoiceVisualizer({ state, className = '' }: VoiceVisualizerProps)
     return Array.from({ length: barCount }, (_, i) => {
       const position = i / barCount;
       const centerDistance = Math.abs(position - 0.5) * 2;
-      // Create a curved profile - higher in center, lower at edges
-      const baseHeight = 0.15 + (1 - Math.pow(centerDistance, 1.5)) * 0.85;
-      const delay = Math.abs(position - 0.5) * 1.2; // Delay from center outward
+      // Smoother curve for mobile
+      const baseHeight = 0.2 + (1 - Math.pow(centerDistance, 2)) * 0.8;
+      const delay = Math.abs(position - 0.5) * 0.8;
 
       return { index: i, baseHeight, delay };
     });
@@ -40,172 +40,208 @@ export function VoiceVisualizer({ state, className = '' }: VoiceVisualizerProps)
       <style>{`
         .viz-container {
           display: flex;
-          align-items: flex-end;
+          align-items: center;
           justify-content: center;
           gap: 3px;
           height: 100%;
           width: 100%;
-          padding: 8px 16px;
+          padding: 0 8px;
           position: relative;
         }
 
-        /* Horizontal scan line effect */
+        @media (max-width: 768px) {
+          .viz-container {
+            gap: 4px;
+            padding: 0 4px;
+          }
+        }
+
+        /* Center glow effect */
         .viz-container::before {
           content: '';
           position: absolute;
-          left: 0;
-          right: 0;
-          height: 2px;
-          background: linear-gradient(90deg,
-            transparent 0%,
-            ${colors.primary}40 20%,
-            ${colors.primary}80 50%,
-            ${colors.primary}40 80%,
-            transparent 100%
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 60%;
+          height: 60%;
+          background: radial-gradient(
+            ellipse,
+            ${colors.glow}20 0%,
+            transparent 70%
           );
-          animation: scan-line 3s linear infinite;
-          opacity: ${state === 'idle' ? '0' : '0.6'};
           pointer-events: none;
-        }
-
-        @keyframes scan-line {
-          0% { top: 100%; }
-          100% { top: 0%; }
-        }
-
-        /* Grid lines behind bars */
-        .viz-container::after {
-          content: '';
-          position: absolute;
-          inset: 8px 16px;
-          background:
-            linear-gradient(0deg, ${colors.primary}08 1px, transparent 1px);
-          background-size: 100% 12px;
-          pointer-events: none;
+          transition: all 0.4s ease;
         }
 
         .viz-bar {
-          width: 6px;
+          width: 4px;
           min-height: 4px;
           background: linear-gradient(
             180deg,
             ${colors.primary} 0%,
-            ${colors.primary}80 50%,
-            ${colors.primary}40 100%
+            ${colors.gradient} 100%
           );
-          transition: background 0.3s ease;
+          border-radius: 2px;
+          transition: background 0.4s ease;
           position: relative;
-          transform-origin: bottom center;
+          transform-origin: center;
+          will-change: height, transform;
         }
 
-        /* Glow effect on bars */
-        .viz-bar::before {
-          content: '';
-          position: absolute;
-          inset: -2px;
-          background: ${colors.glow};
-          filter: blur(4px);
-          opacity: ${state === 'idle' ? '0' : '0.4'};
-          transition: opacity 0.3s ease;
+        @media (max-width: 768px) {
+          .viz-bar {
+            width: 5px;
+            border-radius: 2.5px;
+          }
         }
 
-        /* Top cap on bars */
+        /* Glow effect on active bars */
         .viz-bar::after {
           content: '';
           position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 2px;
-          background: ${colors.primary};
-          box-shadow: 0 0 8px ${colors.glow};
+          inset: -1px;
+          background: ${colors.glow};
+          filter: blur(6px);
+          opacity: ${state === 'idle' ? '0' : '0.5'};
+          border-radius: inherit;
+          transition: opacity 0.4s ease;
         }
 
         /* ══════════════════════════════════════════════════════════
-           IDLE - Minimal ambient pulse
+           IDLE - Minimal ambient breathing
            ══════════════════════════════════════════════════════════ */
         .viz-container[data-state="idle"] .viz-bar {
-          animation: idle-breathe 4s ease-in-out infinite;
+          animation: idle-pulse 3s ease-in-out infinite;
           opacity: 0.4;
         }
 
-        @keyframes idle-breathe {
+        @keyframes idle-pulse {
           0%, 100% {
-            height: calc(var(--base-height) * 12px);
+            height: calc(var(--base-height) * 16px);
             opacity: 0.3;
           }
           50% {
-            height: calc(var(--base-height) * 20px);
+            height: calc(var(--base-height) * 24px);
             opacity: 0.5;
           }
         }
 
         /* ══════════════════════════════════════════════════════════
-           LISTENING - Wave from center outward
+           LISTENING - Smooth wave animation
            ══════════════════════════════════════════════════════════ */
         .viz-container[data-state="listening"] .viz-bar {
-          animation: listening-wave 1.5s ease-in-out infinite;
-          opacity: 0.9;
+          animation: listening-wave 1.2s ease-in-out infinite;
+          opacity: 0.95;
         }
 
         @keyframes listening-wave {
           0%, 100% {
-            height: calc(var(--base-height) * 20px);
+            height: calc(var(--base-height) * 24px);
+            transform: scaleY(1);
           }
           50% {
-            height: calc(var(--base-height) * 60px);
+            height: calc(var(--base-height) * 56px);
+            transform: scaleY(1.1);
           }
         }
 
         /* ══════════════════════════════════════════════════════════
-           THINKING - Rapid erratic movement
+           THINKING - Rapid, erratic pulsing
            ══════════════════════════════════════════════════════════ */
         .viz-container[data-state="thinking"] .viz-bar {
-          animation: thinking-erratic 0.3s ease-in-out infinite alternate;
+          animation: thinking-rapid 0.4s ease-in-out infinite alternate;
           opacity: 1;
         }
 
-        @keyframes thinking-erratic {
+        @keyframes thinking-rapid {
           0% {
-            height: calc(var(--base-height) * 15px);
-          }
-          25% {
-            height: calc(var(--base-height) * 45px);
+            height: calc(var(--base-height) * 18px);
+            transform: scaleY(0.9);
           }
           50% {
-            height: calc(var(--base-height) * 25px);
-          }
-          75% {
-            height: calc(var(--base-height) * 50px);
+            height: calc(var(--base-height) * 48px);
+            transform: scaleY(1.05);
           }
           100% {
-            height: calc(var(--base-height) * 30px);
+            height: calc(var(--base-height) * 32px);
+            transform: scaleY(1);
           }
         }
 
         /* ══════════════════════════════════════════════════════════
-           SPEAKING - Dynamic peaks like audio output
+           SPEAKING - Dynamic audio-like output
            ══════════════════════════════════════════════════════════ */
         .viz-container[data-state="speaking"] .viz-bar {
-          animation: speaking-dynamic 0.4s ease-in-out infinite;
+          animation: speaking-output 0.5s ease-in-out infinite;
           opacity: 1;
         }
 
-        @keyframes speaking-dynamic {
+        @keyframes speaking-output {
           0%, 100% {
-            height: calc(var(--base-height) * 25px);
+            height: calc(var(--base-height) * 28px);
           }
-          20% {
-            height: calc(var(--base-height) * 55px);
+          25% {
+            height: calc(var(--base-height) * 52px);
           }
-          40% {
-            height: calc(var(--base-height) * 35px);
+          50% {
+            height: calc(var(--base-height) * 36px);
           }
-          60% {
-            height: calc(var(--base-height) * 60px);
+          75% {
+            height: calc(var(--base-height) * 58px);
           }
-          80% {
-            height: calc(var(--base-height) * 40px);
+        }
+
+        /* ══════════════════════════════════════════════════════════
+           Mobile optimizations - reduce motion complexity
+           ══════════════════════════════════════════════════════════ */
+        @media (max-width: 768px) {
+          .viz-container[data-state="listening"] .viz-bar {
+            animation-duration: 1.4s;
+          }
+
+          .viz-container[data-state="thinking"] .viz-bar {
+            animation-duration: 0.5s;
+          }
+
+          .viz-container[data-state="speaking"] .viz-bar {
+            animation-duration: 0.6s;
+          }
+
+          /* Slightly smaller max heights on mobile */
+          @keyframes listening-wave {
+            0%, 100% {
+              height: calc(var(--base-height) * 20px);
+              transform: scaleY(1);
+            }
+            50% {
+              height: calc(var(--base-height) * 48px);
+              transform: scaleY(1.05);
+            }
+          }
+
+          @keyframes speaking-output {
+            0%, 100% {
+              height: calc(var(--base-height) * 24px);
+            }
+            25% {
+              height: calc(var(--base-height) * 44px);
+            }
+            50% {
+              height: calc(var(--base-height) * 30px);
+            }
+            75% {
+              height: calc(var(--base-height) * 48px);
+            }
+          }
+        }
+
+        /* Reduced motion preference */
+        @media (prefers-reduced-motion: reduce) {
+          .viz-bar {
+            animation: none !important;
+            height: calc(var(--base-height) * 30px) !important;
+            opacity: ${state === 'idle' ? '0.4' : '0.9'} !important;
           }
         }
       `}</style>
