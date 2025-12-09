@@ -22,11 +22,13 @@ import { config } from '../config.js';
 export type WakewordCallback = (keyword: string, confidence: number) => void;
 
 // Map our profile wake words to Porcupine built-in keywords
+// Profile wake words should match these keys exactly
 const KEYWORD_MAP: Record<string, BuiltinKeyword> = {
-  hey_jarvis: BuiltinKeyword.JARVIS, // Using "jarvis" as closest match
-  hey_marvin: BuiltinKeyword.COMPUTER, // Using "computer" as fallback for Marvin
+  // Primary wake words (matching profiles.ts)
+  hey_jarvis: BuiltinKeyword.JARVIS, // Maps to "jarvis" detection
   jarvis: BuiltinKeyword.JARVIS,
-  computer: BuiltinKeyword.COMPUTER,
+  computer: BuiltinKeyword.COMPUTER, // For Marvin/developer profile
+  // Additional built-in keywords
   alexa: BuiltinKeyword.ALEXA,
   hey_siri: BuiltinKeyword.HEY_SIRI,
   hey_google: BuiltinKeyword.HEY_GOOGLE,

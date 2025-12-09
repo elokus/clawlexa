@@ -4,6 +4,7 @@ import { WakewordDetector } from './wakeword/index.js';
 import { AudioCapture, AudioPlayback, speak } from './audio/index.js';
 import { closeDatabase } from './db/index.js';
 import { Scheduler } from './scheduler/index.js';
+import { startWebhookServer, stopWebhookServer, onWebhookEvent } from './api/webhooks.js';
 
 async function main() {
   console.log('Starting Pi Voice Agent (TypeScript)...');
@@ -18,7 +19,7 @@ async function main() {
 
   // Initialize components
   const agent = new VoiceAgent();
-  const wakeword = new WakewordDetector(['hey_jarvis', 'hey_marvin']);
+  const wakeword = new WakewordDetector(['jarvis', 'computer']);
   const audioCapture = new AudioCapture();  // Captures at 16kHz, resamples to 24kHz
   const audioPlayback = new AudioPlayback(); // Receives 24kHz, resamples to 16kHz
   const scheduler = new Scheduler(1000); // Check every second
@@ -136,10 +137,38 @@ async function main() {
   scheduler.start();
   console.log('Timer scheduler started');
 
+  // Start webhook server for Mac daemon callbacks
+  try {
+    await startWebhookServer();
+
+    // Handle webhook events (session status changes)
+    onWebhookEvent(async (payload) => {
+      console.log(`[Webhook] Session ${payload.sessionId} status: ${payload.status}`);
+
+      // If agent is active and session finished, notify via TTS
+      if (payload.status === 'finished' || payload.status === 'error') {
+        const statusText =
+          payload.status === 'finished'
+            ? 'Die Coding-Session ist fertig.'
+            : 'Die Coding-Session hat einen Fehler.';
+
+        if (agent.isActive()) {
+          agent.sendMessage(`[SESSION UPDATE] ${statusText}`);
+        } else {
+          await speak(statusText);
+        }
+      }
+    });
+  } catch (error) {
+    console.warn('Failed to start webhook server:', error);
+    // Continue without webhooks - not critical
+  }
+
   // Handle graceful shutdown
   const shutdown = async () => {
     console.log('\nShutting down...');
     scheduler.stop();
+    await stopWebhookServer();
     agent.deactivate();
     audioCapture.stop();
     audioPlayback.stop();
@@ -151,7 +180,7 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  console.log('Agent ready. Say "Jarvis" or "Computer" to activate...');
+  console.log('Agent ready. Say "Jarvis" (general assistant) or "Computer" (developer assistant) to activate...');
 }
 
 main().catch((error) => {
