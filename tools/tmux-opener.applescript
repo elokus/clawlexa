@@ -1,25 +1,27 @@
 on open location theURL
-    -- Extract session name from tmux://session-name
-    set sessionName to text 8 thru -1 of theURL -- removes "tmux://"
+    -- Extract session ID from tmux://session-id
+    set sessionId to text 8 thru -1 of theURL -- removes "tmux://"
 
     -- Remove trailing slash if present
-    if sessionName ends with "/" then
-        set sessionName to text 1 thru -2 of sessionName
+    if sessionId ends with "/" then
+        set sessionId to text 1 thru -2 of sessionId
     end if
 
-    if sessionName is "" then
-        display alert "Tmux Opener" message "No session name provided in URL"
+    if sessionId is "" then
+        display alert "Tmux Opener" message "No session ID provided in URL"
         return
     end if
+
+    -- The tmux session name follows the pattern: dev-assistant-{sessionId}
+    set tmuxSessionName to "dev-assistant-" & sessionId
 
     -- Check if tmux session exists
     try
-        do shell script "/opt/homebrew/bin/tmux has-session -t " & quoted form of sessionName
+        do shell script "/opt/homebrew/bin/tmux has-session -t " & quoted form of tmuxSessionName
+        -- Session exists, attach to it
+        do shell script "open -na Ghostty.app --args -e /opt/homebrew/bin/tmux attach -t " & tmuxSessionName
     on error
-        display alert "Tmux Session Not Found" message "Session '" & sessionName & "' does not exist"
-        return
+        -- Session doesn't exist, open terminal with echo command showing the info
+        do shell script "open -na Ghostty.app --args -e /bin/zsh -c 'echo \"Session " & sessionId & " not found (tmux: " & tmuxSessionName & ")\"; exec /bin/zsh'"
     end try
-
-    -- Open Ghostty with tmux attach command
-    do shell script "open -na Ghostty.app --args -e /opt/homebrew/bin/tmux attach -t " & sessionName
 end open location

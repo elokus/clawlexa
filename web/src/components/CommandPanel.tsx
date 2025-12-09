@@ -329,24 +329,13 @@ function SessionCard({
   selected: boolean;
   onClick: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
   const timeAgo = getTimeAgo(new Date(session.created_at));
-  const isActive = ['pending', 'running', 'waiting_for_input'].includes(session.status);
-  const tmuxCommand = session.mac_session_id ? `tmux attach -t ${session.mac_session_id}` : null;
-  const tmuxUrl = session.mac_session_id ? `tmux://${session.mac_session_id}` : null;
+  // Use session ID - TmuxOpener will derive tmux session name as dev-assistant-{id}
+  const tmuxUrl = `tmux://${session.id}`;
 
-  const copyCommand = async () => {
-    if (tmuxCommand) {
-      await navigator.clipboard.writeText(tmuxCommand);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const openInTerminal = () => {
-    if (tmuxUrl) {
-      window.open(tmuxUrl, '_blank');
-    }
+  const openInTerminal = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    window.open(tmuxUrl, '_blank');
   };
 
   const statusColors: Record<string, string> = {
@@ -429,48 +418,12 @@ function SessionCard({
           color: var(--color-text-ghost);
         }
 
-        .tmux-row {
+        .session-actions {
           display: flex;
-          align-items: center;
-          gap: 6px;
+          justify-content: flex-end;
           margin-top: 4px;
           padding-top: 8px;
           border-top: 1px solid var(--color-border);
-        }
-
-        .tmux-cmd {
-          flex: 1;
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-cyan);
-          background: var(--color-abyss);
-          padding: 6px 8px;
-          border-radius: 4px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .copy-btn {
-          padding: 6px 10px;
-          background: var(--color-cyan-dim);
-          border: 1px solid var(--color-cyan);
-          border-radius: 4px;
-          color: var(--color-cyan);
-          font-family: var(--font-mono);
-          font-size: 9px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .copy-btn:active {
-          transform: scale(0.95);
-        }
-
-        .copy-btn.copied {
-          background: var(--color-emerald-dim);
-          border-color: var(--color-emerald);
-          color: var(--color-emerald);
         }
 
         .open-btn {
@@ -513,22 +466,16 @@ function SessionCard({
         <span className="session-time">{timeAgo}</span>
       </div>
 
-      {selected && isActive && tmuxCommand && (
-        <div className="tmux-row" onClick={(e) => e.stopPropagation()}>
-          <code className="tmux-cmd">{tmuxCommand}</code>
-          <button className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copyCommand} type="button">
-            {copied ? '✓' : 'Copy'}
-          </button>
-          <button className="open-btn" onClick={openInTerminal} type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-              <polyline points="15,3 21,3 21,9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-            Open
-          </button>
-        </div>
-      )}
+      <div className="session-actions">
+        <button className="open-btn" onClick={openInTerminal} type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+            <polyline points="15,3 21,3 21,9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+          Open
+        </button>
+      </div>
     </div>
   );
 }

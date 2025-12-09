@@ -5,22 +5,13 @@
 import { create } from 'zustand';
 import type { CliSession, CliEvent } from '../types';
 
-// Get API base URL - same logic as WebSocket but port 3000
-const getApiBaseUrl = () => {
-  // If explicit URL is set, use it
-  const envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl) return envUrl;
+// Always use relative URLs - let Vite proxy handle routing in dev
+// In production, configure VITE_API_URL or deploy API on same origin
+const API_BASE_URL = import.meta.env.VITE_DEMO_MODE === 'true'
+  ? null
+  : (import.meta.env.VITE_API_URL || '');
 
-  // If demo mode is explicitly enabled, return null
-  if (import.meta.env.VITE_DEMO_MODE === 'true') return null;
-
-  // In production build, assume API server is on same host, port 3000
-  const protocol = window.location.protocol;
-  const host = window.location.hostname;
-  return `${protocol}//${host}:3000`;
-};
-
-const API_BASE_URL = getApiBaseUrl();
+console.log('[Sessions] API_BASE_URL:', API_BASE_URL);
 
 interface SessionsStore {
   sessions: CliSession[];
