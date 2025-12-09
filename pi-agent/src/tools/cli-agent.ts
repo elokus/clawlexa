@@ -29,7 +29,7 @@ import { waitForSessionCompletion } from '../api/webhooks.js';
 import { wsBroadcast } from '../api/websocket.js';
 
 // OpenRouter provider for grok-code-fast-1
-const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API;
+const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
 
 const openrouter = createOpenRouter({
   apiKey: OPENROUTER_API_KEY ?? '',
@@ -199,7 +199,7 @@ const startHeadlessSessionTool = tool({
       .describe('Full path to the project directory, e.g., ~/Code/Work/kireon/kireon-backend'),
     prompt: z.string().describe('The prompt to send to Claude with -p flag'),
   }),
-  execute: async ({ project_path, prompt }) => {
+  execute: async ({ project_path, prompt }: { project_path: string; prompt: string }) => {
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
@@ -291,7 +291,7 @@ const startInteractiveSessionTool = tool({
     project_path: z.string().describe('Full path to the project directory'),
     initial_prompt: z.string().describe('Initial prompt/goal to send after session starts'),
   }),
-  execute: async ({ project_path, initial_prompt }) => {
+  execute: async ({ project_path, initial_prompt }: { project_path: string; initial_prompt: string }) => {
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
@@ -362,7 +362,7 @@ const sendSessionInputTool = tool({
     session_id: z.string().describe('The session ID'),
     input: z.string().describe('The input to send'),
   }),
-  execute: async ({ session_id, input }) => {
+  execute: async ({ session_id, input }: { session_id: string; input: string }) => {
     const eventsRepo = new CliEventsRepository();
 
     console.log(`[CliAgent] Sending input to session ${session_id}: ${input}`);
@@ -388,7 +388,7 @@ const checkSessionStatusTool = tool({
   inputSchema: z.object({
     session_id: z.string().describe('The session ID'),
   }),
-  execute: async ({ session_id }) => {
+  execute: async ({ session_id }: { session_id: string }) => {
     console.log(`[CliAgent] Checking status for session ${session_id}`);
 
     try {
@@ -433,7 +433,7 @@ const terminateSessionTool = tool({
   inputSchema: z.object({
     session_id: z.string().describe('The session ID to terminate'),
   }),
-  execute: async ({ session_id }) => {
+  execute: async ({ session_id }: { session_id: string }) => {
     console.log(`[CliAgent] Terminating session ${session_id}`);
 
     const sessionsRepo = new CliSessionsRepository();
@@ -489,7 +489,7 @@ export async function handleDeveloperRequest(
   console.log(`[CliAgent] Using model: x-ai/grok-code-fast-1 via OpenRouter`);
 
   if (!OPENROUTER_API_KEY) {
-    return 'Fehler: OPEN_ROUTER_API environment variable is not set';
+    return 'Fehler: OPEN_ROUTER_API_KEY environment variable is not set';
   }
 
   // Format conversation history for context
@@ -551,7 +551,7 @@ Analyze this request and take appropriate action. Remember:
       if (step.toolCalls && step.toolCalls.length > 0) {
         for (const toolCall of step.toolCalls) {
           // Broadcast tool call
-          wsBroadcast.cliAgentToolCall(toolCall.toolName, toolCall.args as Record<string, unknown>);
+          wsBroadcast.cliAgentToolCall(toolCall.toolName, toolCall.input as Record<string, unknown>);
           console.log(`[CliAgent] Broadcasted tool call: ${toolCall.toolName}`);
         }
       }
@@ -560,7 +560,7 @@ Analyze this request and take appropriate action. Remember:
       if (step.toolResults && step.toolResults.length > 0) {
         for (const toolResult of step.toolResults) {
           // Extract session ID if present in the result
-          const resultStr = String(toolResult.result);
+          const resultStr = String(toolResult.output);
           wsBroadcast.cliAgentToolResult(
             toolResult.toolName,
             resultStr.substring(0, 500) // Limit result size for broadcast

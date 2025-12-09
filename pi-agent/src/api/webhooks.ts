@@ -148,7 +148,7 @@ async function handleWebhook(
   const sessionMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'GET' && sessionMatch) {
     try {
-      const sessionId = sessionMatch[1];
+      const sessionId = sessionMatch[1]!;
       const sessionsRepo = new CliSessionsRepository();
       const session = sessionsRepo.findById(sessionId);
       if (session) {
@@ -170,9 +170,9 @@ async function handleWebhook(
   const eventsMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/events$/);
   if (req.method === 'GET' && eventsMatch) {
     try {
-      const sessionId = eventsMatch[1];
+      const sessionId = eventsMatch[1]!;
       const eventsRepo = new CliEventsRepository();
-      const events = eventsRepo.listBySession(sessionId);
+      const events = eventsRepo.getBySession(sessionId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(events));
     } catch (error) {
