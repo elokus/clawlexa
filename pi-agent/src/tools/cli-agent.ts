@@ -1,5 +1,5 @@
 /**
- * CLI Orchestration Agent - Uses grok-code-fast-1 via OpenRouter for managing Mac CLI sessions.
+ * CLI Orchestration Agent - Uses Vercel AI SDK with grok-code-fast-1 via OpenRouter.
  *
  * This agent is delegated to by the realtime voice agent when coding tasks are needed.
  * It has:
@@ -15,9 +15,10 @@
  * 5. Returns result to be spoken back to user
  */
 
-import OpenAI from 'openai';
-import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
+import { Experimental_Agent as Agent, stepCountIs, tool } from 'ai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { RealtimeItem } from '@openai/agents/realtime';
+import { z } from 'zod';
 import {
   generateId,
   CliSessionsRepository,
@@ -25,20 +26,16 @@ import {
 } from '../db/index.js';
 import * as macClient from './mac-client.js';
 import { waitForSessionCompletion } from '../api/webhooks.js';
+import { wsBroadcast } from '../api/websocket.js';
 
-// OpenRouter client for grok-code-fast-1
+// OpenRouter provider for grok-code-fast-1
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API;
 
-const openrouter = new OpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
+const openrouter = createOpenRouter({
   apiKey: OPENROUTER_API_KEY ?? '',
-  defaultHeaders: {
-    'HTTP-Referer': 'https://voice-agent.local',
-    'X-Title': 'Voice Agent CLI',
-  },
 });
 
-const MODEL = 'x-ai/grok-code-fast-1';
+const MODEL = openrouter.chat('x-ai/grok-code-fast-1');
 
 // Project locations on the Mac
 const PROJECT_LOCATIONS = `
@@ -192,353 +189,288 @@ Keep it short (1-2 sentences) for voice output:
 - "Session läuft in [project]."
 `;
 
-// Tool definitions for OpenAI chat completions API
-const tools: ChatCompletionTool[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'start_headless_session',
-      description:
-        'Start a headless Claude session with -p flag for quick tasks. Returns the result directly. IMPORTANT: After calling this tool, you MUST stop and provide your final response - do not call any more tools.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project_path: {
-            type: 'string',
-            description: 'Full path to the project directory, e.g., ~/Code/Work/kireon/kireon-backend',
-          },
-          prompt: {
-            type: 'string',
-            description: 'The prompt to send to Claude with -p flag',
-          },
-        },
-        required: ['project_path', 'prompt'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'start_interactive_session',
-      description:
-        'Start an interactive Claude session for complex tasks that need iteration. Returns immediately with "Session gestartet". IMPORTANT: After calling this tool, you MUST stop and provide your final response - do not call any more tools.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project_path: {
-            type: 'string',
-            description: 'Full path to the project directory',
-          },
-          initial_prompt: {
-            type: 'string',
-            description: 'Initial prompt/goal to send after session starts',
-          },
-        },
-        required: ['project_path', 'initial_prompt'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'send_session_input',
-      description: 'Send input/feedback to a running interactive session',
-      parameters: {
-        type: 'object',
-        properties: {
-          session_id: {
-            type: 'string',
-            description: 'The session ID',
-          },
-          input: {
-            type: 'string',
-            description: 'The input to send',
-          },
-        },
-        required: ['session_id', 'input'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'check_session_status',
-      description: 'Check the status and recent output of a session',
-      parameters: {
-        type: 'object',
-        properties: {
-          session_id: {
-            type: 'string',
-            description: 'The session ID',
-          },
-        },
-        required: ['session_id'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'list_active_sessions',
-      description: 'List all active CLI sessions',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'terminate_session',
-      description: 'Terminate/cancel a running session',
-      parameters: {
-        type: 'object',
-        properties: {
-          session_id: {
-            type: 'string',
-            description: 'The session ID to terminate',
-          },
-        },
-        required: ['session_id'],
-      },
-    },
-  },
-];
+// Tool definitions using Vercel AI SDK tool() helper
+const startHeadlessSessionTool = tool({
+  description:
+    'Start a headless Claude session with -p flag for quick tasks. Returns the result directly. IMPORTANT: After calling this tool, you MUST stop and provide your final response.',
+  inputSchema: z.object({
+    project_path: z
+      .string()
+      .describe('Full path to the project directory, e.g., ~/Code/Work/kireon/kireon-backend'),
+    prompt: z.string().describe('The prompt to send to Claude with -p flag'),
+  }),
+  execute: async ({ project_path, prompt }) => {
+    const sessionsRepo = new CliSessionsRepository();
+    const eventsRepo = new CliEventsRepository();
 
-// Tool implementations
-async function executeStartHeadlessSession(args: { project_path: string; prompt: string }): Promise<string> {
-  const { project_path, prompt } = args;
-  const sessionsRepo = new CliSessionsRepository();
-  const eventsRepo = new CliEventsRepository();
+    const sessionId = generateId();
+    const command = `cd ${project_path} && claude -p "${prompt.replace(/"/g, '\\"')}"`;
 
-  const sessionId = generateId();
-  const command = `cd ${project_path} && claude -p "${prompt.replace(/"/g, '\\"')}"`;
+    console.log(`[CliAgent] Starting headless session: ${sessionId}`);
+    console.log(`[CliAgent] Command: ${command}`);
 
-  console.log(`[CliAgent] Starting headless session: ${sessionId}`);
-  console.log(`[CliAgent] Command: ${command}`);
+    // Create DB entry
+    sessionsRepo.create({
+      id: sessionId,
+      goal: `Headless: ${prompt.substring(0, 100)}...`,
+    });
+    sessionsRepo.updateStatus(sessionId, 'running');
 
-  // Create DB entry
-  sessionsRepo.create({
-    id: sessionId,
-    goal: `Headless: ${prompt.substring(0, 100)}...`,
-  });
-  sessionsRepo.updateStatus(sessionId, 'running');
+    eventsRepo.create({
+      session_id: sessionId,
+      event_type: 'started',
+      payload: { command, project_path, prompt },
+    });
 
-  eventsRepo.create({
-    session_id: sessionId,
-    event_type: 'started',
-    payload: { command, project_path, prompt },
-  });
+    // Broadcast session start
+    wsBroadcast.cliSessionCreated({
+      id: sessionId,
+      goal: prompt.substring(0, 100),
+      mode: 'headless',
+      projectPath: project_path,
+      command,
+    });
 
-  try {
-    // Start session on Mac
-    const result = await macClient.startCliSession(sessionId, prompt, command);
+    try {
+      // Start session on Mac
+      const result = await macClient.startCliSession(sessionId, prompt, command);
 
-    if (!result.success) {
+      if (!result.success) {
+        sessionsRepo.updateStatus(sessionId, 'error');
+        eventsRepo.create({
+          session_id: sessionId,
+          event_type: 'error',
+          payload: result.message,
+        });
+        return `Fehler beim Starten der Session: ${result.message}`;
+      }
+
+      // Wait for completion via webhook (no polling!)
+      const completion = await waitForSessionCompletion(sessionId, 120_000);
+
+      if (completion) {
+        sessionsRepo.updateStatus(
+          sessionId,
+          completion.status === 'finished' ? 'finished' : 'error'
+        );
+        eventsRepo.create({
+          session_id: sessionId,
+          event_type: 'finished',
+          payload: { message: completion.message },
+        });
+
+        // Cleanup: terminate the tmux session since headless is done
+        try {
+          await macClient.terminateSession(sessionId);
+          console.log(`[CliAgent] Terminated tmux session for ${sessionId}`);
+        } catch (cleanupError) {
+          console.warn(`[CliAgent] Failed to cleanup tmux session ${sessionId}:`, cleanupError);
+        }
+
+        return completion.message || 'Aufgabe abgeschlossen, keine Ausgabe.';
+      } else {
+        sessionsRepo.updateStatus(sessionId, 'error');
+        return 'Die Aufgabe hat zu lange gedauert. Bitte prüfe die Session manuell.';
+      }
+    } catch (error) {
       sessionsRepo.updateStatus(sessionId, 'error');
       eventsRepo.create({
         session_id: sessionId,
         event_type: 'error',
-        payload: result.message,
+        payload: String(error),
       });
-      return `Fehler beim Starten der Session: ${result.message}`;
+      return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
+  },
+});
 
-    // Wait for completion via webhook (no polling!)
-    const completion = await waitForSessionCompletion(sessionId, 120_000);
+const startInteractiveSessionTool = tool({
+  description:
+    'Start an interactive Claude session for complex tasks that need iteration. Returns immediately with "Session gestartet". IMPORTANT: After calling this tool, you MUST stop and provide your final response.',
+  inputSchema: z.object({
+    project_path: z.string().describe('Full path to the project directory'),
+    initial_prompt: z.string().describe('Initial prompt/goal to send after session starts'),
+  }),
+  execute: async ({ project_path, initial_prompt }) => {
+    const sessionsRepo = new CliSessionsRepository();
+    const eventsRepo = new CliEventsRepository();
 
-    if (completion) {
-      sessionsRepo.updateStatus(
-        sessionId,
-        completion.status === 'finished' ? 'finished' : 'error'
-      );
-      eventsRepo.create({
-        session_id: sessionId,
-        event_type: 'finished',
-        payload: { message: completion.message },
-      });
+    const sessionId = generateId();
 
-      // Cleanup: terminate the tmux session since headless is done
-      try {
-        await macClient.terminateSession(sessionId);
-        console.log(`[CliAgent] Terminated tmux session for ${sessionId}`);
-      } catch (cleanupError) {
-        console.warn(`[CliAgent] Failed to cleanup tmux session ${sessionId}:`, cleanupError);
+    // Escape the prompt for shell
+    const escapedPrompt = initial_prompt
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\$/g, '\\$');
+
+    // Start Claude with the initial prompt - stays interactive after first response
+    const command = `cd ${project_path} && claude --dangerously-skip-permissions "${escapedPrompt}"`;
+
+    console.log(`[CliAgent] Starting interactive session: ${sessionId}`);
+    console.log(`[CliAgent] Command: ${command}`);
+    console.log(`[CliAgent] Initial prompt: ${initial_prompt}`);
+
+    // Create DB entry
+    sessionsRepo.create({
+      id: sessionId,
+      goal: initial_prompt.substring(0, 200),
+    });
+    sessionsRepo.updateStatus(sessionId, 'running');
+
+    eventsRepo.create({
+      session_id: sessionId,
+      event_type: 'started',
+      payload: { command, project_path, initial_prompt },
+    });
+
+    // Broadcast session start
+    wsBroadcast.cliSessionCreated({
+      id: sessionId,
+      goal: initial_prompt.substring(0, 100),
+      mode: 'interactive',
+      projectPath: project_path,
+      command,
+    });
+
+    try {
+      const result = await macClient.startCliSession(sessionId, initial_prompt, command);
+
+      if (!result.success) {
+        sessionsRepo.updateStatus(sessionId, 'error');
+        return `Fehler beim Starten: ${result.message}`;
       }
 
-      return completion.message || 'Aufgabe abgeschlossen, keine Ausgabe.';
-    } else {
+      sessionsRepo.setMacSessionId(sessionId, result.tmuxSession);
+
+      eventsRepo.create({
+        session_id: sessionId,
+        event_type: 'input',
+        payload: { input: initial_prompt },
+      });
+
+      return `Interaktive Session gestartet in ${project_path}. Claude arbeitet jetzt an der Aufgabe.`;
+    } catch (error) {
       sessionsRepo.updateStatus(sessionId, 'error');
-      return 'Die Aufgabe hat zu lange gedauert. Bitte prüfe die Session manuell.';
+      return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
-  } catch (error) {
-    sessionsRepo.updateStatus(sessionId, 'error');
-    eventsRepo.create({
-      session_id: sessionId,
-      event_type: 'error',
-      payload: String(error),
-    });
-    return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
+  },
+});
 
-async function executeStartInteractiveSession(args: { project_path: string; initial_prompt: string }): Promise<string> {
-  const { project_path, initial_prompt } = args;
-  const sessionsRepo = new CliSessionsRepository();
-  const eventsRepo = new CliEventsRepository();
+const sendSessionInputTool = tool({
+  description: 'Send input/feedback to a running interactive session',
+  inputSchema: z.object({
+    session_id: z.string().describe('The session ID'),
+    input: z.string().describe('The input to send'),
+  }),
+  execute: async ({ session_id, input }) => {
+    const eventsRepo = new CliEventsRepository();
 
-  const sessionId = generateId();
+    console.log(`[CliAgent] Sending input to session ${session_id}: ${input}`);
 
-  // Escape the prompt for shell
-  const escapedPrompt = initial_prompt
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\$/g, '\\$');
+    try {
+      const result = await macClient.sendCliInput(session_id, input);
 
-  // Start Claude with the initial prompt - stays interactive after first response
-  const command = `cd ${project_path} && claude --dangerously-skip-permissions "${escapedPrompt}"`;
+      eventsRepo.create({
+        session_id,
+        event_type: 'input',
+        payload: { input },
+      });
 
-  console.log(`[CliAgent] Starting interactive session: ${sessionId}`);
-  console.log(`[CliAgent] Command: ${command}`);
-  console.log(`[CliAgent] Initial prompt: ${initial_prompt}`);
-
-  // Create DB entry
-  sessionsRepo.create({
-    id: sessionId,
-    goal: initial_prompt.substring(0, 200),
-  });
-  sessionsRepo.updateStatus(sessionId, 'running');
-
-  eventsRepo.create({
-    session_id: sessionId,
-    event_type: 'started',
-    payload: { command, project_path, initial_prompt },
-  });
-
-  try {
-    const result = await macClient.startCliSession(sessionId, initial_prompt, command);
-
-    if (!result.success) {
-      sessionsRepo.updateStatus(sessionId, 'error');
-      return `Fehler beim Starten: ${result.message}`;
+      return result.success ? 'Eingabe gesendet.' : `Fehler: ${result.message}`;
+    } catch (error) {
+      return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
+  },
+});
 
-    sessionsRepo.setMacSessionId(sessionId, result.tmuxSession);
+const checkSessionStatusTool = tool({
+  description: 'Check the status and recent output of a session',
+  inputSchema: z.object({
+    session_id: z.string().describe('The session ID'),
+  }),
+  execute: async ({ session_id }) => {
+    console.log(`[CliAgent] Checking status for session ${session_id}`);
 
-    eventsRepo.create({
-      session_id: sessionId,
-      event_type: 'input',
-      payload: { input: initial_prompt },
-    });
+    try {
+      const result = await macClient.readCliOutput(session_id);
 
-    return `Interaktive Session gestartet in ${project_path}. Claude arbeitet jetzt an der Aufgabe.`;
-  } catch (error) {
-    sessionsRepo.updateStatus(sessionId, 'error');
-    return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
+      const recentOutput = result.output.slice(-10).join('\n');
 
-async function executeSendSessionInput(args: { session_id: string; input: string }): Promise<string> {
-  const { session_id, input } = args;
-  const eventsRepo = new CliEventsRepository();
+      return `Status: ${result.status}\n\nLetzte Ausgabe:\n${recentOutput || '(keine Ausgabe)'}`;
+    } catch (error) {
+      return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  },
+});
 
-  console.log(`[CliAgent] Sending input to session ${session_id}: ${input}`);
+const listActiveSessionsTool = tool({
+  description: 'List all active CLI sessions',
+  inputSchema: z.object({}),
+  execute: async () => {
+    console.log(`[CliAgent] Listing active sessions`);
 
-  try {
-    const result = await macClient.sendCliInput(session_id, input);
+    try {
+      const sessionsRepo = new CliSessionsRepository();
+      const dbSessions = sessionsRepo.getActive();
 
-    eventsRepo.create({
-      session_id,
-      event_type: 'input',
-      payload: { input },
-    });
+      if (dbSessions.length === 0) {
+        return 'Keine aktiven Sessions.';
+      }
 
-    return result.success ? 'Eingabe gesendet.' : `Fehler: ${result.message}`;
-  } catch (error) {
-    return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
+      const summaries = dbSessions.map(
+        (s) => `- ${s.id.substring(0, 8)}: ${s.goal} (${s.status})`
+      );
 
-async function executeCheckSessionStatus(args: { session_id: string }): Promise<string> {
-  const { session_id } = args;
-  console.log(`[CliAgent] Checking status for session ${session_id}`);
+      return `Aktive Sessions:\n${summaries.join('\n')}`;
+    } catch (error) {
+      return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  },
+});
 
-  try {
-    const result = await macClient.readCliOutput(session_id);
+const terminateSessionTool = tool({
+  description: 'Terminate/cancel a running session',
+  inputSchema: z.object({
+    session_id: z.string().describe('The session ID to terminate'),
+  }),
+  execute: async ({ session_id }) => {
+    console.log(`[CliAgent] Terminating session ${session_id}`);
 
-    const recentOutput = result.output.slice(-10).join('\n');
-
-    return `Status: ${result.status}\n\nLetzte Ausgabe:\n${recentOutput || '(keine Ausgabe)'}`;
-  } catch (error) {
-    return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
-
-async function executeListActiveSessions(): Promise<string> {
-  console.log(`[CliAgent] Listing active sessions`);
-
-  try {
     const sessionsRepo = new CliSessionsRepository();
-    const dbSessions = sessionsRepo.getActive();
+    const eventsRepo = new CliEventsRepository();
 
-    if (dbSessions.length === 0) {
-      return 'Keine aktiven Sessions.';
+    try {
+      await macClient.terminateSession(session_id);
+      sessionsRepo.updateStatus(session_id, 'cancelled');
+
+      eventsRepo.create({
+        session_id,
+        event_type: 'finished',
+        payload: { reason: 'terminated' },
+      });
+
+      return 'Session beendet.';
+    } catch (error) {
+      return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
+  },
+});
 
-    const summaries = dbSessions.map(
-      (s) => `- ${s.id.substring(0, 8)}: ${s.goal} (${s.status})`
-    );
-
-    return `Aktive Sessions:\n${summaries.join('\n')}`;
-  } catch (error) {
-    return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
-
-async function executeTerminateSession(args: { session_id: string }): Promise<string> {
-  const { session_id } = args;
-  console.log(`[CliAgent] Terminating session ${session_id}`);
-
-  const sessionsRepo = new CliSessionsRepository();
-  const eventsRepo = new CliEventsRepository();
-
-  try {
-    await macClient.terminateSession(session_id);
-    sessionsRepo.updateStatus(session_id, 'cancelled');
-
-    eventsRepo.create({
-      session_id,
-      event_type: 'finished',
-      payload: { reason: 'terminated' },
-    });
-
-    return 'Session beendet.';
-  } catch (error) {
-    return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
-
-// Execute a tool by name
-async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
-  switch (name) {
-    case 'start_headless_session':
-      return executeStartHeadlessSession(args as { project_path: string; prompt: string });
-    case 'start_interactive_session':
-      return executeStartInteractiveSession(args as { project_path: string; initial_prompt: string });
-    case 'send_session_input':
-      return executeSendSessionInput(args as { session_id: string; input: string });
-    case 'check_session_status':
-      return executeCheckSessionStatus(args as { session_id: string });
-    case 'list_active_sessions':
-      return executeListActiveSessions();
-    case 'terminate_session':
-      return executeTerminateSession(args as { session_id: string });
-    default:
-      return `Unknown tool: ${name}`;
-  }
-}
+// Create the CLI orchestration agent using Vercel AI SDK Agent class
+const cliOrchestratorAgent = new Agent({
+  model: MODEL,
+  system: AGENT_INSTRUCTIONS,
+  tools: {
+    start_headless_session: startHeadlessSessionTool,
+    start_interactive_session: startInteractiveSessionTool,
+    send_session_input: sendSessionInputTool,
+    check_session_status: checkSessionStatusTool,
+    list_active_sessions: listActiveSessionsTool,
+    terminate_session: terminateSessionTool,
+  },
+  // Max 2 steps: one tool call + final response (prevents multiple session starts)
+  stopWhen: stepCountIs(2),
+});
 
 /**
  * Handle a developer request by delegating to the CLI orchestration agent.
@@ -554,7 +486,7 @@ export async function handleDeveloperRequest(
   console.log('[CliAgent] Handling developer request');
   console.log(`[CliAgent] Request: ${request}`);
   console.log(`[CliAgent] History items: ${history.length}`);
-  console.log(`[CliAgent] Using model: ${MODEL}`);
+  console.log(`[CliAgent] Using model: x-ai/grok-code-fast-1 via OpenRouter`);
 
   if (!OPENROUTER_API_KEY) {
     return 'Fehler: OPEN_ROUTER_API environment variable is not set';
@@ -604,69 +536,56 @@ Analyze this request and take appropriate action. Remember:
   console.log(userMessage);
   console.log('----------------------------------------');
 
-  const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: AGENT_INSTRUCTIONS },
-    { role: 'user', content: userMessage },
-  ];
+  // Broadcast that CLI agent is thinking
+  wsBroadcast.cliAgentThinking(request);
 
   try {
-    // First API call - agent decides what to do
-    let response = await openrouter.chat.completions.create({
-      model: MODEL,
-      messages,
-      tools,
-      tool_choice: 'auto',
+    // Run the agent using Vercel AI SDK Agent class
+    const result = await cliOrchestratorAgent.generate({
+      prompt: userMessage,
     });
 
-    let assistantMessage = response.choices[0]?.message;
-    if (!assistantMessage) {
-      return 'Keine Antwort vom Modell erhalten.';
-    }
+    // Process steps to broadcast tool calls
+    for (const step of result.steps) {
+      // Check if step has tool calls
+      if (step.toolCalls && step.toolCalls.length > 0) {
+        for (const toolCall of step.toolCalls) {
+          // Broadcast tool call
+          wsBroadcast.cliAgentToolCall(toolCall.toolName, toolCall.args as Record<string, unknown>);
+          console.log(`[CliAgent] Broadcasted tool call: ${toolCall.toolName}`);
+        }
+      }
 
-    // Handle tool calls (max 1 iteration to enforce single tool call)
-    if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      // Only process the first tool call
-      const toolCall = assistantMessage.tool_calls[0];
-      if (toolCall && toolCall.type === 'function') {
-        console.log(`[CliAgent] Tool call: ${toolCall.function.name}`);
-        console.log(`[CliAgent] Arguments: ${toolCall.function.arguments}`);
-
-        const args = JSON.parse(toolCall.function.arguments);
-        const toolResult = await executeTool(toolCall.function.name, args);
-
-        console.log(`[CliAgent] Tool result: ${toolResult.substring(0, 200)}...`);
-
-        // Add assistant message and tool result to messages
-        messages.push(assistantMessage);
-        messages.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: toolResult,
-        });
-
-        // Get final response
-        response = await openrouter.chat.completions.create({
-          model: MODEL,
-          messages,
-          tools,
-          tool_choice: 'none', // Force no more tool calls
-        });
-
-        assistantMessage = response.choices[0]?.message;
+      // Check if step has tool results
+      if (step.toolResults && step.toolResults.length > 0) {
+        for (const toolResult of step.toolResults) {
+          // Extract session ID if present in the result
+          const resultStr = String(toolResult.result);
+          wsBroadcast.cliAgentToolResult(
+            toolResult.toolName,
+            resultStr.substring(0, 500) // Limit result size for broadcast
+          );
+          console.log(`[CliAgent] Broadcasted tool result: ${toolResult.toolName}`);
+        }
       }
     }
 
-    const output = assistantMessage?.content ?? 'Keine Antwort erhalten.';
+    const output = result.text ?? 'Keine Antwort erhalten.';
+
+    // Broadcast final response
+    wsBroadcast.cliAgentResponse(output);
 
     console.log('[CliAgent] Agent response:');
     console.log('----------------------------------------');
     console.log(output);
+    console.log(`[CliAgent] Steps taken: ${result.steps.length}`);
     console.log('========================================\n');
 
     return output;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[CliAgent] Error:', errorMsg);
+    wsBroadcast.error(`CLI Agent error: ${errorMsg}`);
     return `Es gab einen Fehler bei der Verarbeitung: ${errorMsg}`;
   }
 }

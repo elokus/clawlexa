@@ -13,7 +13,14 @@ import type {
   ToolPayload,
   ItemPendingPayload,
   ItemCompletedPayload,
+  CliAgentActivity,
+  CliAgentThinkingPayload,
+  CliAgentToolCallPayload,
+  CliAgentToolResultPayload,
+  CliAgentResponsePayload,
+  CliSessionCreatedPayload,
 } from '../types';
+import { useSessionsStore } from './sessions';
 
 interface AgentStore {
   // Connection state
@@ -33,12 +40,17 @@ interface AgentStore {
   // Tool execution state
   currentTool: { name: string; args?: Record<string, unknown> } | null;
 
+  // CLI Agent activity stream (for tool call visibility)
+  cliAgentActivities: CliAgentActivity[];
+  cliAgentActive: boolean;
+
   // Actions
   setConnected: (connected: boolean) => void;
   setWsError: (error: string | null) => void;
   handleMessage: (msg: WSMessage) => void;
   clearMessages: () => void;
   clearEvents: () => void;
+  clearCliAgentActivities: () => void;
   reset: () => void;
   loadMockConversation: () => void;
 }
@@ -114,6 +126,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   messages: [],
   events: [],
   currentTool: null,
+  cliAgentActivities: [],
+  cliAgentActive: false,
 
   // Actions
   setConnected: (connected) => set({ connected }),
@@ -260,12 +274,115 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         console.error('[Agent] Error:', errorPayload.message);
         break;
       }
+
+      // CLI Agent streaming events
+      case 'cli_agent_thinking': {
+        const { request } = payload as CliAgentThinkingPayload;
+        const activity: CliAgentActivity = {
+          id: generateId(),
+          type: 'thinking',
+          timestamp,
+          data: { request },
+        };
+        set((state) => ({
+          cliAgentActive: true,
+          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
+        }));
+        break;
+      }
+
+      case 'cli_agent_tool_call': {
+        const { toolName, args } = payload as CliAgentToolCallPayload;
+        const activity: CliAgentActivity = {
+          id: generateId(),
+          type: 'tool_call',
+          timestamp,
+          data: { toolName, args },
+        };
+        set((state) => ({
+          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
+        }));
+        break;
+      }
+
+      case 'cli_agent_tool_result': {
+        const { toolName, result, sessionId } = payload as CliAgentToolResultPayload;
+        const activity: CliAgentActivity = {
+          id: generateId(),
+          type: 'tool_result',
+          timestamp,
+          data: { toolName, result, sessionId },
+        };
+        set((state) => ({
+          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
+        }));
+        break;
+      }
+
+      case 'cli_agent_response': {
+        const { response } = payload as CliAgentResponsePayload;
+        const activity: CliAgentActivity = {
+          id: generateId(),
+          type: 'response',
+          timestamp,
+          data: { response },
+        };
+        set((state) => ({
+          cliAgentActive: false,
+          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
+        }));
+        break;
+      }
+
+      case 'cli_session_created': {
+        const sessionData = payload as CliSessionCreatedPayload;
+        const activity: CliAgentActivity = {
+          id: generateId(),
+          type: 'session_created',
+          timestamp,
+          data: sessionData,
+        };
+        set((state) => ({
+          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
+        }));
+
+        // Add to sessions store
+        const sessionsStore = useSessionsStore.getState();
+        sessionsStore.setSessions([
+          ...sessionsStore.sessions,
+          {
+            id: sessionData.id,
+            goal: sessionData.goal,
+            status: 'running',
+            mac_session_id: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+        break;
+      }
+
+      case 'cli_session_update': {
+        const sessionUpdate = payload as { id: string; status: string; goal: string };
+        const sessionsStore = useSessionsStore.getState();
+        const existing = sessionsStore.sessions.find((s) => s.id === sessionUpdate.id);
+        if (existing) {
+          sessionsStore.updateSession({
+            ...existing,
+            status: sessionUpdate.status as 'running' | 'finished' | 'error' | 'cancelled',
+            updated_at: new Date().toISOString(),
+          });
+        }
+        break;
+      }
     }
   },
 
   clearMessages: () => set({ messages: [] }),
 
   clearEvents: () => set({ events: [] }),
+
+  clearCliAgentActivities: () => set({ cliAgentActivities: [], cliAgentActive: false }),
 
   reset: () =>
     set({
@@ -276,5 +393,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       messages: [],
       events: [],
       currentTool: null,
+      cliAgentActivities: [],
+      cliAgentActive: false,
     }),
 }));

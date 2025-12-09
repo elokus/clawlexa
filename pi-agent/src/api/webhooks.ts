@@ -79,18 +79,113 @@ function resolvePendingCompletion(payload: WebhookPayload): void {
 }
 
 /**
- * Handle incoming webhook requests.
+ * Add CORS headers for browser requests.
+ */
+function setCorsHeaders(res: http.ServerResponse): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
+/**
+ * Handle incoming webhook and API requests.
  */
 async function handleWebhook(
   req: http.IncomingMessage,
   res: http.ServerResponse
 ): Promise<void> {
+  setCorsHeaders(res);
+
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   // Handle health check
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
     return;
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REST API for Sessions
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/sessions - List all sessions
+  if (req.method === 'GET' && req.url === '/api/sessions') {
+    try {
+      const sessionsRepo = new CliSessionsRepository();
+      const sessions = sessionsRepo.list();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(sessions));
+    } catch (error) {
+      console.error('[API] Error fetching sessions:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch sessions' }));
+    }
+    return;
+  }
+
+  // GET /api/sessions/active - List active sessions only
+  if (req.method === 'GET' && req.url === '/api/sessions/active') {
+    try {
+      const sessionsRepo = new CliSessionsRepository();
+      const sessions = sessionsRepo.getActive();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(sessions));
+    } catch (error) {
+      console.error('[API] Error fetching active sessions:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch active sessions' }));
+    }
+    return;
+  }
+
+  // GET /api/sessions/:id - Get a single session
+  const sessionMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'GET' && sessionMatch) {
+    try {
+      const sessionId = sessionMatch[1];
+      const sessionsRepo = new CliSessionsRepository();
+      const session = sessionsRepo.findById(sessionId);
+      if (session) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(session));
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+      }
+    } catch (error) {
+      console.error('[API] Error fetching session:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch session' }));
+    }
+    return;
+  }
+
+  // GET /api/sessions/:id/events - Get session events
+  const eventsMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/events$/);
+  if (req.method === 'GET' && eventsMatch) {
+    try {
+      const sessionId = eventsMatch[1];
+      const eventsRepo = new CliEventsRepository();
+      const events = eventsRepo.listBySession(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(events));
+    } catch (error) {
+      console.error('[API] Error fetching session events:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch session events' }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Webhooks
+  // ═══════════════════════════════════════════════════════════════════════════
 
   // Handle CLI status webhook
   if (req.method === 'POST' && req.url === '/webhooks/cli-status') {

@@ -27,8 +27,10 @@
   },
   "dependencies": {
     "@openai/agents": "^0.3.4",
+    "@openrouter/ai-sdk-provider": "^1.4.1",
     "@picovoice/porcupine-node": "^3.0.6",
     "@picovoice/pvrecorder-node": "^1.2.8",
+    "ai": "^5.0.108",
     "better-sqlite3": "^12.5.0",
     "dotenv": "^17.2.3",
     "node-record-lpcm16": "^1.0.1",

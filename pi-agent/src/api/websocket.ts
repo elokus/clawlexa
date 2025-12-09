@@ -25,7 +25,14 @@ export type WSMessageType =
   | 'tool_end'
   | 'item_pending'
   | 'item_completed'
-  | 'cli_session_update';
+  | 'cli_session_update'
+  // New: CLI Agent streaming events
+  | 'cli_agent_thinking'    // Agent is processing request
+  | 'cli_agent_tool_call'   // Agent calling a tool (start_headless_session, etc.)
+  | 'cli_agent_tool_result' // Tool result received
+  | 'cli_agent_response'    // Final agent response
+  | 'cli_session_created'   // New tmux session created
+  | 'cli_session_output';   // Session output streaming
 
 interface WSMessage {
   type: WSMessageType;
@@ -234,4 +241,28 @@ export const wsBroadcast = {
 
   cliSessionUpdate: (session: { id: string; status: string; goal: string }) =>
     broadcast('cli_session_update', session),
+
+  // CLI Agent streaming events
+  cliAgentThinking: (request: string) =>
+    broadcast('cli_agent_thinking', { request }),
+
+  cliAgentToolCall: (toolName: string, args: Record<string, unknown>) =>
+    broadcast('cli_agent_tool_call', { toolName, args }),
+
+  cliAgentToolResult: (toolName: string, result: string, sessionId?: string) =>
+    broadcast('cli_agent_tool_result', { toolName, result, sessionId }),
+
+  cliAgentResponse: (response: string) =>
+    broadcast('cli_agent_response', { response }),
+
+  cliSessionCreated: (session: {
+    id: string;
+    goal: string;
+    mode: 'headless' | 'interactive';
+    projectPath: string;
+    command: string;
+  }) => broadcast('cli_session_created', session),
+
+  cliSessionOutput: (sessionId: string, output: string) =>
+    broadcast('cli_session_output', { sessionId, output }),
 };

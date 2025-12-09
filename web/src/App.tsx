@@ -11,10 +11,10 @@ import { ConversationStream } from './components/ConversationStream';
 import { CommandPanel } from './components/CommandPanel';
 
 export function App() {
-  useWebSocket();
+  const { reconnect } = useWebSocket();
 
   const { connected, state, profile, messages, events, currentTool, loadMockConversation, clearMessages, clearEvents } = useAgentStore();
-  const [activeTab, setActiveTab] = useState<'sessions' | 'tools' | 'events'>('events');
+  const [activeTab, setActiveTab] = useState<'sessions' | 'agent' | 'tools' | 'events'>('events');
 
   // Check if we're in demo mode (no WS_URL set)
   const isDemoMode = !import.meta.env.VITE_WS_URL;
@@ -537,7 +537,7 @@ export function App() {
             Establishing uplink to VERTEX core...<br/>
             Target: marlon.local
           </div>
-          <button className="reconnect-btn">
+          <button className="reconnect-btn" onClick={reconnect} type="button">
             <span>RECONNECT</span>
           </button>
         </div>

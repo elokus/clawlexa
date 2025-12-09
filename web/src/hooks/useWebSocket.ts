@@ -8,15 +8,21 @@ import type { WSMessage } from '../types';
 
 // Determine WebSocket URL based on environment
 const getWsUrl = () => {
-  // If explicit URL is set, use it
-  const envUrl = import.meta.env.VITE_WS_URL;
-  if (envUrl) return envUrl;
-
   // If demo mode is explicitly enabled, return null
   if (import.meta.env.VITE_DEMO_MODE === 'true') return null;
 
-  // In production build, assume WS server is on same host, port 3001
-  // This works when served from the Pi
+  // In development mode, use the Vite proxy to avoid cross-origin issues
+  // The proxy at /ws forwards to the Pi's WebSocket server
+  if (import.meta.env.DEV) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws`;
+  }
+
+  // If explicit URL is set (production), use it
+  const envUrl = import.meta.env.VITE_WS_URL;
+  if (envUrl) return envUrl;
+
+  // In production build served from Pi, use same host with port 3001
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.hostname;
   return `${protocol}//${host}:3001`;
@@ -100,18 +106,12 @@ export function useWebSocket() {
           setConnected(false);
           wsRef.current = null;
 
-          // Don't reconnect if we're cleaning up or if server replaced us
+          // Don't reconnect if we're cleaning up
           if (isCleaningUpRef.current) {
             return;
           }
 
-          // Code 1000 with "New connection" reason means we were replaced - don't reconnect
-          if (event.code === 1000 && event.reason?.includes('New connection')) {
-            console.log('[WS] Connection replaced by newer client - not reconnecting');
-            return;
-          }
-
-          // Attempt reconnect for other disconnections
+          // Attempt reconnect for disconnections
           if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
             reconnectAttemptsRef.current++;
             const delay = RECONNECT_DELAY * Math.min(reconnectAttemptsRef.current, 5);

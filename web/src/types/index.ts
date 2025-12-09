@@ -66,7 +66,15 @@ export type WSMessageType =
   | 'tool_start'
   | 'tool_end'
   | 'item_pending'
-  | 'item_completed';
+  | 'item_completed'
+  | 'cli_session_update'
+  // CLI Agent streaming events
+  | 'cli_agent_thinking'
+  | 'cli_agent_tool_call'
+  | 'cli_agent_tool_result'
+  | 'cli_agent_response'
+  | 'cli_session_created'
+  | 'cli_session_output';
 
 export interface WSMessage {
   type: WSMessageType;
@@ -101,4 +109,45 @@ export interface ItemCompletedPayload {
   itemId: string;
   text: string;
   role: MessageRole;
+}
+
+// CLI Agent event payloads
+export interface CliAgentThinkingPayload {
+  request: string;
+}
+
+export interface CliAgentToolCallPayload {
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+export interface CliAgentToolResultPayload {
+  toolName: string;
+  result: string;
+  sessionId?: string;
+}
+
+export interface CliAgentResponsePayload {
+  response: string;
+}
+
+export interface CliSessionCreatedPayload {
+  id: string;
+  goal: string;
+  mode: 'headless' | 'interactive';
+  projectPath: string;
+  command: string;
+}
+
+export interface CliSessionOutputPayload {
+  sessionId: string;
+  output: string;
+}
+
+// CLI Agent activity for UI display
+export interface CliAgentActivity {
+  id: string;
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'response' | 'session_created';
+  timestamp: number;
+  data: unknown;
 }
