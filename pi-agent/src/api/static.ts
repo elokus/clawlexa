@@ -47,7 +47,10 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
   let urlPath = req.url ?? '/';
 
   // Remove query string
-  urlPath = urlPath.split('?')[0];
+  const queryIndex = urlPath.indexOf('?');
+  if (queryIndex !== -1) {
+    urlPath = urlPath.substring(0, queryIndex);
+  }
 
   // Default to index.html for root or SPA routes
   if (urlPath === '/' || !path.extname(urlPath)) {
