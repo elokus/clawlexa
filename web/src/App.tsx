@@ -697,12 +697,13 @@ export function App() {
            ═══════════════════════════════════════════════════════════════════ */
         @media (min-width: 769px) {
           .vertex-app {
-            flex-direction: row;
+            flex-direction: column; /* Keep column for header on top */
           }
 
           .main-content {
             flex-direction: row;
             flex: 1;
+            min-height: 0; /* Critical for flex child scrolling */
           }
 
           .stream-panel {
@@ -722,6 +723,22 @@ export function App() {
             display: flex;
             flex-direction: column;
             min-width: 0;
+            min-height: 0; /* Critical for flex child scrolling */
+          }
+
+          /* Conversation panel needs flex: 1 and min-height: 0 to scroll properly */
+          .conversation-panel {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+          }
+
+          /* Command panel needs explicit height management */
+          .command-panel {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
           }
         }
 

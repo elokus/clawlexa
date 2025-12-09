@@ -333,12 +333,19 @@ function SessionCard({
   const timeAgo = getTimeAgo(new Date(session.created_at));
   const isActive = ['pending', 'running', 'waiting_for_input'].includes(session.status);
   const tmuxCommand = session.mac_session_id ? `tmux attach -t ${session.mac_session_id}` : null;
+  const tmuxUrl = session.mac_session_id ? `tmux://${session.mac_session_id}` : null;
 
   const copyCommand = async () => {
     if (tmuxCommand) {
       await navigator.clipboard.writeText(tmuxCommand);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const openInTerminal = () => {
+    if (tmuxUrl) {
+      window.open(tmuxUrl, '_blank');
     }
   };
 
@@ -465,6 +472,36 @@ function SessionCard({
           border-color: var(--color-emerald);
           color: var(--color-emerald);
         }
+
+        .open-btn {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 6px 12px;
+          background: var(--color-emerald-dim);
+          border: 1px solid var(--color-emerald);
+          border-radius: 4px;
+          color: var(--color-emerald);
+          font-family: var(--font-mono);
+          font-size: 9px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          text-decoration: none;
+        }
+
+        .open-btn:hover {
+          background: var(--color-emerald);
+          color: var(--color-void);
+        }
+
+        .open-btn:active {
+          transform: scale(0.95);
+        }
+
+        .open-btn svg {
+          width: 12px;
+          height: 12px;
+        }
       `}</style>
 
       <div className="session-top">
@@ -481,6 +518,14 @@ function SessionCard({
           <code className="tmux-cmd">{tmuxCommand}</code>
           <button className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copyCommand} type="button">
             {copied ? '✓' : 'Copy'}
+          </button>
+          <button className="open-btn" onClick={openInTerminal} type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+              <polyline points="15,3 21,3 21,9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+            Open
           </button>
         </div>
       )}
@@ -1010,11 +1055,13 @@ export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: 
           background: var(--color-deep);
           border-radius: 20px 20px 0 0;
           overflow: hidden;
+          min-height: 0; /* Critical for flex scroll */
         }
 
         @media (min-width: 769px) {
           .cmd-panel {
             border-radius: 0;
+            height: 100%;
           }
         }
 
@@ -1027,9 +1074,18 @@ export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: 
 
         .tab-content {
           flex: 1;
-          overflow-y: auto;
+          overflow: hidden; /* Changed from overflow-y: auto */
           -webkit-overflow-scrolling: touch;
           min-height: 0;
+          display: flex;
+          flex-direction: column;
+        }
+
+        /* Ensure child tabs take full height and scroll internally */
+        .tab-content > * {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
         }
       `}</style>
 
