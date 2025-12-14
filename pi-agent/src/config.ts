@@ -15,7 +15,7 @@ export const config = {
   },
   agent: {
     defaultVoice: 'ash' as const,
-    model: 'gpt-4o-mini-realtime-preview',
+    model: 'gpt-realtime-mini-2025-10-06',
     conversationTimeout: 60_000, // 60 seconds
   },
   porcupine: {

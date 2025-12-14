@@ -287,13 +287,16 @@ export const myTool = tool({
 3. Export from `src/tools/index.ts`
 4. Add to profile's `tools` array in `src/agent/profiles.ts`
 
-## Mac Daemon Setup
+## Mac Setup
+
+### 1. Mac Daemon
 
 The Mac daemon must be running for CLI session tools:
 
 ```bash
 # On Mac
 cd mac-daemon
+npm install
 npm run dev  # Listens on port 3100
 ```
 
@@ -301,6 +304,77 @@ Test connection from Pi:
 ```bash
 curl http://MacBook-Pro-von-Lukasz.local:3100/health
 ```
+
+### 2. TmuxOpener App (Open Sessions from Web Dashboard)
+
+The TmuxOpener app allows you to click on sessions in the web dashboard and open them directly in your terminal (Ghostty).
+
+#### Installation
+
+1. **Build and install the app:**
+   ```bash
+   # From the voice-agent directory
+   osacompile -o tools/TmuxOpener.app tools/tmux-opener.applescript
+   cp -r tools/TmuxOpener.app ~/Applications/
+   ```
+
+2. **Register the URL scheme:**
+   ```bash
+   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f ~/Applications/TmuxOpener.app
+   ```
+
+3. **Grant permissions in System Settings → Privacy & Security:**
+
+   - **Accessibility**: Add `TmuxOpener.app` (may be requested on first use)
+   - **Automation**: Allow TmuxOpener to control Ghostty and System Events
+
+4. **Browser permissions:**
+
+   If accessing the web dashboard from a Pi or other local network device:
+   - **System Settings → Privacy & Security → Local Network**: Enable for your browser (Chrome, Safari, etc.)
+
+#### How It Works
+
+- Sessions are created with an ID (e.g., `10fa5a9a`)
+- The Mac daemon creates tmux sessions named `dev-assistant-{sessionId}`
+- Clicking "Open" in the web dashboard triggers `tmux://session-id`
+- TmuxOpener catches the URL and:
+  - If tmux session exists → Opens Ghostty and attaches to it
+  - If not → Opens Ghostty with an info message
+
+#### Testing
+
+```bash
+# Create a test tmux session
+tmux new-session -d -s dev-assistant-test "echo 'Test session'; sleep 3600"
+
+# Test the URL handler
+open "tmux://test"
+
+# Should open Ghostty attached to the session
+```
+
+#### Customization
+
+The app uses Ghostty by default. To use a different terminal, edit `tools/tmux-opener.applescript` and recompile:
+
+```applescript
+# For iTerm2, change the Ghostty.app references to iTerm.app
+# For Terminal.app, change to Terminal.app
+```
+
+### 3. Web Dashboard
+
+The web dashboard can be served from the Pi and accessed from your Mac's browser:
+
+```bash
+# On Pi
+cd web
+bun install
+bun run dev  # or: bun run build && bun run preview
+```
+
+Access from Mac: `http://marlon.local:5173` (or your Pi's hostname)
 
 ## Notes
 
