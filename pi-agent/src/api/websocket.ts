@@ -32,7 +32,9 @@ export type WSMessageType =
   | 'cli_agent_tool_result' // Tool result received
   | 'cli_agent_response'    // Final agent response
   | 'cli_session_created'   // New tmux session created
-  | 'cli_session_output';   // Session output streaming
+  | 'cli_session_output'    // Session output streaming
+  // Generic worker agent activity (for observable runner pattern)
+  | 'worker_activity';      // Worker agent activity events (thinking, tool calls, responses)
 
 interface WSMessage {
   type: WSMessageType;
@@ -265,4 +267,15 @@ export const wsBroadcast = {
 
   cliSessionOutput: (sessionId: string, output: string) =>
     broadcast('cli_session_output', { sessionId, output }),
+
+  // Generic worker activity events for observable agent runner pattern
+  workerActivity: (activity: WorkerActivityPayload) =>
+    broadcast('worker_activity', activity),
 };
+
+// Type for worker activity events used by runObservableAgent
+export interface WorkerActivityPayload {
+  agent: string;
+  type: 'thinking' | 'reasoning' | 'tool_call' | 'tool_result' | 'text' | 'response' | 'error' | 'complete';
+  payload: unknown;
+}

@@ -15,7 +15,7 @@
  * 5. Returns result to be spoken back to user
  */
 
-import { Experimental_Agent as Agent, stepCountIs, tool } from 'ai';
+import { tool } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { RealtimeItem } from '@openai/agents/realtime';
 import { z } from 'zod';
@@ -27,6 +27,7 @@ import {
 import * as macClient from './mac-client.js';
 import { waitForSessionCompletion } from '../api/webhooks.js';
 import { wsBroadcast } from '../api/websocket.js';
+import { runObservableAgent } from '../lib/agent-runner.js';
 
 // OpenRouter provider for grok-code-fast-1
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
@@ -456,24 +457,21 @@ const terminateSessionTool = tool({
   },
 });
 
-// Create the CLI orchestration agent using Vercel AI SDK Agent class
-const cliOrchestratorAgent = new Agent({
-  model: MODEL,
-  system: AGENT_INSTRUCTIONS,
-  tools: {
-    start_headless_session: startHeadlessSessionTool,
-    start_interactive_session: startInteractiveSessionTool,
-    send_session_input: sendSessionInputTool,
-    check_session_status: checkSessionStatusTool,
-    list_active_sessions: listActiveSessionsTool,
-    terminate_session: terminateSessionTool,
-  },
-  // Max 2 steps: one tool call + final response (prevents multiple session starts)
-  stopWhen: stepCountIs(2),
-});
+// Tool registry for the CLI orchestration agent
+const cliAgentTools = {
+  start_headless_session: startHeadlessSessionTool,
+  start_interactive_session: startInteractiveSessionTool,
+  send_session_input: sendSessionInputTool,
+  check_session_status: checkSessionStatusTool,
+  list_active_sessions: listActiveSessionsTool,
+  terminate_session: terminateSessionTool,
+};
 
 /**
  * Handle a developer request by delegating to the CLI orchestration agent.
+ *
+ * Uses the Observable Agent Runner pattern for real-time streaming events
+ * to the WebSocket/UI.
  *
  * @param request - The user's coding request
  * @param history - Conversation history from the realtime session
@@ -536,52 +534,30 @@ Analyze this request and take appropriate action. Remember:
   console.log(userMessage);
   console.log('----------------------------------------');
 
-  // Broadcast that CLI agent is thinking
+  // Also broadcast using the legacy format for backward compatibility
   wsBroadcast.cliAgentThinking(request);
 
   try {
-    // Run the agent using Vercel AI SDK Agent class
-    const result = await cliOrchestratorAgent.generate({
+    // Run the agent using the Observable Agent Runner pattern
+    // This streams events to WebSocket in real-time
+    const output = await runObservableAgent({
+      name: 'Marvin',
+      model: MODEL,
+      system: AGENT_INSTRUCTIONS,
       prompt: userMessage,
+      tools: cliAgentTools,
+      maxSteps: 3, // One tool call + response (prevents multiple session starts)
     });
 
-    // Process steps to broadcast tool calls
-    for (const step of result.steps) {
-      // Check if step has tool calls
-      if (step.toolCalls && step.toolCalls.length > 0) {
-        for (const toolCall of step.toolCalls) {
-          // Broadcast tool call
-          wsBroadcast.cliAgentToolCall(toolCall.toolName, toolCall.input as Record<string, unknown>);
-          console.log(`[CliAgent] Broadcasted tool call: ${toolCall.toolName}`);
-        }
-      }
-
-      // Check if step has tool results
-      if (step.toolResults && step.toolResults.length > 0) {
-        for (const toolResult of step.toolResults) {
-          // Extract session ID if present in the result
-          const resultStr = String(toolResult.output);
-          wsBroadcast.cliAgentToolResult(
-            toolResult.toolName,
-            resultStr.substring(0, 500) // Limit result size for broadcast
-          );
-          console.log(`[CliAgent] Broadcasted tool result: ${toolResult.toolName}`);
-        }
-      }
-    }
-
-    const output = result.text ?? 'Keine Antwort erhalten.';
-
-    // Broadcast final response
+    // Also broadcast using legacy format for backward compatibility
     wsBroadcast.cliAgentResponse(output);
 
     console.log('[CliAgent] Agent response:');
     console.log('----------------------------------------');
     console.log(output);
-    console.log(`[CliAgent] Steps taken: ${result.steps.length}`);
     console.log('========================================\n');
 
-    return output;
+    return output || 'Keine Antwort erhalten.';
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[CliAgent] Error:', errorMsg);

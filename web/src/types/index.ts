@@ -68,13 +68,15 @@ export type WSMessageType =
   | 'item_pending'
   | 'item_completed'
   | 'cli_session_update'
-  // CLI Agent streaming events
+  // CLI Agent streaming events (legacy)
   | 'cli_agent_thinking'
   | 'cli_agent_tool_call'
   | 'cli_agent_tool_result'
   | 'cli_agent_response'
   | 'cli_session_created'
-  | 'cli_session_output';
+  | 'cli_session_output'
+  // Generic worker activity (new Observable Agent Runner pattern)
+  | 'worker_activity';
 
 export interface WSMessage {
   type: WSMessageType;

@@ -19,6 +19,9 @@ import type {
   CliAgentToolResultPayload,
   CliAgentResponsePayload,
   CliSessionCreatedPayload,
+  WorkerActivity,
+  WorkerActivityPayload,
+  ReasoningSession,
 } from '../types';
 import { useSessionsStore } from './sessions';
 
