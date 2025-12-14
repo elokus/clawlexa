@@ -1,0 +1,6 @@
+{
+  "name": "Marvin",
+  "model": "x-ai/grok-code-fast-1",
+  "description": "CLI Orchestration Agent - Manages coding sessions on Mac",
+  "maxSteps": 3
+}

@@ -2,7 +2,7 @@
  * Tools Index - Export all available tools for the voice agent.
  */
 
-export { webSearchTool } from './web-search.js';
+export { webSearchTool } from '../subagents/web-search/index.js';
 export { addTodoTool, viewTodosTool, deleteTodoTool } from './todo.js';
 export { controlLightTool } from './govee.js';
 export { reasoningTool } from './reasoning.js';
@@ -16,7 +16,7 @@ export {
 } from './developer-session.js';
 
 // Tool registry by name for easy lookup
-import { webSearchTool } from './web-search.js';
+import { webSearchTool } from '../subagents/web-search/index.js';
 import { addTodoTool, viewTodosTool, deleteTodoTool } from './todo.js';
 import { controlLightTool } from './govee.js';
 import { reasoningTool } from './reasoning.js';

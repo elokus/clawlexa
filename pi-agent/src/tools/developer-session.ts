@@ -13,7 +13,7 @@
 
 import { tool, RealtimeContextData, RealtimeItem } from '@openai/agents/realtime';
 import { z } from 'zod';
-import { handleDeveloperRequest, isMacDaemonAvailable } from './cli-agent.js';
+import { handleDeveloperRequest, isMacDaemonAvailable } from '../subagents/cli/index.js';
 
 const developerSessionParameters = z.object({
   request: z
