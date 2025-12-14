@@ -42,3 +42,6 @@ bun.lockb
 
 # TypeScript
 *.tsbuildinfo
+
+# Repomix
+repomix-output.xml
