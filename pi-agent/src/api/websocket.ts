@@ -26,15 +26,10 @@ export type WSMessageType =
   | 'item_pending'
   | 'item_completed'
   | 'cli_session_update'
-  // New: CLI Agent streaming events
-  | 'cli_agent_thinking'    // Agent is processing request
-  | 'cli_agent_tool_call'   // Agent calling a tool (start_headless_session, etc.)
-  | 'cli_agent_tool_result' // Tool result received
-  | 'cli_agent_response'    // Final agent response
   | 'cli_session_created'   // New tmux session created
   | 'cli_session_output'    // Session output streaming
-  // Generic worker agent activity (for observable runner pattern)
-  | 'worker_activity';      // Worker agent activity events (thinking, tool calls, responses)
+  // Unified subagent activity stream (replaces worker_activity and cli_agent_* events)
+  | 'subagent_activity';
 
 interface WSMessage {
   type: WSMessageType;
@@ -212,6 +207,29 @@ export function getClientCount(): number {
   return clients.size;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Subagent Activity Types - Unified streaming events for all subagents
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type SubagentEventType =
+  | 'reasoning_start'   // Reasoning/thinking started
+  | 'reasoning_delta'   // Streaming reasoning chunk
+  | 'reasoning_end'     // Reasoning complete
+  | 'tool_call'         // Tool invocation with args
+  | 'tool_result'       // Tool execution result
+  | 'response'          // Final text response
+  | 'error'             // Error occurred
+  | 'complete';         // Agent finished
+
+export interface SubagentActivityPayload {
+  /** Agent name for UI display (e.g., "Marvin", "Jarvis") */
+  agent: string;
+  /** Event type */
+  type: SubagentEventType;
+  /** Event-specific payload */
+  payload: unknown;
+}
+
 // Convenience broadcast functions
 export const wsBroadcast = {
   stateChange: (state: string, profile: string | null) =>
@@ -244,19 +262,6 @@ export const wsBroadcast = {
   cliSessionUpdate: (session: { id: string; status: string; goal: string }) =>
     broadcast('cli_session_update', session),
 
-  // CLI Agent streaming events
-  cliAgentThinking: (request: string) =>
-    broadcast('cli_agent_thinking', { request }),
-
-  cliAgentToolCall: (toolName: string, args: Record<string, unknown>) =>
-    broadcast('cli_agent_tool_call', { toolName, args }),
-
-  cliAgentToolResult: (toolName: string, result: string, sessionId?: string) =>
-    broadcast('cli_agent_tool_result', { toolName, result, sessionId }),
-
-  cliAgentResponse: (response: string) =>
-    broadcast('cli_agent_response', { response }),
-
   cliSessionCreated: (session: {
     id: string;
     goal: string;
@@ -268,14 +273,7 @@ export const wsBroadcast = {
   cliSessionOutput: (sessionId: string, output: string) =>
     broadcast('cli_session_output', { sessionId, output }),
 
-  // Generic worker activity events for observable agent runner pattern
-  workerActivity: (activity: WorkerActivityPayload) =>
-    broadcast('worker_activity', activity),
+  // Unified subagent activity events (replaces workerActivity and cliAgent* events)
+  subagentActivity: (payload: SubagentActivityPayload) =>
+    broadcast('subagent_activity', payload),
 };
-
-// Type for worker activity events used by runObservableAgent
-export interface WorkerActivityPayload {
-  agent: string;
-  type: 'thinking' | 'reasoning' | 'tool_call' | 'tool_result' | 'text' | 'response' | 'error' | 'complete';
-  payload: unknown;
-}

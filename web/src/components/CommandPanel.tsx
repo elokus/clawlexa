@@ -6,7 +6,8 @@
 import { useRef, useEffect, useState } from 'react';
 import { useSessionsStore } from '../stores/sessions';
 import { useAgentStore } from '../stores/agent';
-import type { RealtimeEvent, CliSession, CliAgentActivity } from '../types';
+import { ActivityFeed } from './ActivityFeed';
+import type { RealtimeEvent, CliSession } from '../types';
 
 type TabType = 'sessions' | 'agent' | 'tools' | 'events';
 
@@ -738,259 +739,10 @@ function ToolsTab() {
   );
 }
 
-// Agent Tab
-function AgentTab({ activities, isActive, onClear }: {
-  activities: CliAgentActivity[];
-  isActive: boolean;
-  onClear: () => void;
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [activities]);
-
-  const getConfig = (type: CliAgentActivity['type']) => {
-    switch (type) {
-      case 'thinking': return { icon: '◈', color: 'var(--color-amber)' };
-      case 'tool_call': return { icon: '▶', color: 'var(--color-cyan)' };
-      case 'tool_result': return { icon: '◀', color: 'var(--color-emerald)' };
-      case 'response': return { icon: '◉', color: 'var(--color-violet)' };
-      case 'session_created': return { icon: '▣', color: 'var(--color-rose)' };
-      default: return { icon: '•', color: 'var(--color-text-dim)' };
-    }
-  };
-
-  return (
-    <div className="agent-tab">
-      <style>{`
-        .agent-tab {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-        }
-
-        .agent-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 10px 12px;
-          border-bottom: 1px solid var(--color-border);
-          flex-shrink: 0;
-        }
-
-        .agent-status {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        .agent-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: var(--color-text-ghost);
-        }
-
-        .agent-dot.active {
-          background: var(--color-amber);
-          box-shadow: 0 0 10px var(--color-amber);
-          animation: pulse-glow 1s ease-in-out infinite;
-        }
-
-        .agent-label {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-text-dim);
-        }
-
-        .agent-label.active {
-          color: var(--color-amber);
-        }
-
-        .agent-clear {
-          padding: 5px 8px;
-          background: transparent;
-          border: 1px solid var(--color-border);
-          border-radius: 4px;
-          color: var(--color-text-dim);
-          font-family: var(--font-mono);
-          font-size: 9px;
-          cursor: pointer;
-        }
-
-        .agent-list {
-          flex: 1;
-          overflow-y: auto;
-          -webkit-overflow-scrolling: touch;
-          padding: 8px;
-        }
-
-        .activity-item {
-          display: flex;
-          gap: 8px;
-          padding: 10px;
-          margin-bottom: 6px;
-          background: var(--color-surface);
-          border-radius: 8px;
-          border-left: 3px solid;
-          animation: slide-in 0.2s ease;
-        }
-
-        @keyframes slide-in {
-          from { opacity: 0; transform: translateX(-8px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-
-        .activity-icon {
-          flex-shrink: 0;
-          width: 20px;
-          text-align: center;
-          font-size: 12px;
-        }
-
-        .activity-content {
-          flex: 1;
-          min-width: 0;
-        }
-
-        .activity-type {
-          font-family: var(--font-mono);
-          font-size: 9px;
-          text-transform: uppercase;
-          margin-bottom: 2px;
-        }
-
-        .activity-text {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-text-normal);
-          line-height: 1.4;
-          word-break: break-word;
-        }
-
-        .activity-time {
-          flex-shrink: 0;
-          font-family: var(--font-mono);
-          font-size: 9px;
-          color: var(--color-text-ghost);
-        }
-
-        .empty-agent {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          gap: 10px;
-          padding: 24px;
-          text-align: center;
-        }
-
-        .empty-agent svg {
-          width: 28px;
-          height: 28px;
-          color: var(--color-text-ghost);
-          opacity: 0.5;
-        }
-
-        .empty-agent-text {
-          font-family: var(--font-mono);
-          font-size: 11px;
-          color: var(--color-text-dim);
-        }
-
-        @keyframes pulse-glow {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
-
-      <div className="agent-header">
-        <div className="agent-status">
-          <span className={`agent-dot ${isActive ? 'active' : ''}`} />
-          <span className={`agent-label ${isActive ? 'active' : ''}`}>
-            {isActive ? 'Processing' : 'Idle'}
-          </span>
-        </div>
-        {activities.length > 0 && (
-          <button className="agent-clear" onClick={onClear} type="button">Clear</button>
-        )}
-      </div>
-
-      <div className="agent-list" ref={scrollRef}>
-        {activities.length === 0 ? (
-          <div className="empty-agent">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 6v6l4 2" />
-            </svg>
-            <span className="empty-agent-text">
-              CLI Agent idle<br />
-              Say "Computer" to start
-            </span>
-          </div>
-        ) : (
-          activities.map((activity) => {
-            const config = getConfig(activity.type);
-            const data = activity.data as Record<string, unknown>;
-            let text = '';
-
-            switch (activity.type) {
-              case 'thinking':
-                text = `Processing: ${(data.request as string)?.substring(0, 40)}...`;
-                break;
-              case 'tool_call':
-                text = `${data.toolName}()`;
-                break;
-              case 'tool_result':
-                text = `${data.toolName} completed`;
-                break;
-              case 'response':
-                text = (data.response as string)?.substring(0, 50) || 'Done';
-                break;
-              case 'session_created':
-                text = `Session in ${data.projectPath}`;
-                break;
-              default:
-                text = JSON.stringify(data).substring(0, 40);
-            }
-
-            return (
-              <div
-                key={activity.id}
-                className="activity-item"
-                style={{ borderLeftColor: config.color }}
-              >
-                <span className="activity-icon" style={{ color: config.color }}>
-                  {config.icon}
-                </span>
-                <div className="activity-content">
-                  <div className="activity-type" style={{ color: config.color }}>
-                    {activity.type.replace('_', ' ')}
-                  </div>
-                  <div className="activity-text">{text}</div>
-                </div>
-                <span className="activity-time">
-                  {new Date(activity.timestamp).toLocaleTimeString('de-DE', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
 
 export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: CommandPanelProps) {
   const { sessions } = useSessionsStore();
-  const { cliAgentActivities, cliAgentActive, clearCliAgentActivities } = useAgentStore();
+  const { subagentActivities, subagentActive, clearSubagentActivities } = useAgentStore();
 
   return (
     <div className="cmd-panel">
@@ -1059,7 +811,7 @@ export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: 
               <path d="M12 6v6l4 2" />
             </svg>
           }
-          count={cliAgentActivities.length || undefined}
+          count={subagentActivities.length || undefined}
           active={activeTab === 'agent'}
           onClick={() => onTabChange('agent')}
         />
@@ -1091,10 +843,10 @@ export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: 
       <div className="tab-content">
         {activeTab === 'sessions' && <SessionsTab />}
         {activeTab === 'agent' && (
-          <AgentTab
-            activities={cliAgentActivities}
-            isActive={cliAgentActive}
-            onClear={clearCliAgentActivities}
+          <ActivityFeed
+            blocks={subagentActivities}
+            isActive={subagentActive}
+            onClear={clearSubagentActivities}
           />
         )}
         {activeTab === 'tools' && <ToolsTab />}

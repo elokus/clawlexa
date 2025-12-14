@@ -26,7 +26,7 @@ import {
 } from '../db/index.js';
 import * as macClient from './mac-client.js';
 import { waitForSessionCompletion } from '../api/webhooks.js';
-import { wsBroadcast } from '../api/websocket.js';
+import { wsBroadcast } from '../api/websocket.js'; // Keep for cliSessionCreated broadcasts
 import { runObservableAgent } from '../lib/agent-runner.js';
 
 // OpenRouter provider for grok-code-fast-1
@@ -534,9 +534,6 @@ Analyze this request and take appropriate action. Remember:
   console.log(userMessage);
   console.log('----------------------------------------');
 
-  // Also broadcast using the legacy format for backward compatibility
-  wsBroadcast.cliAgentThinking(request);
-
   try {
     // Run the agent using the Observable Agent Runner pattern
     // This streams events to WebSocket in real-time
@@ -548,9 +545,6 @@ Analyze this request and take appropriate action. Remember:
       tools: cliAgentTools,
       maxSteps: 3, // One tool call + response (prevents multiple session starts)
     });
-
-    // Also broadcast using legacy format for backward compatibility
-    wsBroadcast.cliAgentResponse(output);
 
     console.log('[CliAgent] Agent response:');
     console.log('----------------------------------------');

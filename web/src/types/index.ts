@@ -68,15 +68,10 @@ export type WSMessageType =
   | 'item_pending'
   | 'item_completed'
   | 'cli_session_update'
-  // CLI Agent streaming events (legacy)
-  | 'cli_agent_thinking'
-  | 'cli_agent_tool_call'
-  | 'cli_agent_tool_result'
-  | 'cli_agent_response'
   | 'cli_session_created'
   | 'cli_session_output'
-  // Generic worker activity (new Observable Agent Runner pattern)
-  | 'worker_activity';
+  // Unified subagent activity stream
+  | 'subagent_activity';
 
 export interface WSMessage {
   type: WSMessageType;
@@ -113,26 +108,7 @@ export interface ItemCompletedPayload {
   role: MessageRole;
 }
 
-// CLI Agent event payloads
-export interface CliAgentThinkingPayload {
-  request: string;
-}
-
-export interface CliAgentToolCallPayload {
-  toolName: string;
-  args: Record<string, unknown>;
-}
-
-export interface CliAgentToolResultPayload {
-  toolName: string;
-  result: string;
-  sessionId?: string;
-}
-
-export interface CliAgentResponsePayload {
-  response: string;
-}
-
+// CLI Session payloads (still used for session management)
 export interface CliSessionCreatedPayload {
   id: string;
   goal: string;
@@ -146,10 +122,59 @@ export interface CliSessionOutputPayload {
   output: string;
 }
 
-// CLI Agent activity for UI display
-export interface CliAgentActivity {
-  id: string;
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'response' | 'session_created';
-  timestamp: number;
-  data: unknown;
+// ═══════════════════════════════════════════════════════════════════════════
+// Subagent Activity Types - Unified UI state for all subagent events
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type SubagentEventType =
+  | 'reasoning_start'
+  | 'reasoning_delta'
+  | 'reasoning_end'
+  | 'tool_call'
+  | 'tool_result'
+  | 'response'
+  | 'error'
+  | 'complete';
+
+export interface SubagentActivityPayload {
+  agent: string;
+  type: SubagentEventType;
+  payload: unknown;
 }
+
+// Activity Block types for UI rendering
+export type ActivityBlockType = 'reasoning' | 'tool' | 'content' | 'error';
+
+interface BaseBlock {
+  id: string;
+  timestamp: number;
+  agent: string;
+}
+
+export interface ReasoningBlock extends BaseBlock {
+  type: 'reasoning';
+  content: string; // Accumulated reasoning text
+  isComplete: boolean;
+  durationMs?: number;
+}
+
+export interface ToolBlock extends BaseBlock {
+  type: 'tool';
+  toolName: string;
+  toolCallId: string;
+  args: Record<string, unknown>;
+  result?: string;
+  isComplete: boolean;
+}
+
+export interface ContentBlock extends BaseBlock {
+  type: 'content';
+  text: string;
+}
+
+export interface ErrorBlock extends BaseBlock {
+  type: 'error';
+  message: string;
+}
+
+export type ActivityBlock = ReasoningBlock | ToolBlock | ContentBlock | ErrorBlock;

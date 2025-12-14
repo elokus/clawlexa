@@ -13,15 +13,12 @@ import type {
   ToolPayload,
   ItemPendingPayload,
   ItemCompletedPayload,
-  CliAgentActivity,
-  CliAgentThinkingPayload,
-  CliAgentToolCallPayload,
-  CliAgentToolResultPayload,
-  CliAgentResponsePayload,
   CliSessionCreatedPayload,
-  WorkerActivity,
-  WorkerActivityPayload,
-  ReasoningSession,
+  ActivityBlock,
+  ReasoningBlock,
+  ToolBlock,
+  SubagentActivityPayload,
+  SubagentEventType,
 } from '../types';
 import { useSessionsStore } from './sessions';
 
@@ -43,9 +40,9 @@ interface AgentStore {
   // Tool execution state
   currentTool: { name: string; args?: Record<string, unknown> } | null;
 
-  // CLI Agent activity stream (for tool call visibility)
-  cliAgentActivities: CliAgentActivity[];
-  cliAgentActive: boolean;
+  // Subagent activity blocks (unified for all subagents)
+  subagentActivities: ActivityBlock[];
+  subagentActive: boolean;
 
   // Actions
   setConnected: (connected: boolean) => void;
@@ -53,7 +50,7 @@ interface AgentStore {
   handleMessage: (msg: WSMessage) => void;
   clearMessages: () => void;
   clearEvents: () => void;
-  clearCliAgentActivities: () => void;
+  clearSubagentActivities: () => void;
   reset: () => void;
   loadMockConversation: () => void;
 }
@@ -129,8 +126,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   messages: [],
   events: [],
   currentTool: null,
-  cliAgentActivities: [],
-  cliAgentActive: false,
+  subagentActivities: [],
+  subagentActive: false,
 
   // Actions
   setConnected: (connected) => set({ connected }),
@@ -278,77 +275,15 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         break;
       }
 
-      // CLI Agent streaming events
-      case 'cli_agent_thinking': {
-        const { request } = payload as CliAgentThinkingPayload;
-        const activity: CliAgentActivity = {
-          id: generateId(),
-          type: 'thinking',
-          timestamp,
-          data: { request },
-        };
-        set((state) => ({
-          cliAgentActive: true,
-          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
-        }));
-        break;
-      }
-
-      case 'cli_agent_tool_call': {
-        const { toolName, args } = payload as CliAgentToolCallPayload;
-        const activity: CliAgentActivity = {
-          id: generateId(),
-          type: 'tool_call',
-          timestamp,
-          data: { toolName, args },
-        };
-        set((state) => ({
-          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
-        }));
-        break;
-      }
-
-      case 'cli_agent_tool_result': {
-        const { toolName, result, sessionId } = payload as CliAgentToolResultPayload;
-        const activity: CliAgentActivity = {
-          id: generateId(),
-          type: 'tool_result',
-          timestamp,
-          data: { toolName, result, sessionId },
-        };
-        set((state) => ({
-          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
-        }));
-        break;
-      }
-
-      case 'cli_agent_response': {
-        const { response } = payload as CliAgentResponsePayload;
-        const activity: CliAgentActivity = {
-          id: generateId(),
-          type: 'response',
-          timestamp,
-          data: { response },
-        };
-        set((state) => ({
-          cliAgentActive: false,
-          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
-        }));
+      // Unified subagent activity stream
+      case 'subagent_activity': {
+        const { agent, type: eventType, payload: eventPayload } = payload as SubagentActivityPayload;
+        handleSubagentActivity(set, get, agent, eventType, eventPayload, timestamp);
         break;
       }
 
       case 'cli_session_created': {
         const sessionData = payload as CliSessionCreatedPayload;
-        const activity: CliAgentActivity = {
-          id: generateId(),
-          type: 'session_created',
-          timestamp,
-          data: sessionData,
-        };
-        set((state) => ({
-          cliAgentActivities: [...state.cliAgentActivities.slice(-49), activity],
-        }));
-
         // Add to sessions store
         const sessionsStore = useSessionsStore.getState();
         sessionsStore.setSessions([
@@ -385,7 +320,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
   clearEvents: () => set({ events: [] }),
 
-  clearCliAgentActivities: () => set({ cliAgentActivities: [], cliAgentActive: false }),
+  clearSubagentActivities: () => set({ subagentActivities: [], subagentActive: false }),
 
   reset: () =>
     set({
@@ -396,7 +331,157 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       messages: [],
       events: [],
       currentTool: null,
-      cliAgentActivities: [],
-      cliAgentActive: false,
+      subagentActivities: [],
+      subagentActive: false,
     }),
 }));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Subagent Activity Handler - Aggregates streaming events into UI blocks
+// ═══════════════════════════════════════════════════════════════════════════
+
+type SetState = (fn: (state: AgentStore) => Partial<AgentStore>) => void;
+type GetState = () => AgentStore;
+
+function handleSubagentActivity(
+  set: SetState,
+  get: GetState,
+  agent: string,
+  eventType: SubagentEventType,
+  eventPayload: unknown,
+  timestamp: number
+): void {
+  const payload = eventPayload as Record<string, unknown>;
+
+  switch (eventType) {
+    case 'reasoning_start': {
+      // Create a new reasoning block
+      const block: ReasoningBlock = {
+        id: generateId(),
+        timestamp,
+        agent,
+        type: 'reasoning',
+        content: '',
+        isComplete: false,
+      };
+      set((state) => ({
+        subagentActive: true,
+        subagentActivities: [...state.subagentActivities, block],
+      }));
+      break;
+    }
+
+    case 'reasoning_delta': {
+      // Append delta to the last reasoning block
+      const delta = (payload.delta as string) || '';
+      set((state) => {
+        const blocks = [...state.subagentActivities];
+        const lastIdx = blocks.length - 1;
+        const last = blocks[lastIdx];
+        if (last && last.type === 'reasoning' && !last.isComplete) {
+          blocks[lastIdx] = { ...last, content: last.content + delta };
+        }
+        return { subagentActivities: blocks };
+      });
+      break;
+    }
+
+    case 'reasoning_end': {
+      // Mark reasoning block as complete
+      const durationMs = (payload.durationMs as number) || undefined;
+      set((state) => {
+        const blocks = [...state.subagentActivities];
+        const lastIdx = blocks.length - 1;
+        const last = blocks[lastIdx];
+        if (last && last.type === 'reasoning' && !last.isComplete) {
+          blocks[lastIdx] = { ...last, isComplete: true, durationMs };
+        }
+        return { subagentActivities: blocks };
+      });
+      break;
+    }
+
+    case 'tool_call': {
+      // Create a new tool block
+      const block: ToolBlock = {
+        id: generateId(),
+        timestamp,
+        agent,
+        type: 'tool',
+        toolName: (payload.toolName as string) || 'unknown',
+        toolCallId: (payload.toolCallId as string) || '',
+        args: (payload.args as Record<string, unknown>) || {},
+        isComplete: false,
+      };
+      set((state) => ({
+        subagentActivities: [...state.subagentActivities, block],
+      }));
+      break;
+    }
+
+    case 'tool_result': {
+      // Find and update the matching tool block
+      const toolCallId = payload.toolCallId as string;
+      const result = (payload.result as string) || '';
+      set((state) => {
+        const blocks = [...state.subagentActivities];
+        // Find the tool block with matching toolCallId, or fallback to last incomplete tool block
+        let idx = blocks.findIndex(
+          (b) => b.type === 'tool' && (b as ToolBlock).toolCallId === toolCallId
+        );
+        if (idx === -1) {
+          idx = blocks.findIndex((b) => b.type === 'tool' && !(b as ToolBlock).isComplete);
+        }
+        if (idx !== -1 && blocks[idx].type === 'tool') {
+          blocks[idx] = { ...(blocks[idx] as ToolBlock), result, isComplete: true };
+        }
+        return { subagentActivities: blocks };
+      });
+      break;
+    }
+
+    case 'response': {
+      // Create a content block with the final response
+      const text = (payload.text as string) || '';
+      if (text) {
+        set((state) => ({
+          subagentActivities: [
+            ...state.subagentActivities,
+            {
+              id: generateId(),
+              timestamp,
+              agent,
+              type: 'content',
+              text,
+            },
+          ],
+        }));
+      }
+      break;
+    }
+
+    case 'error': {
+      // Create an error block
+      const message = (payload.message as string) || 'Unknown error';
+      set((state) => ({
+        subagentActivities: [
+          ...state.subagentActivities,
+          {
+            id: generateId(),
+            timestamp,
+            agent,
+            type: 'error',
+            message,
+          },
+        ],
+      }));
+      break;
+    }
+
+    case 'complete': {
+      // Mark subagent as inactive
+      set({ subagentActive: false });
+      break;
+    }
+  }
+}

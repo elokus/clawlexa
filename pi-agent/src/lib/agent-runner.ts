@@ -9,10 +9,16 @@
  * - Error handling
  *
  * Uses the Vercel AI SDK v5 `streamText` with `fullStream` for granular events.
+ *
+ * Emits unified `subagent_activity` events:
+ * - reasoning_start/delta/end: Streaming reasoning (collapsed by default in UI)
+ * - tool_call/tool_result: Tool invocations with arguments and results
+ * - response: Final generated text
+ * - error/complete: Status events
  */
 
 import { streamText, stepCountIs, type ToolSet, type LanguageModel } from 'ai';
-import { wsBroadcast, type WorkerActivityPayload } from '../api/websocket.js';
+import { wsBroadcast, type SubagentEventType } from '../api/websocket.js';
 
 export interface AgentRunnerOptions {
   /** The language model to use (e.g., openrouter.chat('x-ai/grok-code-fast-1')) */
@@ -46,8 +52,10 @@ export interface AgentRunnerOptions {
 export async function runObservableAgent(opts: AgentRunnerOptions): Promise<string> {
   const { model, system, prompt, tools, name, maxSteps = 3 } = opts;
 
-  // Broadcast: Agent started
-  broadcast(name, 'thinking', { status: 'started', request: prompt });
+  // Track reasoning timing
+  let reasoningStartTime = 0;
+  let reasoningBuffer = '';
+  let fullText = '';
 
   try {
     // Start streaming with Vercel AI SDK v5
@@ -59,9 +67,6 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
       tools,
       stopWhen: stepCountIs(maxSteps),
     });
-
-    let fullText = '';
-    let reasoningBuffer = '';
 
     // Process the full event stream
     for await (const event of result.fullStream) {
@@ -79,7 +84,8 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
         // Reasoning started (for thinking models like Grok, DeepSeek R1)
         case 'reasoning-start': {
           reasoningBuffer = '';
-          broadcast(name, 'reasoning', { status: 'started' });
+          reasoningStartTime = Date.now();
+          broadcast(name, 'reasoning_start', {});
           break;
         }
 
@@ -87,31 +93,19 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
         case 'reasoning-delta': {
           const text = (event as { text?: string }).text ?? '';
           reasoningBuffer += text;
-          broadcast(name, 'reasoning', { delta: text, accumulated: reasoningBuffer });
+          broadcast(name, 'reasoning_delta', { delta: text });
           break;
         }
 
         // Reasoning complete
         case 'reasoning-end': {
-          broadcast(name, 'reasoning', { status: 'complete', text: reasoningBuffer });
-          break;
-        }
-
-        // Tool arguments streaming started
-        case 'tool-input-start': {
-          const { toolName, id } = event as { toolName: string; id?: string };
-          console.log(`[AgentRunner] ${name}: Tool input starting: ${toolName}`);
-          broadcast(name, 'tool_call', {
-            status: 'streaming',
-            tool: toolName,
-            id: id ?? 'unknown',
-          });
+          const durationMs = Date.now() - reasoningStartTime;
+          broadcast(name, 'reasoning_end', { text: reasoningBuffer, durationMs });
           break;
         }
 
         // Tool call executed - use 'input' property per AI SDK v5
         case 'tool-call': {
-          // In AI SDK v5, tool event uses 'input' instead of 'args'
           const toolEvent = event as {
             toolName: string;
             toolCallId: string;
@@ -122,9 +116,8 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
 
           console.log(`[AgentRunner] ${name}: Tool called: ${toolEvent.toolName}`);
           broadcast(name, 'tool_call', {
-            status: 'called',
-            tool: toolEvent.toolName,
-            id: toolEvent.toolCallId,
+            toolName: toolEvent.toolName,
+            toolCallId: toolEvent.toolCallId,
             args,
           });
           break;
@@ -132,7 +125,6 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
 
         // Tool result received - use 'output' property per AI SDK v5
         case 'tool-result': {
-          // In AI SDK v5, tool result uses 'output' instead of 'result'
           const resultEvent = event as {
             toolName: string;
             toolCallId: string;
@@ -144,31 +136,19 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
 
           console.log(`[AgentRunner] ${name}: Tool result: ${resultEvent.toolName}`);
           broadcast(name, 'tool_result', {
-            tool: resultEvent.toolName,
-            id: resultEvent.toolCallId,
-            result: output,
+            toolName: resultEvent.toolName,
+            toolCallId: resultEvent.toolCallId,
+            result: typeof output === 'string' ? output : JSON.stringify(output),
           });
           break;
         }
-
-        // Text generation started
-        case 'text-start':
-          console.log(`[AgentRunner] ${name}: Text generation started`);
-          break;
 
         // Text chunk
         case 'text-delta': {
           const delta = (event as { textDelta?: string }).textDelta ?? '';
           fullText += delta;
-          // Optional: broadcast text chunks for real-time typing effect
-          // broadcast(name, 'text', { delta, accumulated: fullText });
           break;
         }
-
-        // Text generation complete
-        case 'text-end':
-          console.log(`[AgentRunner] ${name}: Text generation complete`);
-          break;
 
         // Step finished
         case 'finish-step': {
@@ -204,8 +184,8 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
         }
 
         default:
-          // Log unknown event types for debugging
-          console.log(`[AgentRunner] ${name}: Unknown event type: ${(event as { type: string }).type}`);
+          // Ignore other events (start-step, text-start, text-end, tool-input-start, etc.)
+          break;
       }
     }
 
@@ -226,14 +206,10 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
 }
 
 /**
- * Helper to broadcast worker activity events.
+ * Helper to broadcast subagent activity events.
  */
-function broadcast(
-  agent: string,
-  type: WorkerActivityPayload['type'],
-  payload: unknown
-): void {
-  wsBroadcast.workerActivity({ agent, type, payload });
+function broadcast(agent: string, type: SubagentEventType, payload: unknown): void {
+  wsBroadcast.subagentActivity({ agent, type, payload });
 }
 
 export { type ToolSet, type LanguageModel } from 'ai';

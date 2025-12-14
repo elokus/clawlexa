@@ -11,10 +11,9 @@
  */
 
 import { tool } from '@openai/agents/realtime';
-import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { z } from 'zod';
-import { wsBroadcast } from '../api/websocket.js';
+import { runObservableAgent } from '../lib/agent-runner.js';
 
 // OpenRouter provider - uses OPEN_ROUTER_API_KEY from environment
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
@@ -53,57 +52,25 @@ export const webSearchTool = tool({
 
     console.log(`[WebSearch] Searching with grok:online for: ${query}`);
 
-    // Broadcast that web search is starting
-    wsBroadcast.workerActivity({
-      agent: 'Jarvis',
-      type: 'thinking',
-      payload: { status: 'started', request: `Web search: ${query}` },
-    });
-
     try {
-      // Use generateText with OpenRouter's grok:online model
-      // The :online suffix automatically enables web search
-      const result = await generateText({
+      // Use runObservableAgent for unified WebSocket streaming
+      // The :online suffix automatically enables web search via OpenRouter
+      const text = await runObservableAgent({
+        name: 'Jarvis',
         model: WEB_SEARCH_MODEL,
         system: SYSTEM_PROMPT,
         prompt: query,
+        tools: {}, // No sub-tools for web search (model has built-in web access)
+        maxSteps: 1, // Single step - just search and respond
       });
-
-      const text = result.text || 'Keine Ergebnisse gefunden.';
 
       console.log(`[WebSearch] Result: ${text.substring(0, 100)}...`);
 
-      // Log usage if available (AI SDK v5 uses inputTokens/outputTokens)
-      if (result.usage) {
-        console.log(`[WebSearch] Usage: input=${result.usage.inputTokens}, output=${result.usage.outputTokens}`);
-      }
-
-      // Broadcast completion
-      wsBroadcast.workerActivity({
-        agent: 'Jarvis',
-        type: 'response',
-        payload: { text },
-      });
-
-      wsBroadcast.workerActivity({
-        agent: 'Jarvis',
-        type: 'complete',
-        payload: { success: true },
-      });
-
       // This string is returned to Realtime, which will speak it
-      return text;
+      return text || 'Keine Ergebnisse gefunden.';
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[WebSearch] Error: ${message}`);
-
-      // Broadcast error
-      wsBroadcast.workerActivity({
-        agent: 'Jarvis',
-        type: 'error',
-        payload: { message },
-      });
-
       return `Die Websuche ist fehlgeschlagen: ${message}`;
     }
   },
