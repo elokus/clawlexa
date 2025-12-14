@@ -221,12 +221,16 @@ async function main() {
   scheduler.start();
   console.log('Timer scheduler started');
 
-  // Start static file server for web dashboard
-  try {
-    await startStaticServer();
-    console.log('Static dashboard server started');
-  } catch (error) {
-    console.warn('Failed to start static server:', error);
+  // Start static file server for web dashboard (skip in dev when using Vite)
+  if (process.env.SKIP_STATIC_SERVER !== 'true') {
+    try {
+      await startStaticServer();
+      console.log('Static dashboard server started');
+    } catch (error) {
+      console.warn('Failed to start static server:', error);
+    }
+  } else {
+    console.log('[Static] Skipped (SKIP_STATIC_SERVER=true, use Vite dev server instead)');
   }
 
   // Start webhook server for Mac daemon callbacks

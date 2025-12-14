@@ -7,11 +7,37 @@
  * - Tool execution events
  * - Session lifecycle events
  * - Pending items (for delayed transcription handling)
+ *
+ * Master/Replica Pattern:
+ * - Multiple clients can connect (no IP restriction)
+ * - Only the "Master" client handles audio I/O (mic/speaker)
+ * - All clients receive state and transcript updates
+ * - Clients can request master control when agent is idle
  */
 
+import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Client State Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface ClientState {
+  id: string;
+  isMaster: boolean;
+  connectedAt: number;
+}
+
+// Track state per WebSocket client
+const clientStates = new Map<WebSocket, ClientState>();
+
+// Track current master client ID
+let masterClientId: string | null = null;
+
+// Track last agent state (to prevent master takeover during active turns)
+let lastAgentState: string = 'idle';
 
 // Binary audio handler for WebSocketTransport
 let binaryAudioHandler: ((data: Buffer, ws: WebSocket) => void) | null = null;
@@ -40,7 +66,10 @@ export type WSMessageType =
   | 'cli_session_created'   // New tmux session created
   | 'cli_session_output'    // Session output streaming
   // Unified subagent activity stream (replaces worker_activity and cli_agent_* events)
-  | 'subagent_activity';
+  | 'subagent_activity'
+  // Multi-client master/replica coordination
+  | 'welcome'               // Sent on connect with clientId and isMaster
+  | 'master_changed';       // Broadcast when master changes
 
 interface WSMessage {
   type: WSMessageType;
@@ -50,8 +79,6 @@ interface WSMessage {
 
 let wss: WebSocketServer | null = null;
 const clients = new Set<WebSocket>();
-// Track connections by IP to prevent duplicates
-const clientsByIp = new Map<string, WebSocket>();
 
 /**
  * Start the WebSocket server for real-time dashboard updates.
@@ -78,63 +105,125 @@ export function startWebSocketServer(): Promise<void> {
 
     wss.on('connection', (ws, req) => {
       const clientAddr = req.socket.remoteAddress ?? 'unknown';
+      const clientId = randomUUID();
 
-      // Close existing connection from same IP (prevent duplicates)
-      const existingClient = clientsByIp.get(clientAddr);
-      if (existingClient) {
-        console.log(`[WS] Closing existing connection from ${clientAddr}`);
-        existingClient.close(1000, 'New connection from same IP');
-        clients.delete(existingClient);
+      // First client becomes master
+      const isMaster = masterClientId === null;
+      if (isMaster) {
+        masterClientId = clientId;
+        console.log(`[WS] Client ${clientId.slice(0, 8)} assigned as Master (from ${clientAddr})`);
+      } else {
+        console.log(`[WS] Client ${clientId.slice(0, 8)} connected as Replica (from ${clientAddr})`);
       }
 
-      console.log(`[WS] Client connected from ${clientAddr}`);
+      // Store client state
+      clientStates.set(ws, { id: clientId, isMaster, connectedAt: Date.now() });
       clients.add(ws);
-      clientsByIp.set(clientAddr, ws);
 
-      // Send current state on connect
+      // Send welcome message with client identity
       ws.send(JSON.stringify({
-        type: 'state_change',
-        payload: { state: 'idle', profile: null },
+        type: 'welcome',
+        payload: { clientId, isMaster },
         timestamp: Date.now(),
       }));
 
+      // Also send current agent state
+      ws.send(JSON.stringify({
+        type: 'state_change',
+        payload: { state: lastAgentState, profile: null },
+        timestamp: Date.now(),
+      }));
+
+      // Handle disconnection
       ws.on('close', () => {
-        console.log(`[WS] Client disconnected: ${clientAddr}`);
+        const state = clientStates.get(ws);
+        const shortId = state?.id.slice(0, 8) ?? 'unknown';
+        console.log(`[WS] Client ${shortId} disconnected`);
+
         clients.delete(ws);
-        // Only remove from IP map if it's still this connection
-        if (clientsByIp.get(clientAddr) === ws) {
-          clientsByIp.delete(clientAddr);
+        clientStates.delete(ws);
+
+        // If master disconnected, promote a new one
+        if (state?.isMaster) {
+          masterClientId = null;
+          promoteNewMaster();
         }
       });
 
       ws.on('error', (err) => {
-        console.error(`[WS] Client error: ${err.message}`);
+        const state = clientStates.get(ws);
+        const shortId = state?.id.slice(0, 8) ?? 'unknown';
+        console.error(`[WS] Client ${shortId} error: ${err.message}`);
+
         clients.delete(ws);
-        if (clientsByIp.get(clientAddr) === ws) {
-          clientsByIp.delete(clientAddr);
+        clientStates.delete(ws);
+
+        if (state?.isMaster) {
+          masterClientId = null;
+          promoteNewMaster();
         }
       });
 
       // Handle incoming messages from dashboard
       ws.on('message', (data, isBinary) => {
-        // Handle binary audio data
-        if (isBinary || Buffer.isBuffer(data)) {
-          if (binaryAudioHandler) {
+        const clientState = clientStates.get(ws);
+        const shortId = clientState?.id.slice(0, 8) ?? 'unknown';
+
+        // Handle binary audio data - only accept from Master
+        // IMPORTANT: Only check isBinary flag, not Buffer.isBuffer(data)
+        // because text messages in Node.js ws library also come as Buffers
+        if (isBinary) {
+          if (clientState?.isMaster && binaryAudioHandler) {
             binaryAudioHandler(data as Buffer, ws);
+          } else if (!clientState?.isMaster) {
+            // Log occasionally to help debug
+            if (Math.random() < 0.01) {
+              console.log(`[WS] Ignoring audio from non-master ${shortId}`);
+            }
           }
           return;
         }
 
-        // Handle JSON messages
+        // Handle JSON text messages
         try {
-          const msg = JSON.parse(data.toString());
+          const text = typeof data === 'string' ? data : data.toString();
+          const msg = JSON.parse(text);
+          console.log(`[WS] Message from ${shortId}:`, msg.type, msg.payload ? JSON.stringify(msg.payload).slice(0, 100) : '');
           handleClientMessage(ws, msg);
         } catch (err) {
-          console.error('[WS] Invalid message:', err);
+          console.error('[WS] Invalid message:', err, 'data:', typeof data);
         }
       });
     });
   });
+}
+
+/**
+ * Promote the oldest connected client to Master.
+ */
+function promoteNewMaster(): void {
+  let newMasterWs: WebSocket | null = null;
+  let oldestTime = Infinity;
+
+  // Find the oldest remaining client
+  for (const [candidateWs, candidateState] of clientStates.entries()) {
+    if (candidateState.connectedAt < oldestTime && candidateWs.readyState === WebSocket.OPEN) {
+      oldestTime = candidateState.connectedAt;
+      newMasterWs = candidateWs;
+    }
+  }
+
+  if (newMasterWs) {
+    const newMasterState = clientStates.get(newMasterWs)!;
+    newMasterState.isMaster = true;
+    masterClientId = newMasterState.id;
+
+    // Broadcast master change to all clients
+    broadcast('master_changed', { masterId: newMasterState.id });
+    console.log(`[WS] Promoted ${newMasterState.id.slice(0, 8)} to Master`);
+  } else {
+    console.log('[WS] No clients remaining to promote');
+  }
 }
 
 /**
@@ -152,7 +241,8 @@ export function stopWebSocketServer(): Promise<void> {
       client.close();
     }
     clients.clear();
-    clientsByIp.clear();
+    clientStates.clear();
+    masterClientId = null;
 
     wss.close(() => {
       console.log('[WS] Server stopped');
@@ -184,17 +274,19 @@ export function broadcast(type: WSMessageType, payload: unknown): void {
 }
 
 /**
- * Broadcast binary data (audio) to all connected clients.
- * Used by WebSocketTransport to send audio back to browsers.
+ * Broadcast binary data (audio) to Master client only.
+ * Used by WebSocketTransport to send audio back to the browser handling I/O.
  */
 export function broadcastBinary(data: Buffer | ArrayBuffer): void {
   if (clients.size === 0) return;
 
   const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
 
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
+  // Only send audio to Master client
+  for (const [client, state] of clientStates.entries()) {
+    if (state.isMaster && client.readyState === WebSocket.OPEN) {
       client.send(buffer);
+      break; // Only one master
     }
   }
 }
@@ -218,11 +310,13 @@ export function sendTo(ws: WebSocket, type: WSMessageType, payload: unknown): vo
  * Handle messages from dashboard clients.
  */
 function handleClientMessage(ws: WebSocket, msg: { type: string; payload?: unknown }): void {
-  console.log(`[WS] Received: ${msg.type}`);
+  const clientState = clientStates.get(ws);
+  const shortId = clientState?.id.slice(0, 8) ?? 'unknown';
+  console.log(`[WS] Received from ${shortId}: ${msg.type}`);
 
   switch (msg.type) {
     case 'ping':
-      sendTo(ws, 'state_change', { state: 'idle', profile: null });
+      sendTo(ws, 'state_change', { state: lastAgentState, profile: null });
       break;
 
     case 'client_command': {
@@ -232,6 +326,37 @@ function handleClientMessage(ws: WebSocket, msg: { type: string; payload?: unkno
       } else {
         console.warn('[WS] No command handler registered for client_command');
       }
+      break;
+    }
+
+    case 'request_master': {
+      if (!clientState) return;
+
+      // Prevent takeover if agent is speaking/thinking to avoid audio glitches
+      if (lastAgentState === 'thinking' || lastAgentState === 'speaking') {
+        sendTo(ws, 'error', { message: 'Cannot take control while agent is active' });
+        console.log(`[WS] ${shortId} request_master denied - agent is ${lastAgentState}`);
+        return;
+      }
+
+      // Already master?
+      if (clientState.isMaster) {
+        console.log(`[WS] ${shortId} already master`);
+        return;
+      }
+
+      // Demote current master
+      for (const state of clientStates.values()) {
+        state.isMaster = false;
+      }
+
+      // Promote requester
+      clientState.isMaster = true;
+      masterClientId = clientState.id;
+
+      // Broadcast to all clients
+      broadcast('master_changed', { masterId: clientState.id });
+      console.log(`[WS] Control taken by ${shortId}`);
       break;
     }
 
@@ -296,8 +421,10 @@ export interface SubagentActivityPayload {
 
 // Convenience broadcast functions
 export const wsBroadcast = {
-  stateChange: (state: string, profile: string | null) =>
-    broadcast('state_change', { state, profile }),
+  stateChange: (state: string, profile: string | null) => {
+    lastAgentState = state; // Track state for master takeover logic
+    broadcast('state_change', { state, profile });
+  },
 
   transcript: (text: string, role: 'user' | 'assistant', itemId?: string, final = true) =>
     broadcast('transcript', { id: itemId, text, role, final }),

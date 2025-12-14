@@ -651,7 +651,7 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
                   {event.type}
                 </span>
                 <span className="event-data">
-                  {JSON.stringify(event.data).slice(0, 35)}...
+                  {(JSON.stringify(event.data) ?? '(empty)').slice(0, 35)}...
                 </span>
               </div>
             );

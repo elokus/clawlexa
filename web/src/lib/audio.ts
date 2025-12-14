@@ -138,19 +138,33 @@ export class AudioController {
    * Queue PCM16 24kHz audio for playback.
    */
   playAudio(data: ArrayBuffer): void {
-    if (!this.playbackContext) {
-      // Lazy init playback context if capture wasn't started
-      this.playbackContext = new AudioContext({
-        sampleRate: TARGET_SAMPLE_RATE,
-      });
+    // Validate input
+    if (!data || data.byteLength === 0) {
+      return;
     }
 
-    // Add to queue
-    this.playbackQueue.push(data);
+    try {
+      if (!this.playbackContext || this.playbackContext.state === 'closed') {
+        // Lazy init playback context if capture wasn't started or context was closed
+        this.playbackContext = new AudioContext({
+          sampleRate: TARGET_SAMPLE_RATE,
+        });
+      }
 
-    // Start playback if not already playing
-    if (!this.isPlaying) {
-      this.processPlaybackQueue();
+      // Resume context if suspended (required for autoplay policy)
+      if (this.playbackContext.state === 'suspended') {
+        this.playbackContext.resume();
+      }
+
+      // Add to queue
+      this.playbackQueue.push(data);
+
+      // Start playback if not already playing
+      if (!this.isPlaying) {
+        this.processPlaybackQueue();
+      }
+    } catch (err) {
+      console.error('[Audio] Error queueing playback:', err);
     }
   }
 
@@ -176,52 +190,62 @@ export class AudioController {
    * Schedule an audio buffer for playback.
    */
   private scheduleAudioBuffer(data: ArrayBuffer): void {
-    if (!this.playbackContext) return;
+    if (!this.playbackContext || this.playbackContext.state === 'closed') return;
 
-    // Convert PCM16 to Float32
-    const pcm16 = new Int16Array(data);
-    const float32 = new Float32Array(pcm16.length);
+    try {
+      // Convert PCM16 to Float32
+      const pcm16 = new Int16Array(data);
+      if (pcm16.length === 0) return;
 
-    for (let i = 0; i < pcm16.length; i++) {
-      float32[i] = pcm16[i] / 0x8000;
-    }
+      const float32 = new Float32Array(pcm16.length);
 
-    // Create audio buffer
-    const audioBuffer = this.playbackContext.createBuffer(
-      1, // mono
-      float32.length,
-      TARGET_SAMPLE_RATE
-    );
-    audioBuffer.getChannelData(0).set(float32);
-
-    // Create buffer source
-    const source = this.playbackContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.playbackContext.destination);
-
-    // Calculate when to start this buffer
-    const currentTime = this.playbackContext.currentTime;
-
-    if (this.samplesScheduled === 0 || this.playbackStartTime < currentTime) {
-      // First buffer or we've fallen behind - start immediately
-      this.playbackStartTime = currentTime;
-      this.samplesScheduled = 0;
-    }
-
-    const startOffset = this.samplesScheduled / TARGET_SAMPLE_RATE;
-    const startTime = this.playbackStartTime + startOffset;
-
-    source.start(startTime);
-    this.samplesScheduled += float32.length;
-
-    // When this buffer ends, check for more
-    source.onended = () => {
-      if (this.playbackQueue.length > 0) {
-        this.processPlaybackQueue();
-      } else {
-        this.isPlaying = false;
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 0x8000;
       }
-    };
+
+      // Create audio buffer
+      const audioBuffer = this.playbackContext.createBuffer(
+        1, // mono
+        float32.length,
+        TARGET_SAMPLE_RATE
+      );
+      audioBuffer.getChannelData(0).set(float32);
+
+      // Create buffer source
+      const source = this.playbackContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.playbackContext.destination);
+
+      // Calculate when to start this buffer
+      const currentTime = this.playbackContext.currentTime;
+
+      // Check if we've fallen behind: compare END of scheduled audio vs current time
+      // This prevents resetting during rapid buffer processing in a loop
+      const scheduledEndTime = this.playbackStartTime + (this.samplesScheduled / TARGET_SAMPLE_RATE);
+      if (this.samplesScheduled === 0 || scheduledEndTime < currentTime) {
+        // First buffer or we've actually fallen behind - start immediately
+        this.playbackStartTime = currentTime;
+        this.samplesScheduled = 0;
+      }
+
+      const startOffset = this.samplesScheduled / TARGET_SAMPLE_RATE;
+      const startTime = this.playbackStartTime + startOffset;
+
+      source.start(startTime);
+      this.samplesScheduled += float32.length;
+
+      // When this buffer ends, check for more
+      source.onended = () => {
+        if (this.playbackQueue.length > 0) {
+          this.processPlaybackQueue();
+        } else {
+          this.isPlaying = false;
+        }
+      };
+    } catch (err) {
+      console.error('[Audio] Error scheduling audio buffer:', err);
+      this.isPlaying = false;
+    }
   }
 
   /**

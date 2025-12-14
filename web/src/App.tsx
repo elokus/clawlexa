@@ -22,7 +22,8 @@ export function App() {
   const [mobileView, setMobileView] = useState<MobileView>('voice');
   const [showCommandSheet, setShowCommandSheet] = useState(false);
 
-  const isDemoMode = !import.meta.env.VITE_WS_URL;
+  // Demo mode is only enabled when explicitly set via VITE_DEMO_MODE=true
+  const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true';
 
   useEffect(() => {
     if (isDemoMode) {
@@ -815,6 +816,9 @@ export function App() {
               isInitializing={audioSession.isInitializing}
               error={audioSession.error}
               disabled={!connected || isDemoMode}
+              isMaster={audioSession.isMaster}
+              onRequestMaster={audioSession.requestMaster}
+              agentState={state}
             />
           </section>
 

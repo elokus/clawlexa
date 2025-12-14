@@ -5,13 +5,13 @@
 import { create } from 'zustand';
 import type { CliSession, CliEvent } from '../types';
 
-// Always use relative URLs - let Vite proxy handle routing in dev
-// In production, configure VITE_API_URL or deploy API on same origin
-const API_BASE_URL = import.meta.env.VITE_DEMO_MODE === 'true'
-  ? null
-  : (import.meta.env.VITE_API_URL || '');
+// Demo mode check - only skip fetches when explicitly in demo mode
+const IS_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true';
 
-console.log('[Sessions] API_BASE_URL:', API_BASE_URL);
+// API base URL - empty string means relative URLs (Vite proxy handles routing)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
+console.log('[Sessions] Demo mode:', IS_DEMO_MODE, '| API_BASE_URL:', API_BASE_URL || '(relative)');
 
 interface SessionsStore {
   sessions: CliSession[];
@@ -79,7 +79,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   setError: (error) => set({ error }),
 
   fetchSessions: async () => {
-    if (!API_BASE_URL) {
+    if (IS_DEMO_MODE) {
       console.log('[Sessions] Demo mode - skipping fetch');
       return;
     }
@@ -101,7 +101,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   },
 
   fetchSessionEvents: async (sessionId: string) => {
-    if (!API_BASE_URL) {
+    if (IS_DEMO_MODE) {
       return;
     }
 

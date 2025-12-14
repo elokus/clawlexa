@@ -19,6 +19,8 @@ import type {
   ToolBlock,
   SubagentActivityPayload,
   SubagentEventType,
+  WelcomePayload,
+  MasterChangedPayload,
 } from '../types';
 import { useSessionsStore } from './sessions';
 
@@ -26,6 +28,10 @@ interface AgentStore {
   // Connection state
   connected: boolean;
   wsError: string | null;
+
+  // Multi-client identity
+  clientId: string | null;
+  isMaster: boolean;
 
   // Agent state
   state: AgentState;
@@ -121,6 +127,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   // Initial state - connected: true for demo mode
   connected: true,
   wsError: null,
+  clientId: null,
+  isMaster: false,
   state: 'idle',
   profile: null,
   messages: [],
@@ -275,6 +283,23 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         break;
       }
 
+      // Multi-client coordination
+      case 'welcome': {
+        const { clientId, isMaster } = payload as WelcomePayload;
+        console.log(`[Agent] Welcome: clientId=${clientId.slice(0, 8)}, isMaster=${isMaster}`);
+        set({ clientId, isMaster });
+        break;
+      }
+
+      case 'master_changed': {
+        const { masterId } = payload as MasterChangedPayload;
+        const currentClientId = get().clientId;
+        const newIsMaster = currentClientId === masterId;
+        console.log(`[Agent] Master changed to ${masterId.slice(0, 8)}, isMaster=${newIsMaster}`);
+        set({ isMaster: newIsMaster });
+        break;
+      }
+
       // Unified subagent activity stream
       case 'subagent_activity': {
         const { agent, type: eventType, payload: eventPayload } = payload as SubagentActivityPayload;
@@ -326,6 +351,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     set({
       connected: false,
       wsError: null,
+      clientId: null,
+      isMaster: false,
       state: 'idle',
       profile: null,
       messages: [],

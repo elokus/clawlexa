@@ -5,9 +5,11 @@
  * - Profile toggle (Jarvis / Marvin)
  * - Mic button to start/stop recording
  * - Visual feedback for recording state
+ * - Master/Replica indicator and control transfer
  */
 
 import type { ProfileId } from '../hooks/useAudioSession';
+import type { AgentState } from '../types';
 
 interface ControlBarProps {
   activeProfile: ProfileId;
@@ -17,6 +19,12 @@ interface ControlBarProps {
   isInitializing?: boolean;
   error?: string | null;
   disabled?: boolean;
+  /** Whether this client is the master (handles audio I/O) */
+  isMaster?: boolean;
+  /** Request to become the master client */
+  onRequestMaster?: () => void;
+  /** Current agent state (for disabling take control during activity) */
+  agentState?: AgentState;
 }
 
 export function ControlBar({
@@ -27,11 +35,17 @@ export function ControlBar({
   isInitializing = false,
   error = null,
   disabled = false,
+  isMaster = true,
+  onRequestMaster,
+  agentState = 'idle',
 }: ControlBarProps) {
   const profiles: { id: ProfileId; name: string; description: string }[] = [
     { id: 'jarvis', name: 'JARVIS', description: 'General Assistant' },
     { id: 'marvin', name: 'MARVIN', description: 'Developer Mode' },
   ];
+
+  // Can take control when agent is not actively processing
+  const canTakeControl = agentState !== 'thinking' && agentState !== 'speaking';
 
   return (
     <>
@@ -204,9 +218,100 @@ export function ControlBar({
         .status-text.recording {
           color: var(--color-rose);
         }
+
+        /* Master/Replica indicator */
+        .master-indicator {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 6px;
+          font-family: var(--font-mono);
+          font-size: 10px;
+          letter-spacing: 0.1em;
+        }
+
+        .master-indicator.is-master {
+          background: rgba(34, 197, 94, 0.15);
+          border: 1px solid rgba(34, 197, 94, 0.4);
+          color: rgb(34, 197, 94);
+        }
+
+        .master-indicator.is-replica {
+          background: rgba(251, 191, 36, 0.15);
+          border: 1px solid rgba(251, 191, 36, 0.4);
+          color: rgb(251, 191, 36);
+        }
+
+        .master-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: currentColor;
+        }
+
+        .master-indicator.is-master .master-dot {
+          animation: pulse-master 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-master {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+
+        /* Take Control button */
+        .take-control-btn {
+          width: 72px;
+          height: 72px;
+          border-radius: 50%;
+          border: 2px dashed rgba(251, 191, 36, 0.5);
+          background: linear-gradient(145deg, rgba(251, 191, 36, 0.1), transparent);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-direction: column;
+          gap: 2px;
+          cursor: pointer;
+          transition: all 0.3s var(--ease-out);
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        .take-control-btn:not(:disabled):hover {
+          transform: scale(1.05);
+          border-color: rgba(251, 191, 36, 0.8);
+          background: linear-gradient(145deg, rgba(251, 191, 36, 0.2), transparent);
+        }
+
+        .take-control-btn:not(:disabled):active {
+          transform: scale(0.95);
+        }
+
+        .take-control-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .take-control-btn svg {
+          width: 24px;
+          height: 24px;
+          color: rgb(251, 191, 36);
+        }
+
+        .take-control-label {
+          font-family: var(--font-mono);
+          font-size: 8px;
+          color: rgb(251, 191, 36);
+          letter-spacing: 0.05em;
+        }
       `}</style>
 
       <div className="control-bar">
+        {/* Master/Replica Indicator */}
+        <div className={`master-indicator ${isMaster ? 'is-master' : 'is-replica'}`}>
+          <span className="master-dot" />
+          <span>{isMaster ? 'MASTER' : 'REPLICA'}</span>
+        </div>
+
         {/* Profile Selector */}
         <div className="profile-selector">
           {profiles.map((profile) => (
@@ -223,37 +328,60 @@ export function ControlBar({
           ))}
         </div>
 
-        {/* Mic Button */}
+        {/* Mic Button or Take Control Button */}
         <div className="mic-container">
-          {isRecording && <div className="recording-ring" />}
-          <button
-            type="button"
-            className={`mic-btn ${isRecording ? 'recording' : ''} ${isInitializing ? 'initializing' : ''}`}
-            onClick={onToggleRecording}
-            disabled={disabled || isInitializing}
-            aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-          >
-            {isRecording ? (
-              // Stop icon
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="6" width="12" height="12" rx="2" />
-              </svg>
-            ) : (
-              // Mic icon
+          {isMaster ? (
+            <>
+              {isRecording && <div className="recording-ring" />}
+              <button
+                type="button"
+                className={`mic-btn ${isRecording ? 'recording' : ''} ${isInitializing ? 'initializing' : ''}`}
+                onClick={onToggleRecording}
+                disabled={disabled || isInitializing}
+                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+              >
+                {isRecording ? (
+                  // Stop icon
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                ) : (
+                  // Mic icon
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <line x1="12" y1="19" x2="12" y2="23" />
+                    <line x1="8" y1="23" x2="16" y2="23" />
+                  </svg>
+                )}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="take-control-btn"
+              onClick={onRequestMaster}
+              disabled={!canTakeControl || disabled}
+              aria-label="Take control"
+            >
+              {/* Hand/pointer icon */}
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
+                <path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8" />
+                <path d="M10 19v-6.8a1.5 1.5 0 0 1 1.5-1.5 1.5 1.5 0 0 1 1.5 1.5v1.3" />
+                <path d="M13 17v-2.5a1.5 1.5 0 0 1 3 0V17" />
+                <path d="M16 17v-1.5a1.5 1.5 0 0 1 3 0V19a4 4 0 0 1-4 4h-2.5" />
               </svg>
-            )}
-          </button>
+              <span className="take-control-label">CONTROL</span>
+            </button>
+          )}
         </div>
 
         {/* Status Text */}
         <div className={`status-text ${error ? 'error' : ''} ${isRecording ? 'recording' : ''}`}>
           {error ? (
             error
+          ) : !isMaster ? (
+            canTakeControl ? 'TAP TO TAKE CONTROL' : 'AGENT BUSY'
           ) : isInitializing ? (
             'INITIALIZING...'
           ) : isRecording ? (

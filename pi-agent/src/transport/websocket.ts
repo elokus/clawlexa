@@ -97,6 +97,10 @@ export class WebSocketTransport extends EventEmitter implements IAudioTransport 
    */
   handleClientAudio(data: Buffer): void {
     if (!this.active) {
+      // Log occasionally to help debug (not every frame to avoid spam)
+      if (Math.random() < 0.01) {
+        console.log('[WebSocketTransport] Dropping audio - transport not active');
+      }
       return;
     }
 

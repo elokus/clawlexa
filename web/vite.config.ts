@@ -19,6 +19,15 @@ export default defineConfig({
       '/ws': {
         target: `ws://${PI_HOST}:3001`,
         ws: true,
+        // Properly handle WebSocket upgrades
+        configure: (proxy) => {
+          proxy.on('error', (err) => {
+            console.log('[Proxy] WebSocket error:', err.message);
+          });
+          proxy.on('proxyReqWs', (proxyReq, req, socket) => {
+            console.log('[Proxy] WebSocket upgrade request');
+          });
+        },
       },
     },
   },

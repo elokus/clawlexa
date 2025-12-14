@@ -133,21 +133,25 @@ export class VoiceAgent {
     this.currentProfile = profile;
     console.log(`[Agent] Activating profile: ${profile.name}`);
 
+    // Create session FIRST so it can buffer audio during connection
     const agent = createAgentFromProfile(profile);
     this.session = new VoiceSession(agent, profile);
+
+    // Start transport AFTER session exists so audio can be buffered
+    // This is critical for web mode where audio capture starts immediately
+    if (this.transport && !this.transport.isActive()) {
+      console.log('[Agent] Starting transport early for audio capture');
+      this.transport.start();
+    }
 
     // Wire up events
     this.session.on('stateChange', (state) => {
       this.state = state;
       this.emit('stateChange', state, this.currentProfile?.name ?? null);
 
-      // Manage transport based on state (if transport is injected)
-      if (this.transport) {
-        if (state === 'listening' && !this.transport.isActive()) {
-          this.transport.start();
-        } else if (state === 'idle') {
-          this.transport.stop();
-        }
+      // Stop transport when going idle
+      if (this.transport && state === 'idle') {
+        this.transport.stop();
       }
     });
 

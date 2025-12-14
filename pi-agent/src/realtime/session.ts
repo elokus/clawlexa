@@ -67,6 +67,12 @@ export class VoiceSession {
   private eventHandlers: Partial<SessionEvents> = {};
   private conversationTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
+  // Audio buffer for chunks received before connection is ready
+  private audioBuffer: ArrayBuffer[] = [];
+  // Start in "buffering" mode - audio will be buffered until connect() completes
+  private isConnecting = true;
+  private static readonly MAX_BUFFER_SIZE = 50; // ~5 seconds at 100ms chunks
+
   constructor(agent: RealtimeAgent, profile: AgentProfile) {
     this.agent = agent;
     this.profile = profile;
@@ -104,6 +110,8 @@ export class VoiceSession {
       return;
     }
 
+    // Note: isConnecting is already true from constructor to buffer early audio
+
     // Build session config
     const sessionConfig: Record<string, unknown> = {
       inputAudioFormat: config.audio.format,
@@ -131,9 +139,13 @@ export class VoiceSession {
       await this.session.connect({
         apiKey: config.openai.apiKey,
       });
+      this.isConnecting = false;
       this.setState('listening');
       this.emit('connected');
       this.resetConversationTimeout();
+
+      // Flush any buffered audio that was received during connection
+      this.flushAudioBuffer();
 
       // Send greeting trigger to make the model speak first
       if (this.profile.greetingTrigger) {
@@ -141,6 +153,8 @@ export class VoiceSession {
         this.session.sendMessage(this.profile.greetingTrigger);
       }
     } catch (error) {
+      this.isConnecting = false;
+      this.audioBuffer = []; // Clear buffer on error
       this.emit('error', error as Error);
       throw error;
     }
@@ -261,12 +275,38 @@ export class VoiceSession {
   }
 
   sendAudio(audio: ArrayBuffer): void {
+    // If connecting, buffer the audio for later
+    if (this.isConnecting) {
+      if (this.audioBuffer.length < VoiceSession.MAX_BUFFER_SIZE) {
+        this.audioBuffer.push(audio);
+      }
+      // Silently drop if buffer is full (prevent memory issues)
+      return;
+    }
+
     if (!this.session) {
       console.warn('Cannot send audio: session not connected');
       return;
     }
     this.session.sendAudio(audio);
     this.resetConversationTimeout();
+  }
+
+  /**
+   * Flush any buffered audio that was received during connection.
+   */
+  private flushAudioBuffer(): void {
+    if (this.audioBuffer.length === 0) return;
+
+    console.log(`[Session] Flushing ${this.audioBuffer.length} buffered audio chunks`);
+
+    for (const chunk of this.audioBuffer) {
+      if (this.session) {
+        this.session.sendAudio(chunk);
+      }
+    }
+
+    this.audioBuffer = [];
   }
 
   sendMessage(text: string): void {
@@ -300,6 +340,10 @@ export class VoiceSession {
       this.session.close();
       this.session = null;
     }
+
+    // Clear state
+    this.isConnecting = false;
+    this.audioBuffer = [];
 
     this.setState('idle');
     this.emit('disconnected');

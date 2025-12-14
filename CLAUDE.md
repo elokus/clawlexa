@@ -94,6 +94,21 @@ voice-agent/
     │   │   ├── resample.ts        # Sample rate conversion
     │   │   └── tts.ts             # OpenAI TTS client
     │   │
+    │   ├── lib/               # Shared utilities
+    │   │   └── agent-runner.ts    # Observable agent runner (streaming)
+    │   │
+    │   ├── subagents/         # Modular subagents (config + prompts)
+    │   │   ├── loader.ts          # Load config.json + PROMPT.md
+    │   │   ├── cli/               # CLI orchestration agent
+    │   │   │   ├── config.json        # Model: grok-code-fast-1
+    │   │   │   ├── PROMPT.md          # System instructions + projects
+    │   │   │   ├── tools.ts           # Session management tools
+    │   │   │   └── index.ts           # handleDeveloperRequest
+    │   │   └── web-search/        # Web search agent
+    │   │       ├── config.json        # Model: grok-4-1:online
+    │   │       ├── PROMPT.md          # Search assistant instructions
+    │   │       └── index.ts           # webSearchTool
+    │   │
     │   ├── db/                # SQLite database
     │   │   ├── index.ts
     │   │   ├── database.ts        # Connection manager
@@ -116,11 +131,9 @@ voice-agent/
     │       ├── index.ts           # Tool registry
     │       ├── todo.ts            # Todo list (add, view, delete)
     │       ├── timer.ts           # Timers (set, list, cancel)
-    │       ├── web-search.ts      # Web search via Responses API
     │       ├── govee.ts           # Govee light control
     │       ├── reasoning.ts       # Deep thinking tool
     │       ├── mac-client.ts      # Mac daemon HTTP client
-    │       ├── cli-agent.ts       # CLI orchestration agent (GPT-4.1)
     │       └── developer-session.ts # Developer session tools
     │
     ├── package.json
@@ -150,12 +163,14 @@ voice-agent/
 │         ┌──────────┴──────────┐                                          │
 │         ▼                     ▼                                          │
 │  ┌─────────────┐    ┌─────────────────────────────────────┐             │
-│  │   Tools     │    │           CLI Tools                  │             │
+│  │   Tools     │    │           Subagents                  │             │
 │  │  - todo     │    │  developer_session ──▶ CLI Agent    │             │
-│  │  - timer    │    │                        (GPT-4.1)    │             │
+│  │  - timer    │    │                        (Grok)       │             │
 │  │  - search   │    │                            │        │             │
-│  │  - lights   │    │                            ▼        │             │
-│  └─────────────┘    │                     Mac Daemon      │             │
+│  │  - lights   │    │  web_search ──▶ Search Agent        │             │
+│  └─────────────┘    │                 (Grok:online)       │             │
+│                     │                            │        │             │
+│                     │                     Mac Daemon      │             │
 │                     │                     (HTTP API)      │             │
 │                     └─────────────────────────────────────┘             │
 │                                                                          │
@@ -185,7 +200,7 @@ voice-agent/
 | `set_timer` | Set timer with natural language time ("in 5 minutes") |
 | `list_timers` | Show all active timers |
 | `cancel_timer` | Cancel a timer by ID |
-| `web_search` | Search web via Responses API + gpt-4.1-mini |
+| `web_search` | Search web via Grok :online (OpenRouter) |
 | `control_light` | Control Govee lights (on/off/brightness/color) |
 
 ### Marvin Profile Tools (Developer)
@@ -212,8 +227,9 @@ User: "Computer, review the code in Kireon Backend"
                  │
                  ▼
 ┌─────────────────────────────────────────┐
-│  CLI Orchestration Agent (GPT-4.1)      │
-│  - Knows project locations              │
+│  CLI Orchestration Agent (Grok)         │
+│  - Config: subagents/cli/config.json    │
+│  - Prompt: subagents/cli/PROMPT.md      │
 │  - Decides: headless vs interactive     │
 │  - Calls start_headless_session         │
 └────────────────┬────────────────────────┘
@@ -229,6 +245,36 @@ User: "Computer, review the code in Kireon Backend"
 **Headless mode** (`claude -p "..."`): Quick tasks (reviews, simple fixes)
 **Interactive mode** (`claude --dangerously-skip-permissions`): Feature implementation, refactoring
 
+## Subagent Architecture
+
+Subagents live in `src/subagents/<agent>/` with externalized configuration:
+
+```
+subagents/
+├── loader.ts              # loadAgentConfig(dirPath) utility
+├── cli/
+│   ├── config.json        # {"name": "Marvin", "model": "x-ai/grok-code-fast-1", "maxSteps": 3}
+│   ├── PROMPT.md          # System instructions + project locations
+│   ├── tools.ts           # Session management tools
+│   └── index.ts           # handleDeveloperRequest(), isMacDaemonAvailable()
+└── web-search/
+    ├── config.json        # {"name": "Jarvis", "model": "x-ai/grok-4-1-fast-reasoning:online"}
+    ├── PROMPT.md          # German search assistant instructions
+    └── index.ts           # webSearchTool export
+```
+
+**Benefits:**
+- Config/prompts can be updated without code changes
+- Enables future Web UI for dynamic agent configuration
+- Clear separation of concerns (config vs logic vs tools)
+
+**Adding a new subagent:**
+1. Create `src/subagents/<name>/` directory
+2. Add `config.json` with `name`, `model`, `maxSteps`
+3. Add `PROMPT.md` with system instructions
+4. Create `index.ts` using `loadAgentConfig(import.meta.dirname)`
+5. Export tool or handler function
+
 ## Database
 
 SQLite at `~/voice-agent.db`:
@@ -242,7 +288,31 @@ SQLite at `~/voice-agent.db`:
 
 ## Development Commands
 
-### Pi Agent (on Raspberry Pi)
+### Local Mac Development (Both Backend + Frontend)
+
+```bash
+# Terminal 1: Backend (skip static server to avoid duplicate connections)
+cd pi-agent
+SKIP_STATIC_SERVER=true TRANSPORT_MODE=web npm run dev
+
+# Terminal 2: Frontend (Vite with HMR + proxy)
+cd web
+npm run dev
+```
+
+Access at `http://localhost:5173` - Vite proxies WebSocket and API to localhost.
+
+### Pi Deployment
+
+```bash
+# On Pi: Run backend with local audio
+cd pi-agent
+TRANSPORT_MODE=local npm run dev
+
+# Web dashboard served at http://marlon.local:8080 (static build)
+```
+
+### Pi Agent Commands
 ```bash
 cd pi-agent
 
@@ -262,26 +332,22 @@ npm run test:db
 npm run test:timer
 ```
 
-### Web Dashboard (on Mac or any machine)
+### Web Dashboard Commands
 ```bash
 cd web
 
 # Install dependencies
-bun install
+npm install  # or bun install
 
 # Run development server (accessible at http://localhost:5173)
-bun run dev
+npm run dev
 
 # Build for production
-bun run build
+npm run build
 
 # Preview production build
-bun run preview
+npm run preview
 ```
-
-The web dashboard connects to the Pi via WebSocket on port 3001. Configure the connection URL:
-- Default: `ws://marlon.local:3001`
-- Override: Set `VITE_WS_URL` environment variable
 
 ## Configuration
 
@@ -346,6 +412,116 @@ npm run dev  # Listens on port 3100
 Test connection from Pi:
 ```bash
 curl http://MacBook-Pro-von-Lukasz.local:3100/health
+```
+
+## Multi-Client WebSocket (Master/Replica Pattern)
+
+The WebSocket server supports multiple browser clients with a Master/Replica pattern:
+
+- **Master**: Only one client handles audio I/O (mic capture + speaker playback)
+- **Replicas**: All other clients receive state updates and transcripts but no audio
+- First client to connect becomes Master automatically
+- When Master disconnects, oldest Replica is promoted
+- Replicas can request control via "Take Control" button (disabled during agent activity)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `pi-agent/src/api/websocket.ts` | Server-side client state, master assignment, audio filtering |
+| `web/src/hooks/useWebSocket.ts` | Client-side singleton, `requestMaster()` function |
+| `web/src/stores/agent.ts` | `clientId`, `isMaster` state, `welcome`/`master_changed` handlers |
+| `web/src/components/ControlBar.tsx` | Master/Replica indicator, "Take Control" button |
+
+### WebSocket Messages
+
+| Message | Direction | Purpose |
+|---------|-----------|---------|
+| `welcome` | Server → Client | Sent on connect with `clientId` and `isMaster` |
+| `master_changed` | Server → All | Broadcast when master changes (includes new `masterId`) |
+| `request_master` | Client → Server | Request to become master (denied if agent busy) |
+
+## Environment Variables (Web)
+
+The web dashboard uses these env vars in `web/.env`:
+
+```bash
+# Demo mode - shows mock data, disables real connections
+VITE_DEMO_MODE=true
+
+# WebSocket URL (leave unset for local dev - uses Vite proxy)
+# VITE_WS_URL=ws://marlon.local:3001
+
+# API URL (leave unset for local dev - uses Vite proxy)
+# VITE_API_URL=http://marlon.local:3000
+```
+
+**Important**: For local Mac development, comment out `VITE_WS_URL` and `VITE_API_URL` to use Vite's proxy. Only set them for Pi deployment.
+
+## Code Patterns & Learnings
+
+### React StrictMode WebSocket Singleton
+
+React StrictMode double-mounts components in development, which can create duplicate WebSocket connections. Solution: module-level singleton with ref counting.
+
+```typescript
+// web/src/hooks/useWebSocket.ts
+let globalWs: WebSocket | null = null;
+let globalWsRefCount = 0;
+
+export function useWebSocket() {
+  useEffect(() => {
+    globalWsRefCount++;
+
+    // Reuse existing connection if available
+    if (globalWs?.readyState === WebSocket.OPEN) {
+      wsRef.current = globalWs;
+      return;
+    }
+
+    // Create new connection...
+
+    return () => {
+      globalWsRefCount--;
+      // Only close if no other instances
+      if (globalWsRefCount === 0) {
+        globalWs?.close();
+        globalWs = null;
+      }
+    };
+  }, []);
+}
+```
+
+### State Transition Detection
+
+When auto-stopping based on state, check for **transitions** not just current value. Otherwise, effects trigger on initial state.
+
+```typescript
+// web/src/hooks/useAudioSession.ts
+const prevStateRef = useRef<string | null>(null);
+
+useEffect(() => {
+  const prevState = prevStateRef.current;
+  prevStateRef.current = state;
+
+  // Only trigger on transition TO idle, not when already idle
+  if (state === 'idle' && prevState !== null && prevState !== 'idle') {
+    stopRecording();
+  }
+}, [state]);
+```
+
+### Demo Mode Check
+
+Always use explicit flag check, not absence of other vars:
+
+```typescript
+// CORRECT - explicit flag
+const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true';
+
+// WRONG - breaks when env var is simply unset
+const isDemoMode = !import.meta.env.VITE_WS_URL;
 ```
 
 ## Notes

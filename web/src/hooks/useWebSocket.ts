@@ -33,6 +33,10 @@ const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const DEMO_MODE = !WS_URL;
 
+// Module-level singleton to prevent duplicate connections across React StrictMode remounts
+let globalWs: WebSocket | null = null;
+let globalWsRefCount = 0;
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -52,6 +56,9 @@ export function useWebSocket() {
       return;
     }
 
+    // Increment ref count for this hook instance
+    globalWsRefCount++;
+
     // Reset cleanup flag on mount (important for React Strict Mode double-mount)
     isCleaningUpRef.current = false;
 
@@ -59,6 +66,22 @@ export function useWebSocket() {
       // Prevent multiple simultaneous connection attempts
       if (isConnectingRef.current || isCleaningUpRef.current) {
         console.log(`[WS] Skipping connect: connecting=${isConnectingRef.current}, cleaning=${isCleaningUpRef.current}`);
+        return;
+      }
+
+      // Reuse existing global connection if available and open
+      if (globalWs?.readyState === WebSocket.OPEN) {
+        console.log('[WS] Reusing existing connection');
+        wsRef.current = globalWs;
+        setConnected(true);
+        return;
+      }
+
+      // Also check if globalWs is CONNECTING (still establishing)
+      if (globalWs?.readyState === WebSocket.CONNECTING) {
+        console.log('[WS] Connection in progress, waiting...');
+        wsRef.current = globalWs;
+        // The onopen handler will set connected when ready
         return;
       }
 
@@ -71,6 +94,10 @@ export function useWebSocket() {
         wsRef.current.close();
         wsRef.current = null;
       }
+      if (globalWs) {
+        globalWs.close();
+        globalWs = null;
+      }
 
       try {
         isConnectingRef.current = true;
@@ -78,8 +105,10 @@ export function useWebSocket() {
         const ws = new WebSocket(WS_URL);
 
         ws.onopen = () => {
-          console.log('[WS] Connected');
+          console.log('[WS] Connected, readyState:', ws.readyState);
           isConnectingRef.current = false;
+          globalWs = ws; // Store in global singleton
+          wsRef.current = ws; // Ensure local ref is also set
           setConnected(true);
           setWsError(null);
           reconnectAttemptsRef.current = 0;
@@ -110,10 +139,11 @@ export function useWebSocket() {
         };
 
         ws.onclose = (event) => {
-          console.log(`[WS] Disconnected (code: ${event.code}, reason: ${event.reason})`);
+          console.log(`[WS] Disconnected (code: ${event.code}, reason: ${event.reason || 'none'}, wasClean: ${event.wasClean})`);
           isConnectingRef.current = false;
           setConnected(false);
           wsRef.current = null;
+          globalWs = null;
 
           // Don't reconnect if we're cleaning up
           if (isCleaningUpRef.current) {
@@ -132,6 +162,7 @@ export function useWebSocket() {
         };
 
         wsRef.current = ws;
+        globalWs = ws;
       } catch (err) {
         console.error('[WS] Connection error:', err);
         isConnectingRef.current = false;
@@ -144,30 +175,49 @@ export function useWebSocket() {
 
     // Cleanup on unmount
     return () => {
+      globalWsRefCount--;
       isCleaningUpRef.current = true;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-      setConnected(false);
+
+      // Delay socket close to handle React StrictMode double-mount
+      // StrictMode unmounts then immediately remounts, so we wait briefly
+      // to see if a remount happens before actually closing the socket
+      const socketToClose = wsRef.current;
+      wsRef.current = null;
+
+      setTimeout(() => {
+        // Only close if still at 0 refs after delay (no remount happened)
+        if (globalWsRefCount === 0 && socketToClose && socketToClose === globalWs) {
+          console.log('[WS] Closing socket (no remount after 500ms)');
+          socketToClose.close();
+          globalWs = null;
+          setConnected(false);
+        }
+      }, 500); // Increased delay for better StrictMode handling
     };
   }, []); // Empty dependency array - only run on mount/unmount
 
   const send = (type: string, payload: unknown) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type, payload }));
+    // Use globalWs as authoritative source (handles StrictMode race conditions)
+    const ws = wsRef.current ?? globalWs;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type, payload }));
     } else {
-      console.warn('[WS] Cannot send - not connected');
+      console.warn('[WS] Cannot send - not connected', {
+        wsRef: wsRef.current?.readyState,
+        globalWs: globalWs?.readyState,
+      });
     }
   };
 
   const sendBinary = (data: ArrayBuffer) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(data);
+    // Use globalWs as authoritative source (handles StrictMode race conditions)
+    const ws = wsRef.current ?? globalWs;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(data);
     }
   };
 
@@ -193,5 +243,13 @@ export function useWebSocket() {
     }
   };
 
-  return { disconnect, send, sendBinary, getSocket, reconnect };
+  /**
+   * Request to become the Master client (audio I/O controller).
+   * Will be denied if agent is currently thinking/speaking.
+   */
+  const requestMaster = () => {
+    send('request_master', {});
+  };
+
+  return { disconnect, send, sendBinary, getSocket, reconnect, requestMaster };
 }

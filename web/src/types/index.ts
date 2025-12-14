@@ -71,12 +71,26 @@ export type WSMessageType =
   | 'cli_session_created'
   | 'cli_session_output'
   // Unified subagent activity stream
-  | 'subagent_activity';
+  | 'subagent_activity'
+  // Multi-client master/replica coordination
+  | 'welcome'
+  | 'master_changed'
+  | 'request_master';
 
 export interface WSMessage {
   type: WSMessageType;
   payload: unknown;
   timestamp: number;
+}
+
+// Multi-client coordination payloads
+export interface WelcomePayload {
+  clientId: string;
+  isMaster: boolean;
+}
+
+export interface MasterChangedPayload {
+  masterId: string;
 }
 
 export interface StateChangePayload {

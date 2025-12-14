@@ -6,6 +6,7 @@
  * - Recording state management
  * - Audio capture/playback coordination
  * - Uses shared WebSocket from useWebSocket hook
+ * - Master/Replica awareness for multi-client support
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -30,6 +31,10 @@ export interface AudioSessionState {
   isInitializing: boolean;
   /** Error message if any */
   error: string | null;
+  /** Whether this client is the master (handles audio I/O) */
+  isMaster: boolean;
+  /** Request to become the master client */
+  requestMaster: () => void;
 }
 
 export function useAudioSession(): AudioSessionState {
@@ -39,11 +44,20 @@ export function useAudioSession(): AudioSessionState {
   const [error, setError] = useState<string | null>(null);
 
   const audioControllerRef = useRef<AudioController | null>(null);
+  const prevStateRef = useRef<string | null>(null);
+  // Track state in ref for use in audio callback (avoids stale closure)
+  const stateRef = useRef<string>('idle');
   const state = useAgentStore((s) => s.state);
   const connected = useAgentStore((s) => s.connected);
+  const isMaster = useAgentStore((s) => s.isMaster);
+
+  // Keep stateRef in sync with state
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // Use shared WebSocket connection
-  const { send, sendBinary } = useWebSocket();
+  const { send, sendBinary, requestMaster } = useWebSocket();
 
   // Initialize audio controller
   useEffect(() => {
@@ -65,7 +79,11 @@ export function useAudioSession(): AudioSessionState {
   useEffect(() => {
     const handleAudio = (event: CustomEvent<ArrayBuffer>) => {
       if (audioControllerRef.current) {
-        audioControllerRef.current.playAudio(event.detail);
+        try {
+          audioControllerRef.current.playAudio(event.detail);
+        } catch (err) {
+          console.error('[AudioSession] Error playing audio:', err);
+        }
       }
     };
 
@@ -76,10 +94,25 @@ export function useAudioSession(): AudioSessionState {
     };
   }, []);
 
+  // Stop recording if WebSocket disconnects
+  useEffect(() => {
+    if (!connected && isRecording) {
+      console.log('[AudioSession] WebSocket disconnected, stopping recording');
+      if (audioControllerRef.current) {
+        audioControllerRef.current.stop();
+      }
+      setIsRecording(false);
+      setError('Connection lost');
+    }
+  }, [connected, isRecording]);
+
   // Toggle session on/off
   const toggleSession = useCallback(async () => {
+    console.log('[AudioSession] toggleSession called, isRecording:', isRecording, 'isMaster:', isMaster);
+
     if (isRecording) {
       // Stop recording
+      console.log('[AudioSession] Stopping recording');
       if (audioControllerRef.current) {
         audioControllerRef.current.stop();
       }
@@ -88,20 +121,46 @@ export function useAudioSession(): AudioSessionState {
       setError(null);
     } else {
       // Start recording
+      console.log('[AudioSession] Starting recording with profile:', activeProfile);
       setIsInitializing(true);
       setError(null);
 
       try {
+        // Send start command FIRST so backend is ready for audio
+        console.log('[AudioSession] Sending start_session command');
+        send('client_command', { command: 'start_session', profile: activeProfile });
+
         if (audioControllerRef.current) {
           // Set up audio callback to send via shared WebSocket
+          let audioChunkCount = 0;
+          let skippedChunkCount = 0;
           audioControllerRef.current.setOnAudio((data) => {
+            // Don't send audio while agent is speaking/thinking (prevents echo feedback)
+            const currentState = stateRef.current;
+            if (currentState === 'speaking' || currentState === 'thinking') {
+              skippedChunkCount++;
+              if (skippedChunkCount === 1 || skippedChunkCount % 50 === 0) {
+                console.log(`[AudioSession] Skipping audio (state: ${currentState}), skipped: ${skippedChunkCount}`);
+              }
+              return;
+            }
+
+            // Reset skip count when we start sending again
+            if (skippedChunkCount > 0) {
+              console.log(`[AudioSession] Resuming audio send after skipping ${skippedChunkCount} chunks`);
+              skippedChunkCount = 0;
+            }
+
+            audioChunkCount++;
+            if (audioChunkCount <= 3 || audioChunkCount % 50 === 0) {
+              console.log(`[AudioSession] Sending audio chunk #${audioChunkCount}, size: ${data.byteLength}`);
+            }
             sendBinary(data);
           });
           await audioControllerRef.current.start();
+          console.log('[AudioSession] Audio capture started');
         }
 
-        // Send start command with selected profile
-        send('client_command', { command: 'start_session', profile: activeProfile });
         setIsRecording(true);
       } catch (err) {
         console.error('[AudioSession] Failed to start:', err);
@@ -111,7 +170,7 @@ export function useAudioSession(): AudioSessionState {
         setIsInitializing(false);
       }
     }
-  }, [isRecording, activeProfile, send, sendBinary]);
+  }, [isRecording, activeProfile, send, sendBinary, isMaster]);
 
   // Stop session immediately
   const stopSession = useCallback(() => {
@@ -122,10 +181,21 @@ export function useAudioSession(): AudioSessionState {
     setIsRecording(false);
   }, [send]);
 
-  // Auto-stop recording when agent state goes to idle
+  // Auto-stop recording when agent state TRANSITIONS to idle (not on initial idle)
   useEffect(() => {
-    if (state === 'idle' && isRecording && connected) {
-      // Session ended from server side
+    const prevState = prevStateRef.current;
+    prevStateRef.current = state;
+
+    // Only stop if we transitioned FROM a non-idle state TO idle
+    // This prevents stopping immediately when starting (state is already idle)
+    if (
+      state === 'idle' &&
+      prevState !== null &&
+      prevState !== 'idle' &&
+      isRecording &&
+      connected
+    ) {
+      console.log(`[AudioSession] State transitioned ${prevState} → idle, stopping`);
       if (audioControllerRef.current) {
         audioControllerRef.current.stop();
       }
@@ -141,5 +211,7 @@ export function useAudioSession(): AudioSessionState {
     stopSession,
     isInitializing,
     error,
+    isMaster,
+    requestMaster,
   };
 }
