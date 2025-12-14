@@ -85,7 +85,16 @@ export function useWebSocket() {
           reconnectAttemptsRef.current = 0;
         };
 
+        ws.binaryType = 'arraybuffer';
+
         ws.onmessage = (event) => {
+          // Handle binary audio data
+          if (event.data instanceof ArrayBuffer) {
+            // Dispatch custom event for audio playback
+            window.dispatchEvent(new CustomEvent('ws-audio', { detail: event.data }));
+            return;
+          }
+
           try {
             const msg: WSMessage = JSON.parse(event.data);
             handleMessage(msg);
@@ -156,6 +165,14 @@ export function useWebSocket() {
     }
   };
 
+  const sendBinary = (data: ArrayBuffer) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(data);
+    }
+  };
+
+  const getSocket = () => wsRef.current;
+
   const disconnect = () => {
     isCleaningUpRef.current = true;
     if (reconnectTimeoutRef.current) {
@@ -176,5 +193,5 @@ export function useWebSocket() {
     }
   };
 
-  return { disconnect, send, reconnect };
+  return { disconnect, send, sendBinary, getSocket, reconnect };
 }

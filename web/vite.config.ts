@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Pi hostname - use IP address for reliable browser resolution
-// mDNS (.local) works in curl but not always in browsers
-const PI_HOST = process.env.PI_HOST || '192.168.0.164';
+// Backend host configuration:
+// - For Pi mode (default): PI_HOST=192.168.0.164 or marlon.local
+// - For local Mac mode: PI_HOST=localhost
+const PI_HOST = process.env.PI_HOST || 'localhost';
 
 export default defineConfig({
   plugins: [react()],

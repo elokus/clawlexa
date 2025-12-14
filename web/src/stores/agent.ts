@@ -340,7 +340,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 // Subagent Activity Handler - Aggregates streaming events into UI blocks
 // ═══════════════════════════════════════════════════════════════════════════
 
-type SetState = (fn: (state: AgentStore) => Partial<AgentStore>) => void;
+type SetState = (fn: Partial<AgentStore> | ((state: AgentStore) => Partial<AgentStore>)) => void;
 type GetState = () => AgentStore;
 
 function handleSubagentActivity(

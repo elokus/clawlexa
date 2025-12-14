@@ -1,15 +1,27 @@
 import { validateConfig } from './config.js';
 import { VoiceAgent } from './agent/voice-agent.js';
 import { WakewordDetector } from './wakeword/index.js';
-import { AudioCapture, AudioPlayback, speak } from './audio/index.js';
+import { speak } from './audio/index.js';
 import { closeDatabase } from './db/index.js';
 import { Scheduler } from './scheduler/index.js';
 import { startWebhookServer, stopWebhookServer, onWebhookEvent } from './api/webhooks.js';
-import { startWebSocketServer, stopWebSocketServer, wsBroadcast } from './api/websocket.js';
+import {
+  startWebSocketServer,
+  stopWebSocketServer,
+  wsBroadcast,
+  onBinaryMessage,
+  getClients,
+  onClientCommand,
+} from './api/websocket.js';
 import { startStaticServer, stopStaticServer } from './api/static.js';
+import { LocalTransport, WebSocketTransport, type IAudioTransport } from './transport/index.js';
+
+// Transport mode: 'local' (hardware audio) or 'web' (browser audio via WebSocket)
+const TRANSPORT_MODE = process.env.TRANSPORT_MODE ?? 'local';
 
 async function main() {
   console.log('Starting Pi Voice Agent (TypeScript)...');
+  console.log(`[Transport] Mode: ${TRANSPORT_MODE}`);
 
   // Validate configuration
   try {
@@ -19,11 +31,39 @@ async function main() {
     process.exit(1);
   }
 
+  // Start WebSocket server first (needed for both dashboard and web transport mode)
+  try {
+    await startWebSocketServer();
+    console.log('WebSocket server started');
+  } catch (error) {
+    console.error('Failed to start WebSocket server:', error);
+    if (TRANSPORT_MODE === 'web') {
+      // WebSocket is required for web transport mode
+      process.exit(1);
+    }
+  }
+
+  // Create transport based on mode
+  let transport: IAudioTransport;
+
+  if (TRANSPORT_MODE === 'web') {
+    const wsTransport = new WebSocketTransport(getClients());
+    transport = wsTransport;
+
+    // Wire up binary message handler to route browser audio to transport
+    onBinaryMessage((data) => {
+      wsTransport.handleClientAudio(data);
+    });
+
+    console.log('[Transport] Using WebSocketTransport (browser audio)');
+  } else {
+    transport = new LocalTransport();
+    console.log('[Transport] Using LocalTransport (hardware audio)');
+  }
+
   // Initialize components
-  const agent = new VoiceAgent();
-  const wakeword = new WakewordDetector(['jarvis', 'computer']);
-  const audioCapture = new AudioCapture();  // Captures at 16kHz, resamples to 24kHz
-  const audioPlayback = new AudioPlayback(); // Receives 24kHz, resamples to 16kHz
+  const agent = new VoiceAgent(transport);
+  const wakeword = TRANSPORT_MODE === 'local' ? new WakewordDetector(['jarvis', 'computer']) : null;
   const scheduler = new Scheduler(1000); // Check every second
 
   // Set up scheduler event handlers
@@ -66,22 +106,11 @@ async function main() {
     // Broadcast to WebSocket clients
     wsBroadcast.stateChange(state, profile);
 
-    // Manage audio based on state
-    if (state === 'listening') {
-      // Start capturing mic audio when listening
-      if (!audioCapture.isCapturing()) {
-        audioCapture.start();
-      }
-    } else if (state === 'idle') {
-      // Stop everything when idle
-      audioCapture.stop();
-      audioPlayback.stop();
-      // Resume wakeword detection
-      if (!wakeword.isListening()) {
-        wakeword.start().catch((err) => {
-          console.error('[Wakeword] Failed to restart:', err);
-        });
-      }
+    // Resume wakeword detection when idle (only in local mode with wakeword)
+    if (state === 'idle' && wakeword && !wakeword.isListening()) {
+      wakeword.start().catch((err) => {
+        console.error('[Wakeword] Failed to restart:', err);
+      });
     }
   });
 
@@ -91,11 +120,9 @@ async function main() {
     wsBroadcast.transcript(text, role);
   });
 
-  agent.on('audio', (audio) => {
-    // Play audio from the Realtime API (no logging - too noisy)
-    if (audio.data) {
-      audioPlayback.play(audio.data);
-    }
+  agent.on('audio', () => {
+    // Audio is now handled internally by the transport
+    // This event is still emitted for logging/debugging if needed
   });
 
   agent.on('error', (error) => {
@@ -111,55 +138,88 @@ async function main() {
     wsBroadcast.toolEnd(name, result);
   });
 
-  // Send captured audio to the agent
-  audioCapture.on('audio', (data: ArrayBuffer) => {
-    if (agent.isActive()) {
-      agent.sendAudio(data);
-    }
-  });
+  // Set up wakeword detection (only in local mode)
+  if (wakeword) {
+    wakeword.onWakeword(async (keyword, confidence) => {
+      console.log(`[Wakeword] Detected: ${keyword} (confidence: ${confidence})`);
 
-  // Set up wakeword detection
-  wakeword.onWakeword(async (keyword, confidence) => {
-    console.log(`[Wakeword] Detected: ${keyword} (confidence: ${confidence})`);
+      if (!agent.isActive()) {
+        // Stop wakeword detection during conversation
+        wakeword.stop();
 
-    if (!agent.isActive()) {
-      // Stop wakeword detection during conversation
-      wakeword.stop();
-
-      const success = await agent.activateWithWakeword(keyword);
-      if (success) {
-        console.log('[Agent] Session activated, listening...');
+        const success = await agent.activateWithWakeword(keyword);
+        if (success) {
+          console.log('[Agent] Session activated, listening...');
+        } else {
+          // Restart wakeword if activation failed
+          wakeword.start().catch((err) => {
+            console.error('[Wakeword] Failed to restart:', err);
+          });
+        }
       } else {
-        // Restart wakeword if activation failed
-        wakeword.start().catch((err) => {
-          console.error('[Wakeword] Failed to restart:', err);
-        });
+        console.log('[Agent] Already active, ignoring wakeword');
       }
-    } else {
-      console.log('[Agent] Already active, ignoring wakeword');
+    });
+
+    // Start wakeword detection
+    try {
+      await wakeword.start();
+      console.log('Wakeword detection started');
+    } catch (error) {
+      console.error('Failed to start wakeword detection:', error);
+      process.exit(1);
+    }
+  }
+
+  // Register client command handler (for web mode activation via dashboard)
+  onClientCommand(async (command) => {
+    console.log(`[WS] Client command: ${command.command}`, command.profile ? `(profile: ${command.profile})` : '');
+
+    switch (command.command) {
+      case 'start_session': {
+        if (agent.isActive()) {
+          console.log('[WS] Session already active, ignoring start_session');
+          return;
+        }
+
+        // Stop wakeword detection if active (local mode)
+        if (wakeword && wakeword.isListening()) {
+          wakeword.stop();
+        }
+
+        const profile = command.profile || 'jarvis';
+        const success = await agent.activate(profile);
+        if (success) {
+          console.log(`[WS] Session activated for ${profile}`);
+          wsBroadcast.sessionStarted(profile);
+        } else {
+          console.error('[WS] Failed to activate session');
+          wsBroadcast.error('Failed to activate session');
+          // Restart wakeword if in local mode
+          if (wakeword) {
+            wakeword.start().catch((err) => {
+              console.error('[Wakeword] Failed to restart:', err);
+            });
+          }
+        }
+        break;
+      }
+
+      case 'stop_session': {
+        if (agent.isActive()) {
+          const profile = agent.getCurrentProfile()?.name || null;
+          agent.deactivate();
+          console.log('[WS] Session stopped');
+          wsBroadcast.sessionEnded(profile);
+        }
+        break;
+      }
     }
   });
-
-  // Start wakeword detection
-  try {
-    await wakeword.start();
-    console.log('Wakeword detection started');
-  } catch (error) {
-    console.error('Failed to start wakeword detection:', error);
-    process.exit(1);
-  }
 
   // Start the timer scheduler
   scheduler.start();
   console.log('Timer scheduler started');
-
-  // Start WebSocket server for dashboard
-  try {
-    await startWebSocketServer();
-    console.log('WebSocket server started');
-  } catch (error) {
-    console.warn('Failed to start WebSocket server:', error);
-  }
 
   // Start static file server for web dashboard
   try {
@@ -204,9 +264,9 @@ async function main() {
     await stopWebSocketServer();
     await stopWebhookServer();
     agent.deactivate();
-    audioCapture.stop();
-    audioPlayback.stop();
-    wakeword.stop();
+    if (wakeword) {
+      wakeword.stop();
+    }
     closeDatabase();
     process.exit(0);
   };
@@ -214,7 +274,12 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  console.log('Agent ready. Say "Jarvis" (general assistant) or "Computer" (developer assistant) to activate...');
+  // Ready message based on transport mode
+  if (TRANSPORT_MODE === 'local') {
+    console.log('Agent ready. Say "Jarvis" (general assistant) or "Computer" (developer assistant) to activate...');
+  } else {
+    console.log('Agent ready. Connect a browser client to activate via the web dashboard...');
+  }
 }
 
 main().catch((error) => {

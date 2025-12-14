@@ -13,6 +13,17 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
 
+// Binary audio handler for WebSocketTransport
+let binaryAudioHandler: ((data: Buffer, ws: WebSocket) => void) | null = null;
+
+// Client command handler
+let clientCommandHandler: ((command: ClientCommand, ws: WebSocket) => void) | null = null;
+
+export interface ClientCommand {
+  command: 'start_session' | 'stop_session';
+  profile?: string;
+}
+
 export type WSMessageType =
   | 'state_change'
   | 'transcript'
@@ -105,7 +116,16 @@ export function startWebSocketServer(): Promise<void> {
       });
 
       // Handle incoming messages from dashboard
-      ws.on('message', (data) => {
+      ws.on('message', (data, isBinary) => {
+        // Handle binary audio data
+        if (isBinary || Buffer.isBuffer(data)) {
+          if (binaryAudioHandler) {
+            binaryAudioHandler(data as Buffer, ws);
+          }
+          return;
+        }
+
+        // Handle JSON messages
         try {
           const msg = JSON.parse(data.toString());
           handleClientMessage(ws, msg);
@@ -164,6 +184,22 @@ export function broadcast(type: WSMessageType, payload: unknown): void {
 }
 
 /**
+ * Broadcast binary data (audio) to all connected clients.
+ * Used by WebSocketTransport to send audio back to browsers.
+ */
+export function broadcastBinary(data: Buffer | ArrayBuffer): void {
+  if (clients.size === 0) return;
+
+  const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+  for (const client of clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(buffer);
+    }
+  }
+}
+
+/**
  * Send a message to a specific client.
  */
 export function sendTo(ws: WebSocket, type: WSMessageType, payload: unknown): void {
@@ -189,11 +225,15 @@ function handleClientMessage(ws: WebSocket, msg: { type: string; payload?: unkno
       sendTo(ws, 'state_change', { state: 'idle', profile: null });
       break;
 
-    // Future: Handle commands from dashboard
-    // case 'activate':
-    //   const { profile } = msg.payload as { profile: string };
-    //   // Trigger agent activation
-    //   break;
+    case 'client_command': {
+      const command = msg.payload as ClientCommand;
+      if (clientCommandHandler) {
+        clientCommandHandler(command, ws);
+      } else {
+        console.warn('[WS] No command handler registered for client_command');
+      }
+      break;
+    }
 
     default:
       console.log(`[WS] Unknown message type: ${msg.type}`);
@@ -205,6 +245,30 @@ function handleClientMessage(ws: WebSocket, msg: { type: string; payload?: unkno
  */
 export function getClientCount(): number {
   return clients.size;
+}
+
+/**
+ * Register a handler for incoming binary (audio) messages.
+ * Used by WebSocketTransport to receive audio from browser clients.
+ */
+export function onBinaryMessage(handler: (data: Buffer, ws: WebSocket) => void): void {
+  binaryAudioHandler = handler;
+}
+
+/**
+ * Get reference to connected clients set.
+ * Used by WebSocketTransport to send audio to browser clients.
+ */
+export function getClients(): Set<WebSocket> {
+  return clients;
+}
+
+/**
+ * Register a handler for client commands (start_session, stop_session).
+ * Used by index.ts to wire up agent activation in web mode.
+ */
+export function onClientCommand(handler: (command: ClientCommand, ws: WebSocket) => void): void {
+  clientCommandHandler = handler;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -6,15 +6,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgentStore } from './stores/agent';
+import { useAudioSession } from './hooks/useAudioSession';
 import { VoiceVisualizer } from './components/VoiceVisualizer';
 import { ConversationStream } from './components/ConversationStream';
 import { CommandPanel } from './components/CommandPanel';
+import { ControlBar } from './components/ControlBar';
 
 type MobileView = 'voice' | 'conversation' | 'command';
 
 export function App() {
   const { reconnect } = useWebSocket();
   const { connected, state, profile, messages, events, currentTool, loadMockConversation, clearMessages, clearEvents } = useAgentStore();
+  const audioSession = useAudioSession();
   const [activeTab, setActiveTab] = useState<'sessions' | 'agent' | 'tools' | 'events'>('events');
   const [mobileView, setMobileView] = useState<MobileView>('voice');
   const [showCommandSheet, setShowCommandSheet] = useState(false);
@@ -795,9 +798,24 @@ export function App() {
             <div className="state-label-container">
               <div className="state-text">{currentState.label}</div>
               <div className="state-hint">
-                {state === 'idle' ? 'Say "Jarvis" or "Computer"' : 'Processing voice input...'}
+                {audioSession.isRecording
+                  ? 'Listening...'
+                  : state === 'idle'
+                    ? 'Select profile and tap mic to start'
+                    : 'Processing voice input...'}
               </div>
             </div>
+
+            {/* Control Bar - Profile selector and mic button */}
+            <ControlBar
+              activeProfile={audioSession.activeProfile}
+              onProfileChange={audioSession.setActiveProfile}
+              isRecording={audioSession.isRecording}
+              onToggleRecording={audioSession.toggleSession}
+              isInitializing={audioSession.isInitializing}
+              error={audioSession.error}
+              disabled={!connected || isDemoMode}
+            />
           </section>
 
           {/* Conversation Panel */}

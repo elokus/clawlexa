@@ -6,6 +6,7 @@
  * - Session lifecycle management
  * - Event routing to consumers
  * - Agent run logging to database
+ * - Audio I/O via pluggable transport layer
  */
 
 import { VoiceSession, type AgentState } from '../realtime/session.js';
@@ -17,6 +18,7 @@ import {
 } from './profiles.js';
 import type { TransportLayerAudio, RealtimeItem } from '@openai/agents/realtime';
 import { getDatabase, AgentRunsRepository } from '../db/index.js';
+import type { IAudioTransport } from '../transport/types.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
@@ -34,11 +36,42 @@ export class VoiceAgent {
   private eventHandlers: Partial<VoiceAgentEvents> = {};
   private agentRunsRepo: AgentRunsRepository;
   private transcriptBuffer: string[] = [];
+  private transport: IAudioTransport | null = null;
 
-  constructor() {
+  /**
+   * Create a VoiceAgent.
+   * @param transport - Optional audio transport. If provided, the agent manages audio I/O internally.
+   *                    If not provided, use the 'audio' event and sendAudio() method for external handling.
+   */
+  constructor(transport?: IAudioTransport) {
     // Initialize database and repositories
     getDatabase();
     this.agentRunsRepo = new AgentRunsRepository();
+
+    // Set up transport if provided
+    if (transport) {
+      this.transport = transport;
+      this.setupTransport();
+    }
+  }
+
+  /**
+   * Wire up transport events for internal audio handling.
+   */
+  private setupTransport(): void {
+    if (!this.transport) return;
+
+    // Route incoming audio from transport to session
+    this.transport.on('audio', (chunk: ArrayBuffer) => {
+      if (this.session) {
+        this.session.sendAudio(chunk);
+      }
+    });
+
+    this.transport.on('error', (error: Error) => {
+      console.error('[VoiceAgent] Transport error:', error.message);
+      this.emit('error', error);
+    });
   }
 
   on<K extends keyof VoiceAgentEvents>(event: K, handler: VoiceAgentEvents[K]): void {
@@ -107,9 +140,22 @@ export class VoiceAgent {
     this.session.on('stateChange', (state) => {
       this.state = state;
       this.emit('stateChange', state, this.currentProfile?.name ?? null);
+
+      // Manage transport based on state (if transport is injected)
+      if (this.transport) {
+        if (state === 'listening' && !this.transport.isActive()) {
+          this.transport.start();
+        } else if (state === 'idle') {
+          this.transport.stop();
+        }
+      }
     });
 
     this.session.on('audio', (audio) => {
+      // Route to transport if available, otherwise emit for external handling
+      if (this.transport && audio.data) {
+        this.transport.play(audio.data);
+      }
       this.emit('audio', audio);
     });
 
@@ -171,6 +217,12 @@ export class VoiceAgent {
       this.session.disconnect();
       this.session = null;
     }
+
+    // Stop transport if managed internally
+    if (this.transport) {
+      this.transport.stop();
+    }
+
     this.currentProfile = null;
     this.state = 'idle';
     this.emit('stateChange', 'idle', null);
@@ -200,5 +252,19 @@ export class VoiceAgent {
 
   isActive(): boolean {
     return this.session?.isConnected() ?? false;
+  }
+
+  /**
+   * Get the audio transport (if one was injected).
+   */
+  getTransport(): IAudioTransport | null {
+    return this.transport;
+  }
+
+  /**
+   * Check if the agent is managing audio internally via transport.
+   */
+  hasTransport(): boolean {
+    return this.transport !== null;
   }
 }
