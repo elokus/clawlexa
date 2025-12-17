@@ -145,7 +145,10 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
 
         // Text chunk
         case 'text-delta': {
-          const delta = (event as { textDelta?: string }).textDelta ?? '';
+          // Note: AI SDK v5 uses 'text' property for text-delta events
+          const delta = (event as { text?: string; textDelta?: string }).text
+            ?? (event as { textDelta?: string }).textDelta
+            ?? '';
           fullText += delta;
           break;
         }

@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Conversation Stream - Mobile-optimized chat interface
-// Clean, readable messages with smooth touch scrolling
+// Conversation Stream - Full-height conversation interface
+// Clean, minimal design optimized for the conversation-first layout
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef } from 'react';
@@ -53,7 +53,7 @@ function TypingIndicator() {
   );
 }
 
-// Single message bubble - mobile-optimized
+// Single message bubble
 function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLatest: boolean }) {
   const isUser = message.role === 'user';
 
@@ -70,9 +70,9 @@ function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLa
         .msg-bubble {
           display: flex;
           flex-direction: column;
-          max-width: 85%;
-          margin-bottom: 12px;
-          animation: msg-appear 0.3s var(--ease-out) forwards;
+          max-width: 80%;
+          margin-bottom: 16px;
+          animation: msg-appear 0.25s var(--ease-out) forwards;
           opacity: 0;
         }
 
@@ -100,15 +100,16 @@ function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLa
         .msg-header {
           display: flex;
           align-items: center;
-          gap: 6px;
-          margin-bottom: 4px;
-          padding: 0 4px;
+          gap: 8px;
+          margin-bottom: 6px;
+          padding: 0 2px;
         }
 
         .msg-role {
-          font-family: var(--font-display);
-          font-size: 9px;
-          letter-spacing: 0.12em;
+          font-family: var(--font-mono);
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.08em;
           text-transform: uppercase;
         }
 
@@ -122,37 +123,37 @@ function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLa
 
         .msg-time {
           font-family: var(--font-mono);
-          font-size: 9px;
+          font-size: 10px;
           color: var(--color-text-ghost);
         }
 
         .msg-content {
-          padding: 12px 16px;
-          border-radius: 16px;
+          padding: 14px 18px;
+          border-radius: 18px;
           position: relative;
         }
 
-        /* User messages - cyan accent */
+        /* User messages */
         .msg-bubble.user .msg-content {
           background: linear-gradient(135deg,
-            rgba(56, 189, 248, 0.15) 0%,
-            rgba(56, 189, 248, 0.08) 100%
+            rgba(56, 189, 248, 0.12) 0%,
+            rgba(56, 189, 248, 0.06) 100%
           );
-          border: 1px solid rgba(56, 189, 248, 0.2);
-          border-bottom-right-radius: 4px;
+          border: 1px solid rgba(56, 189, 248, 0.18);
+          border-bottom-right-radius: 6px;
         }
 
-        /* Agent messages - dark glass */
+        /* Agent messages */
         .msg-bubble.agent .msg-content {
-          background: rgba(18, 18, 24, 0.8);
-          border: 1px solid rgba(52, 211, 153, 0.15);
-          border-bottom-left-radius: 4px;
+          background: rgba(18, 18, 26, 0.7);
+          border: 1px solid rgba(52, 211, 153, 0.12);
+          border-bottom-left-radius: 6px;
         }
 
         .msg-text {
           font-family: var(--font-ui);
-          font-size: 14px;
-          font-weight: 500;
+          font-size: 15px;
+          font-weight: 450;
           line-height: 1.6;
           margin: 0;
           word-wrap: break-word;
@@ -171,30 +172,27 @@ function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLa
           color: var(--color-text-dim);
         }
 
-        /* Latest message highlight */
         .msg-bubble.latest.agent .msg-content {
-          box-shadow: 0 0 20px rgba(52, 211, 153, 0.1);
+          box-shadow: 0 0 24px rgba(52, 211, 153, 0.08);
         }
 
         .msg-bubble.latest.user .msg-content {
-          box-shadow: 0 0 20px rgba(56, 189, 248, 0.15);
+          box-shadow: 0 0 24px rgba(56, 189, 248, 0.12);
         }
 
-        /* Mobile adjustments */
         @media (max-width: 768px) {
           .msg-bubble {
-            max-width: 90%;
-            margin-bottom: 10px;
+            max-width: 88%;
+            margin-bottom: 14px;
           }
 
           .msg-content {
-            padding: 10px 14px;
-            border-radius: 14px;
+            padding: 12px 16px;
+            border-radius: 16px;
           }
 
           .msg-text {
             font-size: 15px;
-            line-height: 1.55;
           }
         }
       `}</style>
@@ -216,7 +214,7 @@ function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLa
   );
 }
 
-// Tool execution card - compact mobile version
+// Tool execution card
 function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknown> } }) {
   const toolConfig: Record<string, { label: string; icon: string; color: string }> = {
     view_todos: { label: 'Checking tasks', icon: '◈', color: 'var(--color-violet)' },
@@ -241,11 +239,11 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
           align-items: center;
           gap: 12px;
           padding: 12px 16px;
-          margin: 8px 0 12px 0;
-          background: rgba(18, 18, 24, 0.6);
+          margin: 8px 0 16px 0;
+          background: rgba(18, 18, 26, 0.5);
           border-radius: 12px;
           border-left: 3px solid ${config.color};
-          animation: tool-appear 0.25s var(--ease-out) forwards;
+          animation: tool-appear 0.2s var(--ease-out) forwards;
         }
 
         @keyframes tool-appear {
@@ -266,8 +264,8 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
         }
 
         @keyframes tool-pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.7; transform: scale(0.95); }
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
         }
 
         .tool-info {
@@ -279,13 +277,13 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
           font-family: var(--font-mono);
           font-size: 12px;
           color: ${config.color};
-          margin-bottom: 2px;
         }
 
         .tool-name {
           font-family: var(--font-mono);
           font-size: 10px;
           color: var(--color-text-ghost);
+          margin-top: 2px;
         }
 
         .tool-spinner {
@@ -300,13 +298,6 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
-
-        @media (max-width: 768px) {
-          .tool-card {
-            padding: 10px 14px;
-            margin: 6px 0 10px 0;
-          }
-        }
       `}</style>
 
       <span className="tool-icon">{config.icon}</span>
@@ -319,7 +310,7 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
   );
 }
 
-// Empty state - welcoming hero
+// Empty state - centered, minimal
 function EmptyState() {
   return (
     <div className="empty-state">
@@ -330,69 +321,85 @@ function EmptyState() {
           align-items: center;
           justify-content: center;
           height: 100%;
-          padding: 32px 24px;
+          padding: 48px 32px;
           text-align: center;
         }
 
-        .empty-icon {
-          width: 64px;
-          height: 64px;
-          margin-bottom: 20px;
-          color: var(--color-text-ghost);
-          opacity: 0.5;
-          animation: float-gentle 3s ease-in-out infinite;
+        .empty-glyph {
+          width: 72px;
+          height: 72px;
+          margin-bottom: 24px;
+          position: relative;
         }
 
-        @keyframes float-gentle {
+        .empty-glyph::before {
+          content: '';
+          position: absolute;
+          inset: -20px;
+          background: radial-gradient(
+            circle,
+            rgba(56, 189, 248, 0.08) 0%,
+            transparent 70%
+          );
+          border-radius: 50%;
+        }
+
+        .empty-glyph svg {
+          width: 100%;
+          height: 100%;
+          color: var(--color-text-ghost);
+          opacity: 0.5;
+          animation: glyph-float 4s ease-in-out infinite;
+        }
+
+        @keyframes glyph-float {
           0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-8px); }
+          50% { transform: translateY(-6px); }
         }
 
         .empty-title {
           font-family: var(--font-display);
-          font-size: 13px;
+          font-size: 12px;
           letter-spacing: 0.2em;
           color: var(--color-text-dim);
-          margin-bottom: 12px;
+          margin-bottom: 16px;
         }
 
         .empty-hint {
           font-family: var(--font-mono);
-          font-size: 12px;
+          font-size: 13px;
           color: var(--color-text-ghost);
-          line-height: 1.8;
+          line-height: 2;
         }
 
         .wake-word {
           color: var(--color-cyan);
-          font-weight: 600;
+          font-weight: 500;
         }
 
         @media (max-width: 768px) {
           .empty-state {
-            padding: 24px 20px;
+            padding: 32px 24px;
           }
 
-          .empty-icon {
-            width: 56px;
-            height: 56px;
-          }
-
-          .empty-title {
-            font-size: 12px;
+          .empty-glyph {
+            width: 60px;
+            height: 60px;
           }
 
           .empty-hint {
-            font-size: 13px;
+            font-size: 14px;
           }
         }
       `}</style>
 
-      <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <circle cx="12" cy="12" r="10" />
-        <circle cx="12" cy="12" r="4" />
-        <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
-      </svg>
+      <div className="empty-glyph">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <circle cx="12" cy="12" r="10" />
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+        </svg>
+      </div>
       <div className="empty-title">AWAITING INPUT</div>
       <div className="empty-hint">
         Say <span className="wake-word">"Jarvis"</span> or <span className="wake-word">"Computer"</span><br />
@@ -431,7 +438,7 @@ export function ConversationStream({ messages, currentTool }: ConversationStream
         .messages-container {
           display: flex;
           flex-direction: column;
-          padding: 8px 0;
+          padding: 8px 0 24px 0;
           min-height: 100%;
         }
 
@@ -442,10 +449,10 @@ export function ConversationStream({ messages, currentTool }: ConversationStream
           top: 0;
           left: 0;
           right: 0;
-          height: 24px;
+          height: 20px;
           background: linear-gradient(
             180deg,
-            rgba(5, 5, 8, 0.9) 0%,
+            rgba(5, 5, 10, 0.8) 0%,
             transparent 100%
           );
           pointer-events: none;
@@ -455,7 +462,7 @@ export function ConversationStream({ messages, currentTool }: ConversationStream
 
         @media (max-width: 768px) {
           .messages-container {
-            padding: 4px 0 80px 0; /* Extra bottom padding for mobile nav */
+            padding-bottom: 100px; /* Extra space for mobile nav */
           }
         }
       `}</style>

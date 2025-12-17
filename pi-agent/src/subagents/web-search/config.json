@@ -1,6 +1,6 @@
 {
   "name": "Jarvis",
-  "model": "x-ai/grok-4-1-fast-reasoning:online",
+  "model": "x-ai/grok-4.1-fast:online",
   "description": "Web Search Agent - Uses Grok with web search capabilities",
   "maxSteps": 2
 }

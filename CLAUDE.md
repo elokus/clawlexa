@@ -105,7 +105,7 @@ voice-agent/
     │   │   │   ├── tools.ts           # Session management tools
     │   │   │   └── index.ts           # handleDeveloperRequest
     │   │   └── web-search/        # Web search agent
-    │   │       ├── config.json        # Model: grok-4-1:online
+    │   │       ├── config.json        # Model: grok-4.1-fast:online
     │   │       ├── PROMPT.md          # Search assistant instructions
     │   │       └── index.ts           # webSearchTool
     │   │
@@ -258,7 +258,7 @@ subagents/
 │   ├── tools.ts           # Session management tools
 │   └── index.ts           # handleDeveloperRequest(), isMacDaemonAvailable()
 └── web-search/
-    ├── config.json        # {"name": "Jarvis", "model": "x-ai/grok-4-1-fast-reasoning:online"}
+    ├── config.json        # {"name": "Jarvis", "model": "x-ai/grok-4.1-fast:online"}
     ├── PROMPT.md          # German search assistant instructions
     └── index.ts           # webSearchTool export
 ```
@@ -523,6 +523,110 @@ const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true';
 // WRONG - breaks when env var is simply unset
 const isDemoMode = !import.meta.env.VITE_WS_URL;
 ```
+
+### Web Audio Transport (Browser as Mic/Speaker)
+
+When `TRANSPORT_MODE=web`, the browser captures audio and sends it to the backend via WebSocket. Key learnings:
+
+#### Audio Buffering During Connection
+
+The browser starts sending audio immediately when the user clicks the mic, but the OpenAI session takes time to connect. Solution: buffer audio in `VoiceSession` during connection, then flush when ready.
+
+```typescript
+// pi-agent/src/realtime/session.ts
+private audioBuffer: ArrayBuffer[] = [];
+private isConnecting = true; // Start in buffering mode
+
+sendAudio(audio: ArrayBuffer): void {
+  if (this.isConnecting) {
+    this.audioBuffer.push(audio); // Buffer during connection
+    return;
+  }
+  this.session.sendAudio(audio);
+}
+
+// After connect() completes, flush the buffer
+private flushAudioBuffer(): void {
+  for (const chunk of this.audioBuffer) {
+    this.session.sendAudio(chunk);
+  }
+  this.audioBuffer = [];
+}
+```
+
+#### Node.js WebSocket Binary vs Text Detection
+
+**Bug**: Using `Buffer.isBuffer(data)` to detect binary messages is WRONG - text messages in Node.js `ws` library also arrive as Buffers. Only use the `isBinary` flag.
+
+```typescript
+// pi-agent/src/api/websocket.ts
+ws.on('message', (data, isBinary) => {
+  // WRONG: if (isBinary || Buffer.isBuffer(data))
+  // CORRECT: only check isBinary
+  if (isBinary) {
+    handleBinaryAudio(data);
+    return;
+  }
+  // Handle JSON text message
+  const msg = JSON.parse(data.toString());
+});
+```
+
+#### Audio Playback Scheduling
+
+**Bug**: When scheduling multiple audio buffers, checking `playbackStartTime < currentTime` resets scheduling for each buffer in a tight loop (because `currentTime` advances by microseconds).
+
+**Fix**: Check if the END of scheduled audio is in the past, not the start:
+
+```typescript
+// web/src/lib/audio.ts
+const scheduledEndTime = this.playbackStartTime + (this.samplesScheduled / TARGET_SAMPLE_RATE);
+if (this.samplesScheduled === 0 || scheduledEndTime < currentTime) {
+  // Only reset if truly fallen behind
+  this.playbackStartTime = currentTime;
+  this.samplesScheduled = 0;
+}
+```
+
+#### Echo Prevention
+
+Don't send mic audio while the agent is speaking (prevents feedback loop):
+
+```typescript
+// web/src/hooks/useAudioSession.ts
+const stateRef = useRef<string>('idle');
+
+audioController.setOnAudio((data) => {
+  if (stateRef.current === 'speaking' || stateRef.current === 'thinking') {
+    return; // Skip sending audio during agent response
+  }
+  sendBinary(data);
+});
+```
+
+#### React StrictMode WebSocket Cleanup
+
+Delay socket close to survive StrictMode double-mount:
+
+```typescript
+// Cleanup with delay
+setTimeout(() => {
+  if (globalWsRefCount === 0 && socketToClose === globalWs) {
+    socketToClose.close();
+  }
+}, 500); // 500ms delay for StrictMode
+```
+
+### Future Improvement: WebRTC Transport
+
+The current WebSocket-based audio transport has inherent issues (manual scheduling, echo handling). A better approach is to have the browser connect directly to OpenAI via WebRTC:
+
+1. Backend generates ephemeral token via `POST /v1/realtime/sessions`
+2. Frontend uses `RTCPeerConnection` to connect directly to OpenAI
+3. Built-in echo cancellation, proper audio streaming
+4. Backend handles tool execution via server-side events
+
+See: https://platform.openai.com/docs/guides/realtime-webrtc
 
 ## Notes
 

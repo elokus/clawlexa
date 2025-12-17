@@ -122,9 +122,14 @@ export class AudioController {
       this.mediaStream = null;
     }
 
-    // Stop playback
+    // Stop playback and reset scheduling state
+    // CRITICAL: Must reset playbackStartTime and samplesScheduled so that
+    // the next session doesn't schedule audio far in the future based on
+    // stale values from the previous session
     this.playbackQueue = [];
     this.isPlaying = false;
+    this.playbackStartTime = 0;
+    this.samplesScheduled = 0;
 
     if (this.playbackContext) {
       this.playbackContext.close();
@@ -254,6 +259,7 @@ export class AudioController {
   interrupt(): void {
     this.playbackQueue = [];
     this.samplesScheduled = 0;
+    this.playbackStartTime = 0;
     this.isPlaying = false;
 
     // Create new context to immediately stop all scheduled audio
