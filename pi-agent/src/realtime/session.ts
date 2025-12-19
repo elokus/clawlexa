@@ -162,18 +162,19 @@ export class VoiceSession {
       this.emit('connected');
       this.resetConversationTimeout();
 
-      // Flush any buffered audio that was received during connection
-      this.flushAudioBuffer();
-
       // Session ID is now injected via the developer_session tool factory
       // No need to pollute conversation context with [SESSION_ID: ...]
       console.log(`[Session] Connected with ID: ${this.id}`);
 
-      // Send greeting trigger to make the model speak first
+      // Send greeting trigger BEFORE flushing audio buffer
+      // This ensures the model greets first, then processes any buffered user speech
       if (this.profile.greetingTrigger) {
         console.log(`[Session] Sending greeting trigger for ${this.profile.name}`);
         this.session.sendMessage(this.profile.greetingTrigger);
       }
+
+      // Now flush any buffered audio that was received during connection
+      this.flushAudioBuffer();
     } catch (error) {
       this.isConnecting = false;
       this.audioBuffer = []; // Clear buffer on error

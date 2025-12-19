@@ -8,6 +8,7 @@ import { BackgroundRail } from '../rails/BackgroundRail';
 import { ThreadRail } from '../rails/ThreadRail';
 import { ChatStage } from '../stages/ChatStage';
 import { TerminalStage } from '../stages/TerminalStage';
+import { SubagentStage } from '../stages/SubagentStage';
 import { GlassHUD } from '../overlays/GlassHUD';
 import { EventsOverlay } from '../overlays/EventsOverlay';
 import { ToolsOverlay } from '../overlays/ToolsOverlay';
@@ -25,6 +26,8 @@ function ActiveStage({ stage }: { stage: StageItem }) {
       return <ChatStage stage={stage} />;
     case 'terminal':
       return <TerminalStage stage={stage} />;
+    case 'subagent':
+      return <SubagentStage stage={stage} />;
     default:
       return <ChatStage stage={stage} />;
   }

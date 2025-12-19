@@ -1,0 +1,73 @@
+[
+  {
+    "type": "subagent_activity",
+    "payload": {
+      "agent": "Jarvis",
+      "type": "reasoning_start",
+      "payload": {}
+    },
+    "delay": 0,
+    "timestamp": 1766146958182
+  },
+  {
+    "type": "subagent_activity",
+    "payload": {
+      "agent": "Jarvis",
+      "type": "reasoning_delta",
+      "payload": {
+        "delta": "[REDACTED]"
+      }
+    },
+    "delay": 0,
+    "timestamp": 1766146958182
+  },
+  {
+    "type": "subagent_activity",
+    "payload": {
+      "agent": "Jarvis",
+      "type": "reasoning_delta",
+      "payload": {
+        "delta": "[REDACTED]"
+      }
+    },
+    "delay": 51999,
+    "timestamp": 1766147010181
+  },
+  {
+    "type": "subagent_activity",
+    "payload": {
+      "agent": "Jarvis",
+      "type": "reasoning_end",
+      "payload": {
+        "text": "[REDACTED][REDACTED]",
+        "durationMs": 51999
+      }
+    },
+    "delay": 0,
+    "timestamp": 1766147010181
+  },
+  {
+    "type": "subagent_activity",
+    "payload": {
+      "agent": "Jarvis",
+      "type": "response",
+      "payload": {
+        "text": "Morgen, den 20. Dezember 2025, wird es in Bonn bewölkt und regnerisch, mit Temperaturen von 6 bis 12 °C und möglichen Böen bis 50 km/h. Quellen wie wetter.com und wetter.de prognostizieren anhaltende Regenfälle tagsüber."
+      }
+    },
+    "delay": 608,
+    "timestamp": 1766147010789
+  },
+  {
+    "type": "subagent_activity",
+    "payload": {
+      "agent": "Jarvis",
+      "type": "complete",
+      "payload": {
+        "success": true
+      }
+    },
+    "delay": 0,
+    "timestamp": 1766147010789
+  }
+]

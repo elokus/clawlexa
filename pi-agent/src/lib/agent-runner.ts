@@ -20,6 +20,16 @@
 import { streamText, stepCountIs, type ToolSet, type LanguageModel } from 'ai';
 import { wsBroadcast, type SubagentEventType } from '../api/websocket.js';
 
+/** Event emitted by the agent runner */
+export interface AgentEvent {
+  agent: string;
+  type: SubagentEventType;
+  payload: unknown;
+}
+
+/** Callback for capturing agent events */
+export type AgentEventCallback = (event: AgentEvent) => void;
+
 export interface AgentRunnerOptions {
   /** The language model to use (e.g., openrouter.chat('x-ai/grok-code-fast-1')) */
   model: LanguageModel;
@@ -33,6 +43,8 @@ export interface AgentRunnerOptions {
   name: string;
   /** Maximum steps for multi-step tool calling (default: 3) */
   maxSteps?: number;
+  /** Optional callback for event capture (in addition to WebSocket broadcast) */
+  onEvent?: AgentEventCallback;
 }
 
 /**
@@ -50,12 +62,19 @@ export interface AgentRunnerOptions {
  * @returns The complete generated text response
  */
 export async function runObservableAgent(opts: AgentRunnerOptions): Promise<string> {
-  const { model, system, prompt, tools, name, maxSteps = 3 } = opts;
+  const { model, system, prompt, tools, name, maxSteps = 3, onEvent } = opts;
 
   // Track reasoning timing
   let reasoningStartTime = 0;
   let reasoningBuffer = '';
   let fullText = '';
+
+  // Helper to broadcast and optionally capture events
+  const emit = (type: SubagentEventType, payload: unknown) => {
+    const event = { agent: name, type, payload };
+    wsBroadcast.subagentActivity(event);
+    onEvent?.(event);
+  };
 
   try {
     // Start streaming with Vercel AI SDK v5
@@ -85,7 +104,7 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
         case 'reasoning-start': {
           reasoningBuffer = '';
           reasoningStartTime = Date.now();
-          broadcast(name, 'reasoning_start', {});
+          emit('reasoning_start', {});
           break;
         }
 
@@ -93,14 +112,14 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
         case 'reasoning-delta': {
           const text = (event as { text?: string }).text ?? '';
           reasoningBuffer += text;
-          broadcast(name, 'reasoning_delta', { delta: text });
+          emit('reasoning_delta', { delta: text });
           break;
         }
 
         // Reasoning complete
         case 'reasoning-end': {
           const durationMs = Date.now() - reasoningStartTime;
-          broadcast(name, 'reasoning_end', { text: reasoningBuffer, durationMs });
+          emit('reasoning_end', { text: reasoningBuffer, durationMs });
           break;
         }
 
@@ -115,7 +134,7 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
           const args = toolEvent.input ?? toolEvent.args;
 
           console.log(`[AgentRunner] ${name}: Tool called: ${toolEvent.toolName}`);
-          broadcast(name, 'tool_call', {
+          emit('tool_call', {
             toolName: toolEvent.toolName,
             toolCallId: toolEvent.toolCallId,
             args,
@@ -135,7 +154,7 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
           const output = resultEvent.output ?? resultEvent.result;
 
           console.log(`[AgentRunner] ${name}: Tool result: ${resultEvent.toolName}`);
-          broadcast(name, 'tool_result', {
+          emit('tool_result', {
             toolName: resultEvent.toolName,
             toolCallId: resultEvent.toolCallId,
             result: typeof output === 'string' ? output : JSON.stringify(output),
@@ -182,7 +201,7 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
           const errorEvent = event as { error?: unknown };
           const errorMsg = String(errorEvent.error);
           console.error(`[AgentRunner] ${name}: Error:`, errorMsg);
-          broadcast(name, 'error', { message: errorMsg });
+          emit('error', { message: errorMsg });
           break;
         }
 
@@ -192,27 +211,20 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
       }
     }
 
-    // Broadcast final response
-    broadcast(name, 'response', { text: fullText });
-    broadcast(name, 'complete', { success: true });
+    // Emit final response
+    emit('response', { text: fullText });
+    emit('complete', { success: true });
 
     return fullText;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error(`[AgentRunner] ${name}: Execution failed:`, errorMsg);
 
-    broadcast(name, 'error', { message: errorMsg });
-    broadcast(name, 'complete', { success: false, error: errorMsg });
+    emit('error', { message: errorMsg });
+    emit('complete', { success: false, error: errorMsg });
 
     throw error;
   }
-}
-
-/**
- * Helper to broadcast subagent activity events.
- */
-function broadcast(agent: string, type: SubagentEventType, payload: unknown): void {
-  wsBroadcast.subagentActivity({ agent, type, payload });
 }
 
 export { type ToolSet, type LanguageModel } from 'ai';

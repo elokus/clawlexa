@@ -15,6 +15,7 @@ import {
   CliEventsRepository,
   type SessionStatus,
 } from '../db/index.js';
+import { handleDemoRequest } from '../demo/index.js';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
 
@@ -108,6 +109,12 @@ async function handleWebhook(
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
     return;
+  }
+
+  // Handle demo API routes
+  if (req.url?.startsWith('/api/demo')) {
+    const handled = await handleDemoRequest(req, res);
+    if (handled) return;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

@@ -405,6 +405,24 @@ function handleSubagentActivity(
 
   switch (eventType) {
     case 'reasoning_start': {
+      // Check if we need to push a new subagent stage
+      const stageStore = useStageStore.getState();
+      const currentStage = stageStore.activeStage;
+      const isNewSubagent =
+        currentStage.type !== 'subagent' ||
+        currentStage.data?.agentName !== agent;
+
+      if (isNewSubagent) {
+        // Push new subagent stage to focus
+        stageStore.pushStage({
+          id: `subagent-${agent}-${Date.now()}`,
+          type: 'subagent',
+          title: agent,
+          data: { agentName: agent },
+          status: 'active',
+        });
+      }
+
       // Create a new reasoning block
       const block: ReasoningBlock = {
         id: generateId(),
@@ -531,6 +549,21 @@ function handleSubagentActivity(
     case 'complete': {
       // Mark subagent as inactive
       set({ subagentActive: false });
+
+      // Auto-pop subagent stage after delay (unless terminal is active)
+      const stageStore = useStageStore.getState();
+      const currentStage = stageStore.activeStage;
+      if (currentStage.type === 'subagent' && currentStage.data?.agentName === agent) {
+        // Don't auto-pop if a terminal stage was just pushed (it's now active)
+        // The terminal will handle its own lifecycle
+        setTimeout(() => {
+          const storeNow = useStageStore.getState();
+          // Only pop if still on the same subagent stage
+          if (storeNow.activeStage.type === 'subagent' && storeNow.activeStage.data?.agentName === agent) {
+            storeNow.popStage();
+          }
+        }, 2000);
+      }
       break;
     }
   }

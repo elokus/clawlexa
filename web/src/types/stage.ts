@@ -7,7 +7,7 @@
  * - backgroundTasks: Minimized/persistent tasks on the left rail
  */
 
-export type StageType = 'chat' | 'terminal';
+export type StageType = 'chat' | 'terminal' | 'subagent';
 
 export type StageStatus = 'active' | 'waiting' | 'background';
 
@@ -16,6 +16,10 @@ export interface StageData {
   sessionId?: string;
   /** Future: reference to chat history segment */
   chatHistoryRef?: string;
+  /** Subagent name for subagent stages */
+  agentName?: string;
+  /** Parent agent name for context */
+  parentAgentName?: string;
 }
 
 export interface StageItem {

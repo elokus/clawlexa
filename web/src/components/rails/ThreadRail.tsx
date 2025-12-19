@@ -10,6 +10,7 @@ import type { StageItem } from '../../types';
 const STAGE_ICONS: Record<string, string> = {
   chat: '◎',
   terminal: '▣',
+  subagent: '◇',
 };
 
 function ThreadCard({
@@ -254,6 +255,12 @@ export function ThreadRail() {
           background: rgba(56, 189, 248, 0.08);
           border-color: rgba(56, 189, 248, 0.15);
           color: var(--color-cyan);
+        }
+
+        .thread-card[data-type="subagent"] .thread-icon {
+          background: rgba(139, 92, 246, 0.08);
+          border-color: rgba(139, 92, 246, 0.15);
+          color: var(--color-violet);
         }
 
         .thread-card.is-active .thread-icon {

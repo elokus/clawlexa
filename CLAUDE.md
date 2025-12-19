@@ -50,7 +50,7 @@ voice-agent/
 │
 ├── web/                   # Web Dashboard (React + Vite + Bun)
 │   ├── src/
-│   │   ├── main.tsx          # Entry point
+│   │   ├── main.tsx          # Entry point with routing
 │   │   ├── App.tsx           # Main dashboard layout
 │   │   ├── components/       # UI components
 │   │   │   ├── VoiceVisualizer.tsx  # Audio waveform animation
@@ -58,6 +58,13 @@ voice-agent/
 │   │   │   ├── TranscriptView.tsx   # Conversation history
 │   │   │   ├── SessionSidebar.tsx   # CLI sessions panel
 │   │   │   └── EventLog.tsx         # Real-time event stream
+│   │   ├── dev/              # Component Dev Environment (/dev)
+│   │   │   ├── DevPage.tsx       # Dev page with sidebar
+│   │   │   ├── registry.ts       # Demo registration
+│   │   │   ├── components/       # Sidebar, Canvas, Controls
+│   │   │   ├── hooks/            # Stream simulator
+│   │   │   └── demos/            # Component demos
+│   │   │       └── activity-feed/
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts      # WebSocket connection
 │   │   ├── stores/           # Zustand state management
@@ -285,6 +292,35 @@ SQLite at `~/voice-agent.db`:
 | `cli_events` | Session event log |
 | `timers` | Timers and reminders |
 | `agent_runs` | Conversation history |
+
+## Component Dev Environment
+
+Isolated component development with simulated agent streaming. Access at `/dev`.
+
+```bash
+# Start both backend and frontend for dev mode
+cd pi-agent && npm run dev &
+cd web && npm run dev
+
+# Open component lab
+open http://localhost:5173/dev
+```
+
+**Features:**
+- Sidebar with categorized component list
+- Stream playback controls (play/pause/step/reset)
+- Speed control (0.5x - 10x)
+- Backend/frontend toggle (use real SSE streams or mock data)
+- Event inspector panel
+
+**Adding a demo:** See `docs/COMPONENT_DEV.md` for full documentation.
+
+Quick setup:
+1. Create `web/src/dev/demos/my-component/`
+2. Add `scenarios.ts` with mock event streams
+3. Add `component.tsx` wrapper
+4. Add `index.ts` to register demo
+5. Import in `web/src/dev/demos/index.ts`
 
 ## Development Commands
 
