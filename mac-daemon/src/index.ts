@@ -1,7 +1,9 @@
 import { loadConfig } from './config.js';
 import { SessionManager } from './sessions/manager.js';
 import { startServer } from './api/server.js';
+import { createWebSocketServer } from './api/websocket.js';
 import { tmuxManager } from './tmux/manager.js';
+import { ptyManager } from './pty/index.js';
 
 async function main() {
   console.log('╔═══════════════════════════════════════╗');
@@ -34,8 +36,14 @@ async function main() {
   sessionManager.start();
 
   // Start HTTP server
-  await startServer({
+  const httpServer = await startServer({
     port: config.port,
+    sessionManager,
+  });
+
+  // Initialize WebSocket server for PTY streaming
+  createWebSocketServer({
+    httpServer,
     sessionManager,
   });
 
@@ -49,11 +57,16 @@ async function main() {
   console.log('  GET    /sessions/:id/output   Read output buffer');
   console.log('  DELETE /sessions/:id          Terminate session');
   console.log('  GET    /health                Health check');
+  console.log('');
+  console.log('WebSocket endpoints:');
+  console.log('  WS     /sessions/:id/terminal  PTY terminal stream');
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\n[Shutdown] Stopping daemon...');
+    ptyManager.closeAll();
     sessionManager.stop();
+    httpServer.close();
     process.exit(0);
   };
 

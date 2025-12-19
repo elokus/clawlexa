@@ -35,6 +35,8 @@ export interface CliSession {
   goal: string;
   status: SessionStatus;
   mac_session_id: string | null;
+  parent_id: string | null;
+  thread_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -134,6 +136,7 @@ export interface CliSessionCreatedPayload {
   mode: 'headless' | 'interactive';
   projectPath: string;
   command: string;
+  parentId?: string;
 }
 
 export interface CliSessionOutputPayload {

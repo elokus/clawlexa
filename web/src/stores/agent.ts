@@ -311,19 +311,18 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
       case 'cli_session_created': {
         const sessionData = payload as CliSessionCreatedPayload;
-        // Add to sessions store
+        // Add to sessions store using addSession (handles duplicates)
         const sessionsStore = useSessionsStore.getState();
-        sessionsStore.setSessions([
-          ...sessionsStore.sessions,
-          {
-            id: sessionData.id,
-            goal: sessionData.goal,
-            status: 'running',
-            mac_session_id: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]);
+        sessionsStore.addSession({
+          id: sessionData.id,
+          goal: sessionData.goal,
+          status: 'running',
+          mac_session_id: null,
+          parent_id: sessionData.parentId || null,
+          thread_id: sessionData.parentId || null, // Use parent as thread root
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
 
         // Push terminal stage to focus
         useStageStore.getState().pushStage({

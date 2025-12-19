@@ -1,19 +1,21 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Terminal Stage - Retro-futuristic HUD with CRT scanlines
+// Terminal Stage - Real PTY terminal with ghostty-web
 // Obsidian Glass / Minority Report aesthetic
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useSessionsStore } from '../../stores/sessions';
 import { useStageStore } from '../../stores/stage';
+import { getTerminalClient, releaseTerminalClient } from '../../lib/terminal-client';
+import type { TerminalClient, TerminalStatus } from '../../lib/terminal-client';
 import type { StageItem, SessionStatus } from '../../types';
 
 interface TerminalStageProps {
   stage: StageItem;
 }
 
-const STATUS_CONFIG: Record<SessionStatus, { label: string; color: string; pulse: boolean }> = {
+const SESSION_STATUS_CONFIG: Record<SessionStatus, { label: string; color: string; pulse: boolean }> = {
   pending: { label: 'INIT', color: 'var(--color-amber)', pulse: true },
   running: { label: 'EXEC', color: 'var(--color-cyan)', pulse: true },
   waiting_for_input: { label: 'AWAIT', color: 'var(--color-violet)', pulse: true },
@@ -22,44 +24,98 @@ const STATUS_CONFIG: Record<SessionStatus, { label: string; color: string; pulse
   cancelled: { label: 'HALT', color: 'var(--color-text-dim)', pulse: false },
 };
 
+const TERMINAL_STATUS_CONFIG: Record<TerminalStatus, { label: string; color: string }> = {
+  connecting: { label: 'LINK', color: 'var(--color-amber)' },
+  connected: { label: 'LIVE', color: 'var(--color-emerald)' },
+  disconnected: { label: 'OFFLINE', color: 'var(--color-text-dim)' },
+  error: { label: 'ERROR', color: 'var(--color-rose)' },
+};
+
 export function TerminalStage({ stage }: TerminalStageProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [input, setInput] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const clientRef = useRef<TerminalClient | null>(null);
+  const [terminalStatus, setTerminalStatus] = useState<TerminalStatus>('disconnected');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [exitCode, setExitCode] = useState<number | null>(null);
 
   const sessionId = stage.data?.sessionId;
   const sessions = useSessionsStore((s) => s.sessions);
-  const sessionEvents = useSessionsStore((s) => s.sessionEvents);
   const backgroundStage = useStageStore((s) => s.backgroundStage);
 
   // Find the session data
   const session = sessions.find((s) => s.id === sessionId);
-  const events = sessionId ? sessionEvents[sessionId] || [] : [];
+  const sessionStatus = session?.status || 'pending';
+  const sessionStatusConfig = SESSION_STATUS_CONFIG[sessionStatus];
+  const terminalStatusConfig = TERMINAL_STATUS_CONFIG[terminalStatus];
 
-  // Fetch events when mounted
-  useEffect(() => {
-    if (sessionId) {
-      useSessionsStore.getState().fetchSessionEvents(sessionId);
+  // Handle status changes from terminal client
+  const handleStatusChange = useCallback((status: TerminalStatus, error?: string) => {
+    setTerminalStatus(status);
+    if (error) {
+      setErrorMessage(error);
+    } else {
+      setErrorMessage(null);
     }
-  }, [sessionId]);
+  }, []);
 
-  // Auto-scroll on new events
+  // Handle session exit
+  const handleExit = useCallback((code: number) => {
+    setExitCode(code);
+  }, []);
+
+  // Connect to terminal on mount (uses singleton per sessionId)
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [events]);
+    if (!sessionId || !containerRef.current) return;
 
-  const status = session?.status || 'pending';
-  const statusConfig = STATUS_CONFIG[status];
+    // Get or reuse existing client for this session
+    const client = getTerminalClient(sessionId, {
+      fontSize: 13,
+      onStatusChange: handleStatusChange,
+      onExit: handleExit,
+    });
 
-  // Format output events into terminal content
-  const terminalContent = events
-    .filter((e) => e.event_type === 'output')
-    .map((e) => {
-      const payload = e.payload as { output?: string } | null;
-      return payload?.output || '';
-    })
-    .join('');
+    clientRef.current = client;
+
+    // Connect to the session (no-op if already connected)
+    client.connect(sessionId, containerRef.current).catch((error) => {
+      console.error('[TerminalStage] Failed to connect:', error);
+    });
+
+    // Cleanup on unmount - release reference (singleton handles actual cleanup)
+    return () => {
+      releaseTerminalClient(sessionId);
+      clientRef.current = null;
+    };
+  }, [sessionId, handleStatusChange, handleExit]);
+
+  // Handle resize using ResizeObserver
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (clientRef.current && containerRef.current) {
+        // Calculate cols/rows based on container size
+        // Approximate character dimensions for 13px font
+        const charWidth = 8;
+        const charHeight = 17;
+        const containerWidth = containerRef.current.clientWidth;
+        const containerHeight = containerRef.current.clientHeight;
+
+        const cols = Math.floor(containerWidth / charWidth);
+        const rows = Math.floor(containerHeight / charHeight);
+
+        if (cols > 0 && rows > 0) {
+          clientRef.current.resize(cols, rows);
+        }
+      }
+    });
+
+    resizeObserver.observe(containerRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   const handleMinimize = () => {
     if (sessionId) {
@@ -67,16 +123,24 @@ export function TerminalStage({ stage }: TerminalStageProps) {
     }
   };
 
-  const handleSendInput = () => {
-    if (!input.trim() || !sessionId) return;
-    // TODO: Send input to session via WebSocket
-    console.log(`[Terminal] Send input to ${sessionId}:`, input);
-    setInput('');
+  const handleReconnect = () => {
+    if (sessionId && containerRef.current) {
+      // Get client (may be existing or new after disconnect)
+      const client = getTerminalClient(sessionId, {
+        fontSize: 13,
+        onStatusChange: handleStatusChange,
+        onExit: handleExit,
+      });
+      clientRef.current = client;
+      client.connect(sessionId, containerRef.current).catch((error) => {
+        console.error('[TerminalStage] Reconnect failed:', error);
+      });
+    }
   };
 
   return (
     <motion.div
-      className="terminal-stage obsidian-glass crt-flicker"
+      className="terminal-stage obsidian-glass"
       layoutId={`stage-${stage.id}`}
       initial={{ opacity: 0, scale: 0.96, y: 12 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -112,6 +176,7 @@ export function TerminalStage({ stage }: TerminalStageProps) {
           );
           border-bottom: 1px solid rgba(56, 189, 248, 0.15);
           position: relative;
+          z-index: 10;
         }
 
         /* Decorative corner accents */
@@ -191,7 +256,7 @@ export function TerminalStage({ stage }: TerminalStageProps) {
         }
 
         /* ═══════════════════════════════════════════════════════════════════
-           STATUS BADGE - Glowing indicator
+           STATUS BADGES
            ═══════════════════════════════════════════════════════════════════ */
 
         .hud-status {
@@ -204,18 +269,27 @@ export function TerminalStage({ stage }: TerminalStageProps) {
           font-size: 10px;
           letter-spacing: 0.15em;
           text-transform: uppercase;
-          background: ${statusConfig.color}12;
-          color: ${statusConfig.color};
-          border: 1px solid ${statusConfig.color}35;
-          box-shadow: 0 0 12px ${statusConfig.color}20;
+        }
+
+        .hud-status.session-status {
+          background: ${sessionStatusConfig.color}12;
+          color: ${sessionStatusConfig.color};
+          border: 1px solid ${sessionStatusConfig.color}35;
+          box-shadow: 0 0 12px ${sessionStatusConfig.color}20;
+        }
+
+        .hud-status.terminal-status {
+          background: ${terminalStatusConfig.color}12;
+          color: ${terminalStatusConfig.color};
+          border: 1px solid ${terminalStatusConfig.color}35;
         }
 
         .status-indicator {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          background: ${statusConfig.color};
-          box-shadow: 0 0 8px ${statusConfig.color};
+          background: currentColor;
+          box-shadow: 0 0 8px currentColor;
         }
 
         .status-indicator.pulse {
@@ -225,11 +299,11 @@ export function TerminalStage({ stage }: TerminalStageProps) {
         @keyframes status-glow {
           0%, 100% {
             opacity: 1;
-            box-shadow: 0 0 8px ${statusConfig.color};
+            box-shadow: 0 0 8px currentColor;
           }
           50% {
             opacity: 0.5;
-            box-shadow: 0 0 16px ${statusConfig.color};
+            box-shadow: 0 0 16px currentColor;
           }
         }
 
@@ -254,148 +328,68 @@ export function TerminalStage({ stage }: TerminalStageProps) {
         }
 
         /* ═══════════════════════════════════════════════════════════════════
-           TERMINAL BODY - CRT display area
+           TERMINAL CONTAINER
            ═══════════════════════════════════════════════════════════════════ */
 
-        .terminal-body-wrapper {
+        .terminal-container {
           flex: 1;
           position: relative;
           overflow: hidden;
+          background: #05050a;
         }
 
-        .terminal-body {
+        .terminal-container :global(.ghostty-terminal) {
+          width: 100%;
           height: 100%;
-          overflow-y: auto;
-          padding: 20px;
-          font-family: var(--font-mono);
-          font-size: 13px;
-          line-height: 1.7;
-          color: var(--color-cyan);
-          white-space: pre-wrap;
-          word-break: break-word;
-          position: relative;
-          z-index: 1;
-        }
-
-        /* Terminal text glow */
-        .terminal-body {
-          text-shadow:
-            0 0 1px var(--color-cyan),
-            0 0 3px rgba(56, 189, 248, 0.3);
-        }
-
-        .terminal-body::-webkit-scrollbar {
-          width: 6px;
-        }
-
-        .terminal-body::-webkit-scrollbar-track {
-          background: rgba(0, 0, 0, 0.2);
-        }
-
-        .terminal-body::-webkit-scrollbar-thumb {
-          background: rgba(56, 189, 248, 0.2);
-          border-radius: 3px;
-        }
-
-        .terminal-body::-webkit-scrollbar-thumb:hover {
-          background: rgba(56, 189, 248, 0.35);
-        }
-
-        .terminal-empty {
-          color: var(--color-text-ghost);
-          font-style: italic;
-          text-shadow: none;
-          opacity: 0.6;
-        }
-
-        /* Cursor blink */
-        .terminal-cursor {
-          display: inline-block;
-          width: 8px;
-          height: 16px;
-          background: var(--color-cyan);
-          margin-left: 4px;
-          animation: cursor-blink 1s step-end infinite;
-          box-shadow: 0 0 8px var(--color-cyan);
-        }
-
-        @keyframes cursor-blink {
-          0%, 50% { opacity: 1; }
-          51%, 100% { opacity: 0; }
+          padding: 16px;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
-           INPUT FOOTER
+           OVERLAY STATES
            ═══════════════════════════════════════════════════════════════════ */
 
-        .terminal-footer {
+        .terminal-overlay {
+          position: absolute;
+          inset: 0;
           display: flex;
+          flex-direction: column;
           align-items: center;
-          gap: 10px;
-          padding: 14px 18px;
-          background: linear-gradient(
-            180deg,
-            rgba(5, 5, 8, 0.85) 0%,
-            rgba(8, 8, 12, 0.9) 100%
-          );
-          border-top: 1px solid rgba(56, 189, 248, 0.15);
+          justify-content: center;
+          background: rgba(5, 5, 10, 0.9);
+          backdrop-filter: blur(8px);
+          z-index: 5;
+          gap: 16px;
         }
 
-        .terminal-prompt {
-          font-family: var(--font-mono);
-          font-size: 13px;
-          color: var(--color-cyan);
-          text-shadow: 0 0 4px var(--color-cyan);
-        }
-
-        .terminal-input {
-          flex: 1;
-          padding: 10px 14px;
-          border-radius: 8px;
-          border: 1px solid rgba(56, 189, 248, 0.15);
-          background: rgba(0, 0, 0, 0.4);
-          color: var(--color-cyan);
-          font-family: var(--font-mono);
-          font-size: 13px;
-          outline: none;
-          transition: all 0.2s ease;
-          text-shadow: 0 0 2px var(--color-cyan);
-        }
-
-        .terminal-input:focus {
-          border-color: rgba(56, 189, 248, 0.4);
-          box-shadow: 0 0 16px rgba(56, 189, 248, 0.1);
-        }
-
-        .terminal-input::placeholder {
+        .overlay-icon {
+          font-size: 48px;
           color: var(--color-text-ghost);
-          text-shadow: none;
         }
 
-        .terminal-send {
-          padding: 10px 18px;
+        .overlay-message {
+          font-family: var(--font-mono);
+          font-size: 14px;
+          color: var(--color-text-dim);
+          text-align: center;
+          max-width: 300px;
+        }
+
+        .overlay-btn {
+          margin-top: 8px;
+          padding: 10px 20px;
           border-radius: 8px;
-          border: 1px solid rgba(56, 189, 248, 0.25);
+          border: 1px solid var(--color-cyan-dim);
           background: rgba(56, 189, 248, 0.1);
           color: var(--color-cyan);
           font-family: var(--font-mono);
           font-size: 12px;
-          font-weight: 500;
-          letter-spacing: 0.05em;
           cursor: pointer;
           transition: all 0.2s ease;
-          text-shadow: 0 0 4px var(--color-cyan);
         }
 
-        .terminal-send:hover:not(:disabled) {
-          background: rgba(56, 189, 248, 0.18);
+        .overlay-btn:hover {
+          background: rgba(56, 189, 248, 0.2);
           box-shadow: 0 0 16px rgba(56, 189, 248, 0.2);
-        }
-
-        .terminal-send:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-          text-shadow: none;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
@@ -416,16 +410,8 @@ export function TerminalStage({ stage }: TerminalStageProps) {
             max-width: 200px;
             font-size: 13px;
           }
-
-          .terminal-body {
-            padding: 16px;
-            font-size: 12px;
-          }
         }
       `}</style>
-
-      {/* CRT Scanline Overlay */}
-      <div className="crt-overlay" />
 
       {/* HUD Header */}
       <div className="terminal-hud-header">
@@ -437,9 +423,13 @@ export function TerminalStage({ stage }: TerminalStageProps) {
           </div>
         </div>
         <div className="hud-right">
-          <div className="hud-status">
-            <span className={`status-indicator ${statusConfig.pulse ? 'pulse' : ''}`} />
-            {statusConfig.label}
+          <div className="hud-status terminal-status">
+            <span className={`status-indicator ${terminalStatus === 'connecting' ? 'pulse' : ''}`} />
+            {terminalStatusConfig.label}
+          </div>
+          <div className="hud-status session-status">
+            <span className={`status-indicator ${sessionStatusConfig.pulse ? 'pulse' : ''}`} />
+            {sessionStatusConfig.label}
           </div>
           <button className="hud-btn" onClick={handleMinimize}>
             MINIMIZE
@@ -447,38 +437,48 @@ export function TerminalStage({ stage }: TerminalStageProps) {
         </div>
       </div>
 
-      {/* Terminal Body with CRT effect */}
-      <div className="terminal-body-wrapper">
-        <div className="terminal-body" ref={scrollRef}>
-          {terminalContent || (
-            <span className="terminal-empty">Awaiting output stream...</span>
-          )}
-          {status === 'running' && <span className="terminal-cursor" />}
-        </div>
-      </div>
+      {/* Terminal Container */}
+      <div className="terminal-container" ref={containerRef}>
+        {/* Connecting overlay */}
+        {terminalStatus === 'connecting' && (
+          <div className="terminal-overlay">
+            <div className="overlay-icon">◎</div>
+            <div className="overlay-message">Connecting to session...</div>
+          </div>
+        )}
 
-      {/* Input Footer - only when waiting for input */}
-      {status === 'waiting_for_input' && (
-        <div className="terminal-footer">
-          <span className="terminal-prompt">&gt;</span>
-          <input
-            type="text"
-            className="terminal-input"
-            placeholder="Enter response..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSendInput()}
-            autoFocus
-          />
-          <button
-            className="terminal-send"
-            onClick={handleSendInput}
-            disabled={!input.trim()}
-          >
-            SEND
-          </button>
-        </div>
-      )}
+        {/* Error overlay */}
+        {terminalStatus === 'error' && (
+          <div className="terminal-overlay">
+            <div className="overlay-icon">⚠</div>
+            <div className="overlay-message">{errorMessage || 'Connection error'}</div>
+            <button className="overlay-btn" onClick={handleReconnect}>
+              RECONNECT
+            </button>
+          </div>
+        )}
+
+        {/* Disconnected overlay */}
+        {terminalStatus === 'disconnected' && exitCode === null && (
+          <div className="terminal-overlay">
+            <div className="overlay-icon">◇</div>
+            <div className="overlay-message">Disconnected from session</div>
+            <button className="overlay-btn" onClick={handleReconnect}>
+              RECONNECT
+            </button>
+          </div>
+        )}
+
+        {/* Session ended overlay */}
+        {exitCode !== null && (
+          <div className="terminal-overlay">
+            <div className="overlay-icon">{exitCode === 0 ? '✓' : '✗'}</div>
+            <div className="overlay-message">
+              Session ended{exitCode !== 0 ? ` (exit code: ${exitCode})` : ''}
+            </div>
+          </div>
+        )}
+      </div>
     </motion.div>
   );
 }

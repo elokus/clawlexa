@@ -24,6 +24,7 @@ interface StageStore {
   backgroundStage: (id: string) => void;
   restoreStage: (id: string) => void;
   setActiveOverlay: (overlay: OverlayType) => void;
+  openSessionTerminal: (sessionId: string, goal?: string) => void;
   reset: () => void;
 }
 
@@ -161,6 +162,40 @@ export const useStageStore = create<StageStore>((set, get) => ({
   // Set active overlay modal
   setActiveOverlay: (overlay) => {
     set({ activeOverlay: overlay });
+  },
+
+  // Open a terminal stage for a session
+  openSessionTerminal: (sessionId, goal) => {
+    const { activeStage, threadRail, backgroundTasks, pushStage } = get();
+
+    // Check if session is already open anywhere
+    const allStages = [activeStage, ...threadRail, ...backgroundTasks];
+    const existingStage = allStages.find(
+      (s) => s.type === 'terminal' && s.data?.sessionId === sessionId
+    );
+
+    if (existingStage) {
+      // If in background, restore it
+      if (backgroundTasks.some((s) => s.id === existingStage.id)) {
+        get().restoreStage(existingStage.id);
+        return;
+      }
+      // If already active, do nothing
+      if (activeStage.id === existingStage.id) {
+        return;
+      }
+      // If in thread rail, it'll become active when we pop to it
+      // For now, just push a new stage (could optimize to jump to it)
+    }
+
+    // Push new terminal stage
+    pushStage({
+      id: `terminal-${sessionId}`,
+      type: 'terminal',
+      title: goal || `Session ${sessionId.slice(0, 8)}`,
+      data: { sessionId },
+      status: 'active',
+    });
   },
 
   // Reset to initial state

@@ -24,27 +24,28 @@ function ThreadCard({
   isFirst: boolean;
   onClick: () => void;
 }) {
-  // 3D depth calculations
-  const depthZ = -40 * index;
-  const depthY = 8 * index;
-  const depthOpacity = 1 - index * 0.18;
-  const depthScale = 1 - index * 0.04;
+  // 3D depth calculations - capped to prevent extreme transforms
+  const cappedIndex = Math.min(index, 5); // Cap depth effects at 5 items
+  const depthZ = -30 * cappedIndex; // Reduced from -40
+  const depthY = 6 * cappedIndex; // Reduced from 8
+  const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12); // Min 30% opacity
+  const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025); // Min 85% scale
 
   return (
     <motion.button
       className={`thread-card ${isFirst ? 'is-active' : ''}`}
       data-type={stage.type}
       onClick={onClick}
-      initial={{ opacity: 0, x: 30, rotateY: -15 }}
+      initial={{ opacity: 0, x: 20, rotateY: -5 }}
       animate={{
         opacity: depthOpacity,
         x: 0,
-        rotateY: -8,
+        rotateY: -3, // Reduced from -8 for subtler 3D effect
         translateZ: depthZ,
         translateY: depthY,
         scale: depthScale,
       }}
-      exit={{ opacity: 0, x: 30, rotateY: -15, scale: 0.9 }}
+      exit={{ opacity: 0, x: 20, rotateY: -5, scale: 0.95 }}
       transition={{
         duration: 0.35,
         delay: index * 0.05,
@@ -55,8 +56,8 @@ function ThreadCard({
         transformOrigin: 'right center',
       }}
       whileHover={{
-        x: -8,
-        rotateY: -4,
+        x: -6,
+        rotateY: -1,
         transition: { duration: 0.2 },
       }}
     >
@@ -123,7 +124,7 @@ export function ThreadRail() {
   };
 
   return (
-    <div className="thread-rail stage-perspective">
+    <div className="thread-rail">
       <style>{`
         .thread-rail {
           display: flex;
