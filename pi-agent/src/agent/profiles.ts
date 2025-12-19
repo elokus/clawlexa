@@ -10,7 +10,7 @@
  */
 
 import { RealtimeAgent } from '@openai/agents/realtime';
-import { type ToolName, getToolsByNames } from '../tools/index.js';
+import { type ToolName, getToolsForSession } from '../tools/index.js';
 
 export interface AgentProfile {
   /** Display name of the assistant */
@@ -335,18 +335,23 @@ Sage nur "Ich starte eine Coding-Session." und rufe dann das Tool auf. Nichts we
   greetingTrigger: "[Conversation started - user just said the wake word 'Computer']",
 };
 
-// Profile registry by wake word
+// Profile registry by wake word and name
 export const profiles: Record<string, AgentProfile> = {
+  // Jarvis - by wake word and name (case-insensitive)
   hey_jarvis: JARVIS_PROFILE,
   jarvis: JARVIS_PROFILE,
+  // Marvin - by wake word and name (case-insensitive)
   computer: MARVIN_PROFILE,
+  marvin: MARVIN_PROFILE,
 };
 
 /**
  * Create a RealtimeAgent from a profile.
+ * @param profile - The agent profile configuration
+ * @param sessionId - The voice session ID for parent-child tracking
  */
-export function createAgentFromProfile(profile: AgentProfile): RealtimeAgent {
-  const tools = getToolsByNames(profile.tools);
+export function createAgentFromProfile(profile: AgentProfile, sessionId: string): RealtimeAgent {
+  const tools = getToolsForSession(profile.tools, sessionId);
 
   return new RealtimeAgent({
     name: profile.name,

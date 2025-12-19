@@ -70,6 +70,19 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_timers_status_fire ON timers(status, fire_at);
     `,
   },
+  {
+    version: 2,
+    name: 'add_session_hierarchy',
+    up: `
+      -- Add parent-child session tracking for Thread Rail visualization
+      ALTER TABLE cli_sessions ADD COLUMN parent_id TEXT;
+      ALTER TABLE cli_sessions ADD COLUMN thread_id TEXT;
+
+      -- Indexes for hierarchy queries
+      CREATE INDEX IF NOT EXISTS idx_cli_sessions_parent ON cli_sessions(parent_id);
+      CREATE INDEX IF NOT EXISTS idx_cli_sessions_thread ON cli_sessions(thread_id);
+    `,
+  },
 ];
 
 /**

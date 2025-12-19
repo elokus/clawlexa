@@ -21,8 +21,10 @@ import type {
   SubagentEventType,
   WelcomePayload,
   MasterChangedPayload,
+  SessionStartedPayload,
 } from '../types';
 import { useSessionsStore } from './sessions';
+import { useStageStore } from './stage';
 
 interface AgentStore {
   // Connection state
@@ -322,6 +324,16 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             updated_at: new Date().toISOString(),
           },
         ]);
+
+        // Push terminal stage to focus
+        useStageStore.getState().pushStage({
+          id: sessionData.id,
+          type: 'terminal',
+          title: sessionData.goal || 'CLI Session',
+          parentId: 'root',
+          data: { sessionId: sessionData.id },
+          status: 'active',
+        });
         break;
       }
 
@@ -335,6 +347,17 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             status: sessionUpdate.status as 'running' | 'finished' | 'error' | 'cancelled',
             updated_at: new Date().toISOString(),
           });
+        }
+
+        // Auto-pop terminal stage after delay when session finishes
+        if (sessionUpdate.status === 'finished' || sessionUpdate.status === 'error') {
+          const stageStore = useStageStore.getState();
+          // Only pop if this session is currently the active stage
+          if (stageStore.activeStage.id === sessionUpdate.id) {
+            setTimeout(() => {
+              useStageStore.getState().popStage();
+            }, 2000); // 2 second delay to let user see final state
+          }
         }
         break;
       }

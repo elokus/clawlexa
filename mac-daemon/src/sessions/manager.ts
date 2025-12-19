@@ -148,6 +148,19 @@ export class SessionManager {
   }
 
   /**
+   * Read terminal context with ANSI codes preserved.
+   * Used for UI restoration when switching between terminal views.
+   */
+  async readContext(sessionId: string, lines: number = 100): Promise<string[]> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    return tmuxManager.captureContext(sessionId, lines);
+  }
+
+  /**
    * Terminate a session
    */
   async terminateSession(sessionId: string): Promise<void> {

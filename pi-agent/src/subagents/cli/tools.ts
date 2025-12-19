@@ -17,6 +17,7 @@ import {
 import * as macClient from '../../tools/mac-client.js';
 import { waitForSessionCompletion } from '../../api/webhooks.js';
 import { wsBroadcast } from '../../api/websocket.js';
+import { getCurrentParentId } from './index.js';
 
 /**
  * Check if the Mac daemon is available.
@@ -40,15 +41,19 @@ export const startHeadlessSessionTool = tool({
     const eventsRepo = new CliEventsRepository();
 
     const sessionId = generateId();
+    const parentId = getCurrentParentId();
     const command = `cd ${project_path} && claude -p "${prompt.replace(/"/g, '\\"')}"`;
 
     console.log(`[CliAgent] Starting headless session: ${sessionId}`);
+    console.log(`[CliAgent] Parent session: ${parentId ?? 'none'}`);
     console.log(`[CliAgent] Command: ${command}`);
 
-    // Create DB entry
+    // Create DB entry with parent tracking
     sessionsRepo.create({
       id: sessionId,
       goal: `Headless: ${prompt.substring(0, 100)}...`,
+      parent_id: parentId,
+      thread_id: parentId, // Use parent as thread root
     });
     sessionsRepo.updateStatus(sessionId, 'running');
 
@@ -58,13 +63,14 @@ export const startHeadlessSessionTool = tool({
       payload: { command, project_path, prompt },
     });
 
-    // Broadcast session start
+    // Broadcast session start with parent tracking
     wsBroadcast.cliSessionCreated({
       id: sessionId,
       goal: prompt.substring(0, 100),
       mode: 'headless',
       projectPath: project_path,
       command,
+      parentId,
     });
 
     try {
@@ -132,6 +138,7 @@ export const startInteractiveSessionTool = tool({
     const eventsRepo = new CliEventsRepository();
 
     const sessionId = generateId();
+    const parentId = getCurrentParentId();
 
     // Escape the prompt for shell
     const escapedPrompt = initial_prompt
@@ -143,13 +150,16 @@ export const startInteractiveSessionTool = tool({
     const command = `cd ${project_path} && claude --dangerously-skip-permissions "${escapedPrompt}"`;
 
     console.log(`[CliAgent] Starting interactive session: ${sessionId}`);
+    console.log(`[CliAgent] Parent session: ${parentId ?? 'none'}`);
     console.log(`[CliAgent] Command: ${command}`);
     console.log(`[CliAgent] Initial prompt: ${initial_prompt}`);
 
-    // Create DB entry
+    // Create DB entry with parent tracking
     sessionsRepo.create({
       id: sessionId,
       goal: initial_prompt.substring(0, 200),
+      parent_id: parentId,
+      thread_id: parentId, // Use parent as thread root
     });
     sessionsRepo.updateStatus(sessionId, 'running');
 
@@ -159,13 +169,14 @@ export const startInteractiveSessionTool = tool({
       payload: { command, project_path, initial_prompt },
     });
 
-    // Broadcast session start
+    // Broadcast session start with parent tracking
     wsBroadcast.cliSessionCreated({
       id: sessionId,
       goal: initial_prompt.substring(0, 100),
       mode: 'interactive',
       projectPath: project_path,
       command,
+      parentId,
     });
 
     try {

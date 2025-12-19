@@ -8,7 +8,7 @@ export { controlLightTool } from './govee.js';
 export { reasoningTool } from './reasoning.js';
 export { setTimerTool, listTimersTool, cancelTimerTool } from './timer.js';
 export {
-  developerSessionTool,
+  createDeveloperSessionTool,
   checkSessionTool,
   sendFeedbackTool,
   stopSessionTool,
@@ -22,14 +22,15 @@ import { controlLightTool } from './govee.js';
 import { reasoningTool } from './reasoning.js';
 import { setTimerTool, listTimersTool, cancelTimerTool } from './timer.js';
 import {
-  developerSessionTool,
+  createDeveloperSessionTool,
   checkSessionTool,
   sendFeedbackTool,
   stopSessionTool,
   viewPastSessionsTool,
 } from './developer-session.js';
 
-export const toolsByName = {
+// Static tools that don't need session context
+const staticToolsByName = {
   web_search: webSearchTool,
   add_todo: addTodoTool,
   view_todos: viewTodosTool,
@@ -39,16 +40,31 @@ export const toolsByName = {
   set_timer: setTimerTool,
   list_timers: listTimersTool,
   cancel_timer: cancelTimerTool,
-  // Developer/CLI session tools
-  developer_session: developerSessionTool,
+  // Session management tools (these don't need the voice session ID)
   check_coding_session: checkSessionTool,
   send_session_feedback: sendFeedbackTool,
   stop_coding_session: stopSessionTool,
   view_past_sessions: viewPastSessionsTool,
 } as const;
 
-export type ToolName = keyof typeof toolsByName;
+// Type includes both static tools and factory-created tools
+export type ToolName = keyof typeof staticToolsByName | 'developer_session';
 
-export function getToolsByNames(names: ToolName[]) {
-  return names.map((name) => toolsByName[name]);
+/**
+ * Get tools for a session, instantiating factory tools with the session ID.
+ * This allows tools like developer_session to access the voice session ID
+ * without polluting the conversation context.
+ */
+export function getToolsForSession(names: ToolName[], sessionId: string) {
+  return names.map((name) => {
+    // Factory tool: developer_session needs sessionId injected
+    if (name === 'developer_session') {
+      return createDeveloperSessionTool(sessionId);
+    }
+    // Static tools
+    if (name in staticToolsByName) {
+      return staticToolsByName[name as keyof typeof staticToolsByName];
+    }
+    throw new Error(`Unknown tool: ${name}`);
+  });
 }

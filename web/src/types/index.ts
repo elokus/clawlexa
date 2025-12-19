@@ -98,6 +98,11 @@ export interface StateChangePayload {
   profile: string | null;
 }
 
+export interface SessionStartedPayload {
+  sessionId?: string;
+  profile?: string;
+}
+
 export interface TranscriptPayload {
   id?: string;
   text: string;
@@ -192,3 +197,6 @@ export interface ErrorBlock extends BaseBlock {
 }
 
 export type ActivityBlock = ReasoningBlock | ToolBlock | ContentBlock | ErrorBlock;
+
+// Re-export stage types
+export * from './stage';

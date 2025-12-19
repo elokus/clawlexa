@@ -28,6 +28,18 @@ export { isMacDaemonAvailable };
 // OpenRouter provider for grok-code-fast-1
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
 
+// Module-level context for parent session tracking
+// Set before running the agent, accessed by tools during execution
+let currentParentId: string | undefined;
+
+/**
+ * Get the current parent session ID for child session tracking.
+ * Called by CLI tools when creating new sessions.
+ */
+export function getCurrentParentId(): string | undefined {
+  return currentParentId;
+}
+
 /**
  * Handle a developer request by delegating to the CLI orchestration agent.
  *
@@ -36,15 +48,21 @@ const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
  *
  * @param request - The user's coding request
  * @param history - Conversation history from the realtime session
+ * @param parentId - Voice session ID for parent-child tracking
  */
 export async function handleDeveloperRequest(
   request: string,
-  history: RealtimeItem[]
+  history: RealtimeItem[],
+  parentId?: string
 ): Promise<string> {
+  // Set parent ID for tools to access during this request
+  currentParentId = parentId;
+
   console.log('\n========================================');
   console.log('[CliAgent] Handling developer request');
   console.log(`[CliAgent] Request: ${request}`);
   console.log(`[CliAgent] History items: ${history.length}`);
+  console.log(`[CliAgent] Parent session ID: ${parentId ?? 'none'}`);
 
   if (!OPENROUTER_API_KEY) {
     return 'Fehler: OPEN_ROUTER_API_KEY environment variable is not set';
@@ -128,5 +146,8 @@ Analyze this request and take appropriate action. Remember:
     console.error('[CliAgent] Error:', errorMsg);
     wsBroadcast.error(`CLI Agent error: ${errorMsg}`);
     return `Es gab einen Fehler bei der Verarbeitung: ${errorMsg}`;
+  } finally {
+    // Clear parent ID to avoid leaking to subsequent requests
+    currentParentId = undefined;
   }
 }

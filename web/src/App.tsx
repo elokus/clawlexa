@@ -1,25 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// VΞRTΞX Voice Interface - Conversation-First Layout
-// Full-height conversation panel + compact bottom controls
+// VΞRTΞX Voice Interface - Morphic Stage Layout
+// 3-column stage-based interface with shared element transitions
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgentStore } from './stores/agent';
 import { useAudioSession } from './hooks/useAudioSession';
-import { ConversationStream } from './components/ConversationStream';
-import { CommandPanel } from './components/CommandPanel';
+import { StageOrchestrator } from './components/layout/StageOrchestrator';
 import { ControlBar } from './components/ControlBar';
-
-type MobileView = 'conversation' | 'command';
 
 export function App() {
   const { reconnect } = useWebSocket();
-  const { connected, state, profile, messages, events, currentTool, loadMockConversation, clearMessages, clearEvents } = useAgentStore();
+  const { connected, state, profile, loadMockConversation } = useAgentStore();
   const audioSession = useAudioSession();
-  const [activeTab, setActiveTab] = useState<'sessions' | 'agent' | 'tools' | 'events'>('events');
-  const [mobileView, setMobileView] = useState<MobileView>('conversation');
-  const [showCommandSheet, setShowCommandSheet] = useState(false);
 
   const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true';
 
@@ -28,34 +22,6 @@ export function App() {
       loadMockConversation();
     }
   }, [isDemoMode, loadMockConversation]);
-
-  // Handle swipe gestures for mobile navigation
-  const [touchStart, setTouchStart] = useState<number | null>(null);
-  const [touchEnd, setTouchEnd] = useState<number | null>(null);
-  const minSwipeDistance = 50;
-
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    setTouchEnd(null);
-    setTouchStart(e.targetTouches[0].clientX);
-  }, []);
-
-  const onTouchMove = useCallback((e: React.TouchEvent) => {
-    setTouchEnd(e.targetTouches[0].clientX);
-  }, []);
-
-  const onTouchEnd = useCallback(() => {
-    if (!touchStart || !touchEnd) return;
-    const distance = touchStart - touchEnd;
-    const isLeftSwipe = distance > minSwipeDistance;
-    const isRightSwipe = distance < -minSwipeDistance;
-
-    if (isLeftSwipe && mobileView === 'conversation') {
-      setShowCommandSheet(true);
-    }
-    if (isRightSwipe && showCommandSheet) {
-      setShowCommandSheet(false);
-    }
-  }, [touchStart, touchEnd, mobileView, showCommandSheet]);
 
   const stateConfig = {
     idle: { color: 'rgba(110, 110, 136, 0.8)', glow: 'transparent' },
@@ -67,15 +33,10 @@ export function App() {
   const currentState = stateConfig[state] || stateConfig.idle;
 
   return (
-    <div
-      className="vertex-app"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-    >
+    <div className="vertex-app">
       <style>{`
         /* ═══════════════════════════════════════════════════════════════════
-           CONVERSATION-FIRST LAYOUT
+           MORPHIC STAGE LAYOUT
            ═══════════════════════════════════════════════════════════════════ */
         .vertex-app {
           display: flex;
@@ -182,211 +143,33 @@ export function App() {
         }
 
         /* ═══════════════════════════════════════════════════════════════════
-           MAIN CONTENT - Desktop: side-by-side, Mobile: stack
+           MAIN CONTENT - Stage Orchestrator
            ═══════════════════════════════════════════════════════════════════ */
         .main-content {
           flex: 1;
           display: flex;
-          overflow: hidden;
-          position: relative;
-          min-height: 0;
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           LEFT PANEL - Full-height conversation
-           ═══════════════════════════════════════════════════════════════════ */
-        .conversation-panel {
-          flex: 1;
-          display: flex;
           flex-direction: column;
-          min-width: 0;
+          overflow: hidden;
+          position: relative;
           min-height: 0;
-          background: rgba(5, 5, 10, 0.4);
         }
 
-        @media (max-width: 768px) {
-          .conversation-panel {
-            display: ${mobileView === 'conversation' ? 'flex' : 'none'};
-          }
-        }
-
-        /* Conversation area - takes all available space */
-        .conversation-area {
+        .stage-wrapper {
           flex: 1;
           min-height: 0;
           overflow: hidden;
-          position: relative;
-        }
-
-        .conversation-scroll {
-          height: 100%;
-          overflow-y: auto;
-          padding: 16px 20px;
-          -webkit-overflow-scrolling: touch;
-        }
-
-        @media (min-width: 769px) {
-          .conversation-scroll {
-            padding: 20px 24px;
-          }
-        }
-
-        /* Clear button floating */
-        .clear-float-btn {
-          position: absolute;
-          top: 12px;
-          right: 16px;
-          z-index: 20;
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          padding: 6px 12px;
-          background: rgba(15, 15, 26, 0.9);
-          backdrop-filter: blur(10px);
-          border: 1px solid var(--color-border);
-          border-radius: 6px;
-          color: var(--color-text-dim);
-          font-family: var(--font-mono);
-          font-size: 9px;
-          letter-spacing: 0.05em;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          opacity: 0.7;
-        }
-
-        .clear-float-btn:hover {
-          opacity: 1;
-          border-color: var(--color-rose);
-          color: var(--color-rose);
-        }
-
-        .clear-float-btn svg {
-          width: 12px;
-          height: 12px;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
-           COMMAND PANEL - Right sidebar
+           BOTTOM CONTROL BAR
            ═══════════════════════════════════════════════════════════════════ */
-        .command-panel {
-          width: 340px;
+        .bottom-controls {
           flex-shrink: 0;
-          background: var(--color-deep);
-          border-left: 1px solid var(--color-border);
-          display: flex;
-          flex-direction: column;
-        }
-
-        @media (max-width: 768px) {
-          .command-panel {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            width: 100%;
-            height: 70vh;
-            transform: translateY(${showCommandSheet ? '0' : '100%'});
-            transition: transform 0.35s var(--ease-out);
-            border-top-left-radius: 20px;
-            border-top-right-radius: 20px;
-            border-left: none;
-            border-top: 1px solid var(--color-border);
-            box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5);
-            z-index: 200;
-          }
-        }
-
-        .sheet-handle {
-          display: none;
-          width: 36px;
-          height: 4px;
-          background: var(--color-text-ghost);
-          border-radius: 2px;
-          margin: 10px auto;
-          cursor: pointer;
-        }
-
-        @media (max-width: 768px) {
-          .sheet-handle {
-            display: block;
-          }
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           MOBILE BOTTOM NAV
-           ═══════════════════════════════════════════════════════════════════ */
-        .mobile-nav {
-          display: none;
-          position: fixed;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          background: rgba(10, 10, 18, 0.98);
+          background: rgba(10, 10, 18, 0.95);
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
           border-top: 1px solid var(--color-border);
           padding-bottom: env(safe-area-inset-bottom);
-          z-index: 150;
-        }
-
-        @media (max-width: 768px) {
-          .mobile-nav {
-            display: block;
-          }
-        }
-
-        .mobile-nav-inner {
-          display: flex;
-          justify-content: space-around;
-          align-items: center;
-          padding: 6px 12px;
-        }
-
-        .nav-btn {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 3px;
-          padding: 8px 16px;
-          background: transparent;
-          border: none;
-          color: var(--color-text-dim);
-          font-family: var(--font-mono);
-          font-size: 9px;
-          letter-spacing: 0.04em;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          position: relative;
-        }
-
-        .nav-btn svg {
-          width: 20px;
-          height: 20px;
-        }
-
-        .nav-btn.active {
-          color: var(--color-cyan);
-        }
-
-        .nav-btn.active svg {
-          filter: drop-shadow(0 0 6px var(--color-cyan));
-        }
-
-        .nav-badge {
-          position: absolute;
-          top: 2px;
-          right: 8px;
-          min-width: 16px;
-          height: 16px;
-          padding: 0 4px;
-          background: var(--color-cyan);
-          border-radius: 8px;
-          font-size: 9px;
-          font-weight: 600;
-          color: var(--color-void);
-          display: flex;
-          align-items: center;
-          justify-content: center;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
@@ -505,62 +288,14 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content - Stage Orchestrator */}
       <div className="main-content">
-        {/* Left: Conversation Panel */}
-        <div className="conversation-panel">
-          {/* Conversation area */}
-          <div className="conversation-area">
-            {messages.length > 0 && (
-              <button
-                className="clear-float-btn"
-                onClick={clearMessages}
-                type="button"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                </svg>
-                CLEAR
-              </button>
-            )}
-            <div className="conversation-scroll">
-              <ConversationStream messages={messages} currentTool={currentTool} />
-            </div>
-          </div>
-
-          {/* Bottom Control Bar - Desktop only (mobile uses nav) */}
-          <div className="desktop-only">
-            <ControlBar
-              activeProfile={audioSession.activeProfile}
-              onProfileChange={audioSession.setActiveProfile}
-              isRecording={audioSession.isRecording}
-              onToggleRecording={audioSession.toggleSession}
-              isInitializing={audioSession.isInitializing}
-              error={audioSession.error}
-              disabled={!connected || isDemoMode}
-              isMaster={audioSession.isMaster}
-              onRequestMaster={audioSession.requestMaster}
-              agentState={state}
-            />
-          </div>
+        <div className="stage-wrapper">
+          <StageOrchestrator />
         </div>
 
-        {/* Right: Command Panel */}
-        <aside className="command-panel">
-          <div className="sheet-handle" onClick={() => setShowCommandSheet(false)} />
-          <CommandPanel
-            events={events}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            onClearEvents={clearEvents}
-          />
-        </aside>
-      </div>
-
-      {/* Mobile Bottom Navigation with integrated controls */}
-      <nav className="mobile-nav">
-        <div className="mobile-nav-inner">
-          {/* Control Bar for mobile */}
+        {/* Bottom Control Bar */}
+        <div className="bottom-controls">
           <ControlBar
             activeProfile={audioSession.activeProfile}
             onProfileChange={audioSession.setActiveProfile}
@@ -574,24 +309,7 @@ export function App() {
             agentState={state}
           />
         </div>
-        <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: '8px' }}>
-          <button
-            className={`nav-btn ${showCommandSheet ? 'active' : ''}`}
-            onClick={() => setShowCommandSheet(!showCommandSheet)}
-            type="button"
-            style={{ position: 'relative' }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <path d="M9 9h6M9 15h6"/>
-            </svg>
-            EVENTS
-            {events.length > 0 && (
-              <span className="nav-badge">{events.length > 99 ? '99+' : events.length}</span>
-            )}
-          </button>
-        </div>
-      </nav>
+      </div>
 
       {/* Disconnect Overlay */}
       {!connected && (

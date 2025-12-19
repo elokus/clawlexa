@@ -9,6 +9,7 @@
  * - Audio I/O via pluggable transport layer
  */
 
+import { randomUUID } from 'crypto';
 import { VoiceSession, type AgentState } from '../realtime/session.js';
 import {
   profiles,
@@ -131,11 +132,17 @@ export class VoiceAgent {
     }
 
     this.currentProfile = profile;
-    console.log(`[Agent] Activating profile: ${profile.name}`);
+
+    // Generate session ID at the orchestrator level
+    // This ID is propagated to:
+    // 1. createAgentFromProfile - for factory tools (e.g., developer_session)
+    // 2. VoiceSession - for lifecycle tracking and logging
+    const sessionId = randomUUID();
+    console.log(`[Agent] Activating profile: ${profile.name} (Session: ${sessionId})`);
 
     // Create session FIRST so it can buffer audio during connection
-    const agent = createAgentFromProfile(profile);
-    this.session = new VoiceSession(agent, profile);
+    const agent = createAgentFromProfile(profile, sessionId);
+    this.session = new VoiceSession(agent, profile, sessionId);
 
     // Start transport AFTER session exists so audio can be buffered
     // This is critical for web mode where audio capture starts immediately

@@ -459,6 +459,7 @@ export const wsBroadcast = {
     mode: 'headless' | 'interactive';
     projectPath: string;
     command: string;
+    parentId?: string;
   }) => broadcast('cli_session_created', session),
 
   cliSessionOutput: (sessionId: string, output: string) =>

@@ -20,6 +20,8 @@ export interface CliSession {
   goal: string;
   status: SessionStatus;
   mac_session_id: string | null;
+  parent_id: string | null;
+  thread_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -27,6 +29,8 @@ export interface CliSession {
 export interface CreateSessionInput {
   goal: string;
   id?: string;
+  parent_id?: string;
+  thread_id?: string;
 }
 
 export class CliSessionsRepository {
@@ -45,10 +49,10 @@ export class CliSessionsRepository {
 
     this.db
       .prepare(
-        `INSERT INTO cli_sessions (id, goal, status, created_at, updated_at)
-         VALUES (?, ?, 'pending', ?, ?)`
+        `INSERT INTO cli_sessions (id, goal, status, parent_id, thread_id, created_at, updated_at)
+         VALUES (?, ?, 'pending', ?, ?, ?, ?)`
       )
-      .run(id, input.goal, now, now);
+      .run(id, input.goal, input.parent_id ?? null, input.thread_id ?? null, now, now);
 
     return this.findById(id)!;
   }
@@ -121,5 +125,37 @@ export class CliSessionsRepository {
          ORDER BY created_at DESC`
       )
       .all() as CliSession[];
+  }
+
+  /**
+   * Get a session with its direct children.
+   */
+  getWithChildren(id: string): { session: CliSession; children: CliSession[] } | null {
+    const session = this.findById(id);
+    if (!session) return null;
+
+    const children = this.db
+      .prepare('SELECT * FROM cli_sessions WHERE parent_id = ? ORDER BY created_at ASC')
+      .all(id) as CliSession[];
+
+    return { session, children };
+  }
+
+  /**
+   * Get all sessions belonging to a thread.
+   */
+  getByThread(threadId: string): CliSession[] {
+    return this.db
+      .prepare('SELECT * FROM cli_sessions WHERE thread_id = ? ORDER BY created_at ASC')
+      .all(threadId) as CliSession[];
+  }
+
+  /**
+   * Get direct children of a session.
+   */
+  getChildren(parentId: string): CliSession[] {
+    return this.db
+      .prepare('SELECT * FROM cli_sessions WHERE parent_id = ? ORDER BY created_at ASC')
+      .all(parentId) as CliSession[];
   }
 }
