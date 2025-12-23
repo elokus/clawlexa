@@ -74,6 +74,8 @@ export type WSMessageType =
   | 'cli_session_output'
   // Unified subagent activity stream
   | 'subagent_activity'
+  // Session tree updates (v2 architecture)
+  | 'session_tree_update'
   // Multi-client master/replica coordination
   | 'welcome'
   | 'master_changed'

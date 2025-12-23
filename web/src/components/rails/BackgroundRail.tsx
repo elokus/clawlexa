@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useStageStore } from '../../stores/stage';
 import { useAgentStore } from '../../stores/agent';
 import { useSessionsStore } from '../../stores/sessions';
-import type { StageItem, OverlayType, CliSession, SessionStatus } from '../../types';
+import type { OverlayType, CliSession, SessionStatus } from '../../types';
 
 // Persistent action icons
 const DOCK_ACTIONS: { id: OverlayType; icon: string; label: string }[] = [
@@ -66,46 +66,6 @@ function DockButton({
         )}
       </AnimatePresence>
     </button>
-  );
-}
-
-function BackgroundTask({
-  stage,
-  onClick,
-}: {
-  stage: StageItem;
-  onClick: () => void;
-}) {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const isTerminal = stage.type === 'terminal';
-
-  return (
-    <motion.button
-      className={`dock-task ${isTerminal ? 'terminal' : 'chat'}`}
-      onClick={onClick}
-      onMouseEnter={() => setShowTooltip(true)}
-      onMouseLeave={() => setShowTooltip(false)}
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.8 }}
-      whileHover={{ scale: 1.05 }}
-      transition={{ duration: 0.2 }}
-    >
-      <span className="dock-task-icon">{isTerminal ? '▣' : '◎'}</span>
-      <AnimatePresence>
-        {showTooltip && (
-          <motion.div
-            className="dock-task-tooltip"
-            initial={{ opacity: 0, x: -4 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -4 }}
-            transition={{ duration: 0.15 }}
-          >
-            {stage.title}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.button>
   );
 }
 
@@ -200,11 +160,12 @@ function ThreadGroup({
 }
 
 export function BackgroundRail() {
-  const backgroundTasks = useStageStore((s) => s.backgroundTasks);
+  // Use new tree-based state
+  const backgroundTreeIds = useStageStore((s) => s.backgroundTreeIds);
   const activeOverlay = useStageStore((s) => s.activeOverlay);
   const setActiveOverlay = useStageStore((s) => s.setActiveOverlay);
-  const restoreStage = useStageStore((s) => s.restoreStage);
-  const openSessionTerminal = useStageStore((s) => s.openSessionTerminal);
+  const restoreTree = useStageStore((s) => s.restoreTree);
+  const focusSession = useStageStore((s) => s.focusSession);
   const events = useAgentStore((s) => s.events);
 
   const sessions = useSessionsStore((s) => s.sessions);
@@ -241,7 +202,8 @@ export function BackgroundRail() {
   };
 
   const handleSessionClick = (session: CliSession) => {
-    openSessionTerminal(session.id, session.goal);
+    // Focus the session in the tree if it exists
+    focusSession(session.id);
   };
 
   return (
@@ -658,26 +620,34 @@ export function BackgroundRail() {
         ))}
       </div>
 
-      {/* Divider if there are background tasks */}
-      {backgroundTasks.length > 0 && <div className="dock-divider" />}
+      {/* Divider if there are background trees */}
+      {backgroundTreeIds.length > 0 && <div className="dock-divider" />}
 
-      {/* Background Tasks (minimized stages) */}
-      {backgroundTasks.length > 0 && (
+      {/* Background Trees (minimized session trees) */}
+      {backgroundTreeIds.length > 0 && (
         <div className="dock-tasks">
           <AnimatePresence>
-            {backgroundTasks.map((task) => (
-              <BackgroundTask
-                key={task.id}
-                stage={task}
-                onClick={() => restoreStage(task.id)}
-              />
+            {backgroundTreeIds.map((treeId) => (
+              <motion.button
+                key={treeId}
+                className="dock-task terminal"
+                onClick={() => restoreTree(treeId)}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                whileHover={{ scale: 1.05 }}
+                transition={{ duration: 0.2 }}
+                title={`Restore tree ${treeId.slice(0, 8)}`}
+              >
+                <span className="dock-task-icon">◇</span>
+              </motion.button>
             ))}
           </AnimatePresence>
         </div>
       )}
 
       {/* Divider before sessions */}
-      {(backgroundTasks.length > 0 || sessions.length > 0) && <div className="dock-divider" />}
+      {(backgroundTreeIds.length > 0 || sessions.length > 0) && <div className="dock-divider" />}
 
       {/* Sessions Section */}
       <div className="sessions-section">

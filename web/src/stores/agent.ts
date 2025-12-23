@@ -22,6 +22,7 @@ import type {
   WelcomePayload,
   MasterChangedPayload,
   SessionStartedPayload,
+  SessionTreeUpdatePayload,
 } from '../types';
 import { useSessionsStore } from './sessions';
 import { useStageStore } from './stage';
@@ -267,6 +268,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
       case 'session_started': {
         set({ messages: [] });
+        // Mark voice session as active
+        useStageStore.getState().setVoiceActive(true);
         break;
       }
 
@@ -276,6 +279,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           profile: null,
           currentTool: null,
         });
+        // Mark voice session as inactive and clear tree if no running sessions
+        useStageStore.getState().setVoiceActive(false);
         break;
       }
 
@@ -302,6 +307,22 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         break;
       }
 
+      // Session tree update from backend (v2 architecture)
+      case 'session_tree_update': {
+        const { tree, trees } = payload as SessionTreeUpdatePayload;
+        const stageStore = useStageStore.getState();
+
+        if (tree) {
+          // Single tree update - set as active tree
+          stageStore.setSessionTree(tree);
+        } else if (trees && trees.length > 0) {
+          // Initial load - multiple trees, set first as active
+          stageStore.setSessionTree(trees[0]);
+          // TODO: Handle remaining trees as background if needed
+        }
+        break;
+      }
+
       // Unified subagent activity stream
       case 'subagent_activity': {
         const { agent, type: eventType, payload: eventPayload } = payload as SubagentActivityPayload;
@@ -323,16 +344,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
-
-        // Push terminal stage to focus
-        useStageStore.getState().pushStage({
-          id: sessionData.id,
-          type: 'terminal',
-          title: sessionData.goal || 'CLI Session',
-          parentId: 'root',
-          data: { sessionId: sessionData.id },
-          status: 'active',
-        });
+        // Stage navigation now handled by session_tree_update events
         break;
       }
 
@@ -347,17 +359,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             updated_at: new Date().toISOString(),
           });
         }
-
-        // Auto-pop terminal stage after delay when session finishes
-        if (sessionUpdate.status === 'finished' || sessionUpdate.status === 'error') {
-          const stageStore = useStageStore.getState();
-          // Only pop if this session is currently the active stage
-          if (stageStore.activeStage.id === sessionUpdate.id) {
-            setTimeout(() => {
-              useStageStore.getState().popStage();
-            }, 2000); // 2 second delay to let user see final state
-          }
-        }
+        // Stage navigation now handled by session_tree_update events
         break;
       }
     }
@@ -404,25 +406,8 @@ function handleSubagentActivity(
 
   switch (eventType) {
     case 'reasoning_start': {
-      // Check if we need to push a new subagent stage
-      const stageStore = useStageStore.getState();
-      const currentStage = stageStore.activeStage;
-      const isNewSubagent =
-        currentStage.type !== 'subagent' ||
-        currentStage.data?.agentName !== agent;
-
-      if (isNewSubagent) {
-        // Push new subagent stage to focus
-        stageStore.pushStage({
-          id: `subagent-${agent}-${Date.now()}`,
-          type: 'subagent',
-          title: agent,
-          data: { agentName: agent },
-          status: 'active',
-        });
-      }
-
-      // Create a new reasoning block
+      // Stage navigation now handled by session_tree_update events
+      // Just create a new reasoning block for the activity feed
       const block: ReasoningBlock = {
         id: generateId(),
         timestamp,
@@ -547,22 +532,8 @@ function handleSubagentActivity(
 
     case 'complete': {
       // Mark subagent as inactive
+      // Stage navigation now handled by session_tree_update events
       set({ subagentActive: false });
-
-      // Auto-pop subagent stage after delay (unless terminal is active)
-      const stageStore = useStageStore.getState();
-      const currentStage = stageStore.activeStage;
-      if (currentStage.type === 'subagent' && currentStage.data?.agentName === agent) {
-        // Don't auto-pop if a terminal stage was just pushed (it's now active)
-        // The terminal will handle its own lifecycle
-        setTimeout(() => {
-          const storeNow = useStageStore.getState();
-          // Only pop if still on the same subagent stage
-          if (storeNow.activeStage.type === 'subagent' && storeNow.activeStage.data?.agentName === agent) {
-            storeNow.popStage();
-          }
-        }, 2000);
-      }
       break;
     }
   }

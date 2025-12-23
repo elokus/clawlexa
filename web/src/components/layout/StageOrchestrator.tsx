@@ -1,9 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // Stage Orchestrator - Main 3-column layout for Morphic Stage interface
+//
+// NEW ARCHITECTURE (v2):
+// - Renders based on focused session from session tree
+// - When no session tree: shows ChatStage (voice conversation)
+// - When focused session: shows appropriate stage based on session type
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { AnimatePresence } from 'framer-motion';
-import { useStageStore } from '../../stores/stage';
+import { useFocusedSession } from '../../stores/stage';
 import { BackgroundRail } from '../rails/BackgroundRail';
 import { ThreadRail } from '../rails/ThreadRail';
 import { ChatStage } from '../stages/ChatStage';
@@ -12,7 +17,7 @@ import { SubagentStage } from '../stages/SubagentStage';
 import { GlassHUD } from '../overlays/GlassHUD';
 import { EventsOverlay } from '../overlays/EventsOverlay';
 import { ToolsOverlay } from '../overlays/ToolsOverlay';
-import type { StageItem } from '../../types';
+import type { SessionTreeNode, StageItem } from '../../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Asymmetric layout: Slim Left Dock (80px), Center Stage (1fr), Wide Right Rail (360px)
@@ -20,21 +25,68 @@ import type { StageItem } from '../../types';
 const DOCK_WIDTH = 80;
 const CONTEXT_RAIL_WIDTH = 360;
 
-function ActiveStage({ stage }: { stage: StageItem }) {
-  switch (stage.type) {
-    case 'chat':
-      return <ChatStage stage={stage} />;
+// Default root stage for when no session tree exists
+const ROOT_STAGE: StageItem = {
+  id: 'root',
+  type: 'chat',
+  title: 'Realtime Agent',
+  status: 'active',
+  createdAt: Date.now(),
+};
+
+/**
+ * Renders the appropriate stage based on focused session.
+ * - terminal sessions → TerminalStage
+ * - orchestrator sessions → SubagentStage (shows activity feed)
+ * - no session → ChatStage (voice conversation)
+ */
+function ActiveStage({ session }: { session: SessionTreeNode | null }) {
+  // No session tree - show voice conversation
+  if (!session) {
+    return <ChatStage stage={ROOT_STAGE} />;
+  }
+
+  // Render based on session type
+  switch (session.type) {
     case 'terminal':
-      return <TerminalStage stage={stage} />;
-    case 'subagent':
-      return <SubagentStage stage={stage} />;
+      // Terminal sessions get TerminalStage with session ID
+      return (
+        <TerminalStage
+          stage={{
+            id: session.id,
+            type: 'terminal',
+            title: session.goal,
+            status: 'active',
+            createdAt: new Date(session.created_at).getTime(),
+            data: { sessionId: session.id },
+          }}
+        />
+      );
+
+    case 'orchestrator':
+      // Orchestrator sessions get SubagentStage showing activity
+      return (
+        <SubagentStage
+          stage={{
+            id: session.id,
+            type: 'subagent',
+            title: session.agent_name || 'Agent',
+            status: 'active',
+            createdAt: new Date(session.created_at).getTime(),
+            data: { agentName: session.agent_name || undefined },
+          }}
+        />
+      );
+
     default:
-      return <ChatStage stage={stage} />;
+      // Fallback to chat
+      return <ChatStage stage={ROOT_STAGE} />;
   }
 }
 
 export function StageOrchestrator() {
-  const activeStage = useStageStore((s) => s.activeStage);
+  // Use the new tree-based focused session
+  const focusedSession = useFocusedSession();
 
   return (
     <div className="stage-orchestrator-wrapper stage-perspective">
@@ -159,7 +211,7 @@ export function StageOrchestrator() {
         <div className="orchestrator-stage">
           <div className="stage-container">
             <AnimatePresence mode="wait">
-              <ActiveStage key={activeStage.id} stage={activeStage} />
+              <ActiveStage key={focusedSession?.id ?? 'root'} session={focusedSession} />
             </AnimatePresence>
 
             {/* Glass HUD - shows when viewing terminal and agent is speaking */}

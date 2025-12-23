@@ -1,34 +1,160 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Stage Store - Zustand state management for Morphic Stage navigation
+// Stage Store v2 - Session Tree based navigation
 // ═══════════════════════════════════════════════════════════════════════════
+//
+// NEW ARCHITECTURE:
+// - sessionTree: Full tree from backend (orchestrator → terminals)
+// - focusedSessionId: Currently viewed session in the tree
+// - The frontend renders what the backend tells it - no local state management
+//
+// The ThreadRail renders the path from root to focused session.
+// The MainStage renders based on focused session type.
 
 import { create } from 'zustand';
-import type { StageItem, OverlayType } from '../types';
+import type { StageItem, OverlayType, SessionTreeNode } from '../types';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Store Interface
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface StageStore {
-  // Active focus stage (center)
+  // ─────────────────────────────────────────────────────────────────────────
+  // New Session Tree State
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Active session tree from backend */
+  sessionTree: SessionTreeNode | null;
+
+  /** Currently focused session ID within the tree */
+  focusedSessionId: string | null;
+
+  /** Background thread root IDs (minimized) */
+  backgroundTreeIds: string[];
+
+  /** Whether voice conversation is active (for ChatStage visibility) */
+  voiceActive: boolean;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Legacy State (kept for migration compatibility)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** @deprecated Use sessionTree instead */
   activeStage: StageItem;
-
-  // Thread rail items (right) - the "stack" of parent contexts
+  /** @deprecated Use sessionTree path instead */
   threadRail: StageItem[];
-
-  // Background tasks (left) - minimized/persistent items
+  /** @deprecated Use backgroundTreeIds instead */
   backgroundTasks: StageItem[];
 
-  // Active overlay modal
+  // Overlay state (still needed)
   activeOverlay: OverlayType;
 
-  // Actions
+  // ─────────────────────────────────────────────────────────────────────────
+  // New Actions
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Set session tree from backend event */
+  setSessionTree: (tree: SessionTreeNode) => void;
+
+  /** Focus a specific session in the tree */
+  focusSession: (sessionId: string) => void;
+
+  /** Minimize current tree to background */
+  minimizeTree: () => void;
+
+  /** Restore a tree from background */
+  restoreTree: (rootId: string) => void;
+
+  /** Set voice active state */
+  setVoiceActive: (active: boolean) => void;
+
+  /** Clear session tree (when all sessions end) */
+  clearSessionTree: () => void;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Legacy Actions (deprecated but functional for migration)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** @deprecated Backend controls stage now */
   pushStage: (item: Omit<StageItem, 'createdAt'>) => void;
+  /** @deprecated Backend controls stage now */
   popStage: () => void;
+  /** @deprecated Use minimizeTree instead */
   backgroundStage: (id: string) => void;
+  /** @deprecated Use restoreTree instead */
   restoreStage: (id: string) => void;
+
   setActiveOverlay: (overlay: OverlayType) => void;
   openSessionTerminal: (sessionId: string, goal?: string) => void;
   reset: () => void;
 }
 
-// Default root stage (Realtime Agent chat)
+// ═══════════════════════════════════════════════════════════════════════════
+// Helper Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Find the deepest running session in a tree (for auto-focus) */
+function findDeepestRunning(node: SessionTreeNode): SessionTreeNode | null {
+  // Check children first (depth-first)
+  for (const child of node.children) {
+    const found = findDeepestRunning(child);
+    if (found) return found;
+  }
+  // If this node is running, return it
+  if (['pending', 'running', 'waiting_for_input'].includes(node.status)) {
+    return node;
+  }
+  return null;
+}
+
+/** Find a session by ID in a tree */
+function findSessionById(
+  node: SessionTreeNode | null,
+  id: string | null
+): SessionTreeNode | null {
+  if (!node || !id) return null;
+  if (node.id === id) return node;
+  for (const child of node.children) {
+    const found = findSessionById(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Get path from root to a specific session (for ThreadRail) */
+export function getPathToSession(
+  tree: SessionTreeNode | null,
+  targetId: string | null
+): SessionTreeNode[] {
+  if (!tree || !targetId) return [];
+
+  const path: SessionTreeNode[] = [];
+
+  function traverse(node: SessionTreeNode): boolean {
+    path.push(node);
+    if (node.id === targetId) return true;
+    for (const child of node.children) {
+      if (traverse(child)) return true;
+    }
+    path.pop();
+    return false;
+  }
+
+  traverse(tree);
+  return path; // [root, child, grandchild, ...focused]
+}
+
+/** Check if a tree has any running sessions */
+function hasRunningSession(node: SessionTreeNode): boolean {
+  if (['pending', 'running', 'waiting_for_input'].includes(node.status)) {
+    return true;
+  }
+  return node.children.some(hasRunningSession);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Default State
+// ═══════════════════════════════════════════════════════════════════════════
+
 const ROOT_STAGE: StageItem = {
   id: 'root',
   type: 'chat',
@@ -37,170 +163,145 @@ const ROOT_STAGE: StageItem = {
   createdAt: Date.now(),
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Store Implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
 export const useStageStore = create<StageStore>((set, get) => ({
-  // Initial state
+  // New state
+  sessionTree: null,
+  focusedSessionId: null,
+  backgroundTreeIds: [],
+  voiceActive: false,
+
+  // Legacy state
   activeStage: ROOT_STAGE,
   threadRail: [],
   backgroundTasks: [],
   activeOverlay: null,
 
-  // Push a new stage to focus, moving current to thread rail
-  pushStage: (item) => {
-    const fullItem: StageItem = {
-      ...item,
-      createdAt: Date.now(),
-    };
+  // ─────────────────────────────────────────────────────────────────────────
+  // New Actions
+  // ─────────────────────────────────────────────────────────────────────────
 
-    set((state) => {
-      // Move current active stage to thread rail (mark as waiting)
-      const previousStage: StageItem = {
-        ...state.activeStage,
-        status: 'waiting',
-      };
+  setSessionTree: (tree) => {
+    const current = get();
 
-      return {
-        threadRail: [previousStage, ...state.threadRail],
-        activeStage: { ...fullItem, status: 'active' },
-      };
+    // Auto-focus deepest running session if not already focused
+    let focusedId = current.focusedSessionId;
+    if (!focusedId || !findSessionById(tree, focusedId)) {
+      const deepest = findDeepestRunning(tree);
+      focusedId = deepest?.id ?? tree.id;
+    }
+
+    set({
+      sessionTree: tree,
+      focusedSessionId: focusedId,
     });
   },
 
-  // Pop back to previous stage from thread rail
+  focusSession: (sessionId) => {
+    const { sessionTree } = get();
+    if (sessionTree && findSessionById(sessionTree, sessionId)) {
+      set({ focusedSessionId: sessionId });
+    }
+  },
+
+  minimizeTree: () => {
+    const { sessionTree, backgroundTreeIds } = get();
+    if (sessionTree) {
+      set({
+        backgroundTreeIds: [...backgroundTreeIds, sessionTree.id],
+        sessionTree: null,
+        focusedSessionId: null,
+      });
+    }
+  },
+
+  restoreTree: (rootId) => {
+    const { backgroundTreeIds } = get();
+    set({
+      backgroundTreeIds: backgroundTreeIds.filter((id) => id !== rootId),
+      // Tree will be populated by next session_tree_update from backend
+    });
+    // TODO: Request tree from backend via WebSocket
+  },
+
+  setVoiceActive: (active) => {
+    set({ voiceActive: active });
+  },
+
+  clearSessionTree: () => {
+    const { sessionTree, backgroundTreeIds } = get();
+    // Move to background if it has history value
+    if (sessionTree) {
+      set({
+        backgroundTreeIds: [...backgroundTreeIds, sessionTree.id],
+        sessionTree: null,
+        focusedSessionId: null,
+      });
+    }
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Legacy Actions (functional but deprecated)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  pushStage: (item) => {
+    console.warn('[StageStore] pushStage is deprecated - use session_tree_update');
+    const fullItem: StageItem = { ...item, createdAt: Date.now() };
+    set((state) => ({
+      threadRail: [{ ...state.activeStage, status: 'waiting' }, ...state.threadRail],
+      activeStage: { ...fullItem, status: 'active' },
+    }));
+  },
+
   popStage: () => {
+    console.warn('[StageStore] popStage is deprecated - use session_tree_update');
     set((state) => {
-      if (state.threadRail.length === 0) {
-        // Nothing to pop, stay on current stage
-        return state;
-      }
-
-      const [nextStage, ...remainingThread] = state.threadRail;
-
-      // Optionally move current stage to background if it's a terminal
-      // that finished (caller can background before pop if needed)
-      const currentStage = state.activeStage;
-
-      // Check if current stage should go to background
-      // (e.g., terminal sessions that aren't finished)
-      let newBackgroundTasks = state.backgroundTasks;
-      if (currentStage.type === 'terminal' && currentStage.status !== 'active') {
-        // Could optionally add to background, but for now we just discard
-        // since the session finished
-      }
-
+      if (state.threadRail.length === 0) return state;
+      const [nextStage, ...remaining] = state.threadRail;
       return {
         activeStage: { ...nextStage, status: 'active' },
-        threadRail: remainingThread,
-        backgroundTasks: newBackgroundTasks,
+        threadRail: remaining,
       };
     });
   },
 
-  // Move a stage to background
   backgroundStage: (id) => {
-    set((state) => {
-      // Find the stage in active or thread rail
-      let stageToBackground: StageItem | null = null;
-      let newActiveStage = state.activeStage;
-      let newThreadRail = state.threadRail;
-
-      if (state.activeStage.id === id) {
-        // Backgrounding active stage - need to pop from thread
-        stageToBackground = state.activeStage;
-
-        if (state.threadRail.length > 0) {
-          const [nextStage, ...remaining] = state.threadRail;
-          newActiveStage = { ...nextStage, status: 'active' };
-          newThreadRail = remaining;
-        } else {
-          // No thread to pop, reset to root
-          newActiveStage = ROOT_STAGE;
-        }
-      } else {
-        // Find in thread rail
-        const idx = state.threadRail.findIndex((s) => s.id === id);
-        if (idx !== -1) {
-          stageToBackground = state.threadRail[idx];
-          newThreadRail = state.threadRail.filter((_, i) => i !== idx);
-        }
-      }
-
-      if (!stageToBackground) {
-        return state;
-      }
-
-      return {
-        activeStage: newActiveStage,
-        threadRail: newThreadRail,
-        backgroundTasks: [
-          ...state.backgroundTasks,
-          { ...stageToBackground, status: 'background' },
-        ],
-      };
-    });
+    console.warn('[StageStore] backgroundStage is deprecated');
+    // Keep minimal implementation for compatibility
   },
 
-  // Restore a stage from background to active
   restoreStage: (id) => {
-    set((state) => {
-      const idx = state.backgroundTasks.findIndex((s) => s.id === id);
-      if (idx === -1) {
-        return state;
-      }
-
-      const stageToRestore = state.backgroundTasks[idx];
-      const newBackgroundTasks = state.backgroundTasks.filter((_, i) => i !== idx);
-
-      // Push current active to thread, restore from background
-      return {
-        threadRail: [{ ...state.activeStage, status: 'waiting' }, ...state.threadRail],
-        activeStage: { ...stageToRestore, status: 'active' },
-        backgroundTasks: newBackgroundTasks,
-      };
-    });
+    console.warn('[StageStore] restoreStage is deprecated');
+    // Keep minimal implementation for compatibility
   },
 
-  // Set active overlay modal
   setActiveOverlay: (overlay) => {
     set({ activeOverlay: overlay });
   },
 
-  // Open a terminal stage for a session
   openSessionTerminal: (sessionId, goal) => {
-    const { activeStage, threadRail, backgroundTasks, pushStage } = get();
-
-    // Check if session is already open anywhere
-    const allStages = [activeStage, ...threadRail, ...backgroundTasks];
-    const existingStage = allStages.find(
-      (s) => s.type === 'terminal' && s.data?.sessionId === sessionId
-    );
-
-    if (existingStage) {
-      // If in background, restore it
-      if (backgroundTasks.some((s) => s.id === existingStage.id)) {
-        get().restoreStage(existingStage.id);
+    // This is now handled by focusSession when terminal is in tree
+    const { sessionTree } = get();
+    if (sessionTree) {
+      const session = findSessionById(sessionTree, sessionId);
+      if (session) {
+        set({ focusedSessionId: sessionId });
         return;
       }
-      // If already active, do nothing
-      if (activeStage.id === existingStage.id) {
-        return;
-      }
-      // If in thread rail, it'll become active when we pop to it
-      // For now, just push a new stage (could optimize to jump to it)
     }
-
-    // Push new terminal stage
-    pushStage({
-      id: `terminal-${sessionId}`,
-      type: 'terminal',
-      title: goal || `Session ${sessionId.slice(0, 8)}`,
-      data: { sessionId },
-      status: 'active',
-    });
+    // Fallback to legacy behavior
+    console.warn('[StageStore] openSessionTerminal fallback - session not in tree');
   },
 
-  // Reset to initial state
   reset: () => {
     set({
+      sessionTree: null,
+      focusedSessionId: null,
+      backgroundTreeIds: [],
+      voiceActive: false,
       activeStage: ROOT_STAGE,
       threadRail: [],
       backgroundTasks: [],
@@ -209,18 +310,39 @@ export const useStageStore = create<StageStore>((set, get) => ({
   },
 }));
 
-// Helper to check if we're on root chat stage
+// ═══════════════════════════════════════════════════════════════════════════
+// Selectors
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Get the focused session from the tree */
+export function useFocusedSession(): SessionTreeNode | null {
+  const { sessionTree, focusedSessionId } = useStageStore();
+  return findSessionById(sessionTree, focusedSessionId);
+}
+
+/** Get the path to focused session for ThreadRail */
+export function useSessionPath(): SessionTreeNode[] {
+  const { sessionTree, focusedSessionId } = useStageStore();
+  return getPathToSession(sessionTree, focusedSessionId);
+}
+
+/** Check if there's an active session tree */
+export function useHasActiveTree(): boolean {
+  const { sessionTree } = useStageStore();
+  return sessionTree !== null && hasRunningSession(sessionTree);
+}
+
+// Legacy helpers
 export const isRootStage = (stage: StageItem): boolean => stage.id === 'root';
 
-// Helper to get stage by ID from any rail
 export const findStageById = (
   id: string,
   store: Pick<StageStore, 'activeStage' | 'threadRail' | 'backgroundTasks'>
 ): StageItem | null => {
   if (store.activeStage.id === id) return store.activeStage;
-  const inThread = store.threadRail.find((s) => s.id === id);
-  if (inThread) return inThread;
-  const inBackground = store.backgroundTasks.find((s) => s.id === id);
-  if (inBackground) return inBackground;
-  return null;
+  return (
+    store.threadRail.find((s) => s.id === id) ??
+    store.backgroundTasks.find((s) => s.id === id) ??
+    null
+  );
 };

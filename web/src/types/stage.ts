@@ -1,11 +1,59 @@
 /**
  * Stage Types for Morphic Stage Interface
  *
- * The stage system manages a stack-based navigation where:
- * - activeStage: The currently focused view (center)
- * - threadRail: Parent contexts pushed to the right rail
- * - backgroundTasks: Minimized/persistent tasks on the left rail
+ * NEW ARCHITECTURE (v2):
+ * - sessionTree: Full tree from backend (orchestrator → terminals)
+ * - focusedSessionId: Currently viewed session in the tree
+ * - backgroundTrees: Minimized thread trees
+ *
+ * The frontend no longer manages stage transitions - it just renders
+ * what the backend tells it via session_tree_update events.
  */
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session Tree Types (from backend)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type SessionType = 'orchestrator' | 'terminal';
+
+export type SessionStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_for_input'
+  | 'finished'
+  | 'error'
+  | 'cancelled';
+
+export type AgentName = 'cli' | 'web_search' | 'deep_thinking';
+
+/**
+ * Session tree node - matches backend SessionTreeNode
+ */
+export interface SessionTreeNode {
+  id: string;
+  type: SessionType;
+  status: SessionStatus;
+  goal: string;
+  agent_name: AgentName | null;
+  created_at: string;
+  children: SessionTreeNode[];
+}
+
+/**
+ * Payload for session_tree_update WebSocket event
+ */
+export interface SessionTreeUpdatePayload {
+  /** Root session ID being updated */
+  rootId?: string;
+  /** Updated tree structure (single tree update) */
+  tree?: SessionTreeNode;
+  /** All active trees (initial load) */
+  trees?: SessionTreeNode[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Legacy Stage Types (kept for compatibility during migration)
+// ═══════════════════════════════════════════════════════════════════════════
 
 export type StageType = 'chat' | 'terminal' | 'subagent';
 
@@ -39,7 +87,7 @@ export interface StageItem {
   createdAt: number;
 }
 
-/** Action types for stage reducer pattern (if needed) */
+/** @deprecated Use session_tree_update events instead */
 export type StageAction =
   | { type: 'PUSH'; item: StageItem }
   | { type: 'POP' }

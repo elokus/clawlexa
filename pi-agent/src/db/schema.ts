@@ -83,6 +83,31 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_cli_sessions_thread ON cli_sessions(thread_id);
     `,
   },
+  {
+    version: 3,
+    name: 'unified_sessions',
+    up: `
+      -- Unify session management: orchestrators and terminals in one table
+      -- Voice sessions are NOT persisted (fire-and-forget)
+
+      -- Add session type: 'orchestrator' (stateful LLM agents) or 'terminal' (Claude Code CLI)
+      ALTER TABLE cli_sessions ADD COLUMN type TEXT DEFAULT 'terminal';
+
+      -- Orchestrator-specific fields
+      ALTER TABLE cli_sessions ADD COLUMN agent_name TEXT;           -- 'cli', 'web_search', 'deep_thinking'
+      ALTER TABLE cli_sessions ADD COLUMN model TEXT;                -- LLM model used
+      ALTER TABLE cli_sessions ADD COLUMN conversation_history TEXT; -- JSON array for stateful agents
+
+      -- Add finished timestamp for cleanup queries
+      ALTER TABLE cli_sessions ADD COLUMN finished_at TEXT;
+
+      -- Index for type queries
+      CREATE INDEX IF NOT EXISTS idx_cli_sessions_type ON cli_sessions(type);
+
+      -- Update existing sessions to be terminals (they already are)
+      UPDATE cli_sessions SET type = 'terminal' WHERE type IS NULL;
+    `,
+  },
 ];
 
 /**

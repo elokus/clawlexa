@@ -1,46 +1,78 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // Thread Rail - 3D stacked cards with glowing SVG connector to center stage
 // Obsidian Glass / Minority Report aesthetic
+//
+// NEW ARCHITECTURE (v2):
+// - Uses session tree path from backend (root → ... → focused)
+// - Root at TOP, deepest ancestor at BOTTOM (closest to focused session)
+// - Click to focus any session in the path
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useStageStore } from '../../stores/stage';
-import type { StageItem } from '../../types';
+import { useStageStore, useSessionPath } from '../../stores/stage';
+import { useAgentStore } from '../../stores/agent';
+import type { SessionTreeNode } from '../../types';
 
-const STAGE_ICONS: Record<string, string> = {
-  chat: '◎',
-  terminal: '▣',
-  subagent: '◇',
+// Icons for session types
+const SESSION_ICONS: Record<string, string> = {
+  orchestrator: '◇', // Diamond for orchestrators (CLI, web search, etc.)
+  terminal: '▣', // Square for terminal sessions
+};
+
+// Agent-specific icons (override generic orchestrator icon)
+const AGENT_ICONS: Record<string, string> = {
+  cli: '⌘', // Command key for CLI agent
+  web_search: '◎', // Target for search
+  deep_thinking: '◈', // Diamond with dot for thinking
+};
+
+// Session type display names
+const SESSION_TYPE_LABELS: Record<string, string> = {
+  orchestrator: 'agent',
+  terminal: 'terminal',
 };
 
 function ThreadCard({
-  stage,
+  session,
   index,
-  isFirst,
+  isFocused,
   onClick,
 }: {
-  stage: StageItem;
+  session: SessionTreeNode;
   index: number;
-  isFirst: boolean;
+  isFocused: boolean;
   onClick: () => void;
 }) {
+  // Get icon - prefer agent-specific, fallback to type-based
+  const icon = session.agent_name
+    ? AGENT_ICONS[session.agent_name] || SESSION_ICONS[session.type]
+    : SESSION_ICONS[session.type] || '◆';
+
+  // Get display label
+  const typeLabel = session.agent_name || SESSION_TYPE_LABELS[session.type] || session.type;
+
+  // Truncate goal for display
+  const displayTitle = session.goal.length > 30
+    ? session.goal.substring(0, 30) + '...'
+    : session.goal;
+
   // 3D depth calculations - capped to prevent extreme transforms
   const cappedIndex = Math.min(index, 5); // Cap depth effects at 5 items
-  const depthZ = -30 * cappedIndex; // Reduced from -40
-  const depthY = 6 * cappedIndex; // Reduced from 8
-  const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12); // Min 30% opacity
-  const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025); // Min 85% scale
+  const depthZ = -30 * cappedIndex;
+  const depthY = 6 * cappedIndex;
+  const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12);
+  const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025);
 
   return (
     <motion.button
-      className={`thread-card ${isFirst ? 'is-active' : ''}`}
-      data-type={stage.type}
+      className={`thread-card ${isFocused ? 'is-active' : ''}`}
+      data-type={session.type}
       onClick={onClick}
       initial={{ opacity: 0, x: 20, rotateY: -5 }}
       animate={{
         opacity: depthOpacity,
         x: 0,
-        rotateY: -3, // Reduced from -8 for subtler 3D effect
+        rotateY: -3,
         translateZ: depthZ,
         translateY: depthY,
         scale: depthScale,
@@ -62,17 +94,63 @@ function ThreadCard({
       }}
     >
       <div className="thread-card-inner">
-        <div className="thread-icon">{STAGE_ICONS[stage.type] || '◆'}</div>
+        <div className="thread-icon">{icon}</div>
         <div className="thread-info">
-          <div className="thread-title">{stage.title}</div>
-          <div className="thread-type">{stage.type}</div>
+          <div className="thread-title">{displayTitle}</div>
+          <div className="thread-type">{typeLabel}</div>
         </div>
         <span className="thread-arrow">←</span>
       </div>
 
       {/* Active card glow indicator */}
-      {isFirst && <div className="thread-card-glow" />}
+      {isFocused && <div className="thread-card-glow" />}
     </motion.button>
+  );
+}
+
+// Virtual Voice Session card - shown when voice is active and there are child sessions
+function VoiceCard({ profile, index }: { profile: string | null; index: number }) {
+  const displayName = profile || 'Voice';
+  const cappedIndex = Math.min(index, 5);
+  const depthZ = -30 * cappedIndex;
+  const depthY = 6 * cappedIndex;
+  const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12);
+  const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025);
+
+  return (
+    <motion.div
+      className="thread-card is-active"
+      data-type="voice"
+      initial={{ opacity: 0, x: 20, rotateY: -5 }}
+      animate={{
+        opacity: depthOpacity,
+        x: 0,
+        rotateY: -3,
+        translateZ: depthZ,
+        translateY: depthY,
+        scale: depthScale,
+      }}
+      exit={{ opacity: 0, x: 20, rotateY: -5, scale: 0.95 }}
+      transition={{
+        duration: 0.35,
+        delay: index * 0.05,
+        ease: [0.4, 0, 0.2, 1],
+      }}
+      style={{
+        transformStyle: 'preserve-3d',
+        transformOrigin: 'right center',
+      }}
+    >
+      <div className="thread-card-inner">
+        <div className="thread-icon voice-icon">◎</div>
+        <div className="thread-info">
+          <div className="thread-title">{displayName}</div>
+          <div className="thread-type">voice session</div>
+        </div>
+        <span className="thread-status-dot" />
+      </div>
+      <div className="thread-card-glow" />
+    </motion.div>
   );
 }
 
@@ -113,14 +191,23 @@ function StageConnector({ hasItems }: { hasItems: boolean }) {
 }
 
 export function ThreadRail() {
-  const threadRail = useStageStore((s) => s.threadRail);
-  const popStage = useStageStore((s) => s.popStage);
+  // Use new tree-based path instead of legacy threadRail
+  const sessionPath = useSessionPath();
+  const focusedSessionId = useStageStore((s) => s.focusedSessionId);
+  const focusSession = useStageStore((s) => s.focusSession);
+  const voiceActive = useStageStore((s) => s.voiceActive);
+  const profile = useAgentStore((s) => s.profile);
+  const subagentActive = useAgentStore((s) => s.subagentActive);
 
-  const handleCardClick = (index: number) => {
-    // Pop stages until we reach the clicked one
-    for (let i = 0; i <= index; i++) {
-      popStage();
-    }
+  // Show voice card when voice is active AND there's either a session tree or subagent work
+  const showVoiceRoot = voiceActive && (sessionPath.length > 0 || subagentActive);
+
+  // Total items including virtual voice card
+  const totalItems = showVoiceRoot ? sessionPath.length + 1 : sessionPath.length;
+
+  const handleCardClick = (session: SessionTreeNode) => {
+    // Focus the clicked session (no popping!)
+    focusSession(session.id);
   };
 
   return (
@@ -258,10 +345,42 @@ export function ThreadRail() {
           color: var(--color-cyan);
         }
 
-        .thread-card[data-type="subagent"] .thread-icon {
+        .thread-card[data-type="orchestrator"] .thread-icon {
           background: rgba(139, 92, 246, 0.08);
           border-color: rgba(139, 92, 246, 0.15);
           color: var(--color-violet);
+        }
+
+        /* Voice session card styling */
+        .thread-card[data-type="voice"] .thread-icon {
+          background: rgba(52, 211, 153, 0.12);
+          border-color: rgba(52, 211, 153, 0.25);
+          color: var(--color-emerald);
+        }
+
+        .thread-card[data-type="voice"] .thread-card-inner {
+          border-color: rgba(52, 211, 153, 0.25);
+        }
+
+        .thread-card[data-type="voice"] .thread-card-glow {
+          background: radial-gradient(
+            ellipse at right center,
+            rgba(52, 211, 153, 0.15) 0%,
+            transparent 60%
+          );
+        }
+
+        .thread-status-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: var(--color-emerald);
+          animation: status-pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes status-pulse {
+          0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--color-emerald); }
+          50% { opacity: 0.5; box-shadow: 0 0 4px var(--color-emerald); }
         }
 
         .thread-card.is-active .thread-icon {
@@ -393,34 +512,39 @@ export function ThreadRail() {
 
       <div className="thread-header">
         <span className="thread-label">Thread</span>
-        {threadRail.length > 0 && (
-          <span className="thread-count">{threadRail.length}</span>
+        {totalItems > 0 && (
+          <span className="thread-count">{totalItems}</span>
         )}
       </div>
 
-      {threadRail.length === 0 ? (
+      {totalItems === 0 ? (
         <div className="thread-empty">
           <div className="thread-empty-icon">◇</div>
           <div className="thread-empty-text">
-            No parent contexts.<br />
-            Open a sub-task to see<br />
-            the thread stack here.
+            No active sessions.<br />
+            Start a task to see<br />
+            the session tree here.
           </div>
         </div>
       ) : (
         <div className="thread-stack-container">
           {/* SVG Connector to center stage */}
-          <StageConnector hasItems={threadRail.length > 0} />
+          <StageConnector hasItems={totalItems > 0} />
 
           <div className="thread-stack">
             <AnimatePresence>
-              {threadRail.map((stage, index) => (
+              {/* Virtual Voice Session card at root when voice is active */}
+              {showVoiceRoot && (
+                <VoiceCard key="voice-root" profile={profile} index={0} />
+              )}
+              {/* Session tree path - offset index if voice card is shown */}
+              {sessionPath.map((session, index) => (
                 <ThreadCard
-                  key={stage.id}
-                  stage={stage}
-                  index={index}
-                  isFirst={index === 0}
-                  onClick={() => handleCardClick(index)}
+                  key={session.id}
+                  session={session}
+                  index={showVoiceRoot ? index + 1 : index}
+                  isFocused={session.id === focusedSessionId}
+                  onClick={() => handleCardClick(session)}
                 />
               ))}
             </AnimatePresence>
