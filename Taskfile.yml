@@ -1,0 +1,54 @@
+version: '3'
+
+vars:
+  ENV_FILES:
+    sh: find . -name '.env' -not -path './node_modules/*' -not -name '*.example' -not -name '*.enc'
+
+tasks:
+  encrypt:
+    desc: Encrypt all .env files using SOPS with age
+    cmds:
+      - for: { var: ENV_FILES, split: "\n" }
+        cmd: |
+          if [ -f "{{.ITEM}}" ]; then
+            echo "Encrypting {{.ITEM}} -> {{.ITEM}}.enc"
+            sops --encrypt "{{.ITEM}}" > "{{.ITEM}}.enc"
+          fi
+    silent: false
+
+  decrypt:
+    desc: Decrypt all .env.enc files using SOPS with age
+    cmds:
+      - |
+        for f in $(find . -name '.env.enc' -not -path './node_modules/*'); do
+          target="${f%.enc}"
+          echo "Decrypting $f -> $target"
+          sops --decrypt "$f" > "$target"
+        done
+    silent: false
+
+  encrypt:file:
+    desc: Encrypt a specific .env file
+    requires:
+      vars: [FILE]
+    cmds:
+      - echo "Encrypting {{.FILE}} -> {{.FILE}}.enc"
+      - sops --encrypt "{{.FILE}}" > "{{.FILE}}.enc"
+
+  decrypt:file:
+    desc: Decrypt a specific .env.enc file
+    requires:
+      vars: [FILE]
+    cmds:
+      - echo "Decrypting {{.FILE}} -> ${FILE%.enc}"
+      - sops --decrypt "{{.FILE}}" > "{{.FILE | replace \".enc\" \"\"}}"
+
+  list:env:
+    desc: List all .env files that would be encrypted
+    cmds:
+      - find . -name '.env' -not -path './node_modules/*' -not -name '*.example' -not -name '*.enc'
+
+  list:encrypted:
+    desc: List all encrypted .env.enc files
+    cmds:
+      - find . -name '.env.enc' -not -path './node_modules/*'
