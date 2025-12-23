@@ -21,8 +21,11 @@ import type {
   SubagentEventType,
   WelcomePayload,
   MasterChangedPayload,
+  SessionStartedPayload,
+  SessionTreeUpdatePayload,
 } from '../types';
 import { useSessionsStore } from './sessions';
+import { useStageStore } from './stage';
 
 interface AgentStore {
   // Connection state
@@ -265,6 +268,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
       case 'session_started': {
         set({ messages: [] });
+        // Mark voice session as active
+        useStageStore.getState().setVoiceActive(true);
         break;
       }
 
@@ -274,6 +279,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           profile: null,
           currentTool: null,
         });
+        // Mark voice session as inactive and clear tree if no running sessions
+        useStageStore.getState().setVoiceActive(false);
         break;
       }
 
@@ -300,6 +307,22 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         break;
       }
 
+      // Session tree update from backend (v2 architecture)
+      case 'session_tree_update': {
+        const { tree, trees } = payload as SessionTreeUpdatePayload;
+        const stageStore = useStageStore.getState();
+
+        if (tree) {
+          // Single tree update - set as active tree
+          stageStore.setSessionTree(tree);
+        } else if (trees && trees.length > 0) {
+          // Initial load - multiple trees, set first as active
+          stageStore.setSessionTree(trees[0]);
+          // TODO: Handle remaining trees as background if needed
+        }
+        break;
+      }
+
       // Unified subagent activity stream
       case 'subagent_activity': {
         const { agent, type: eventType, payload: eventPayload } = payload as SubagentActivityPayload;
@@ -309,19 +332,19 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
       case 'cli_session_created': {
         const sessionData = payload as CliSessionCreatedPayload;
-        // Add to sessions store
+        // Add to sessions store using addSession (handles duplicates)
         const sessionsStore = useSessionsStore.getState();
-        sessionsStore.setSessions([
-          ...sessionsStore.sessions,
-          {
-            id: sessionData.id,
-            goal: sessionData.goal,
-            status: 'running',
-            mac_session_id: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]);
+        sessionsStore.addSession({
+          id: sessionData.id,
+          goal: sessionData.goal,
+          status: 'running',
+          mac_session_id: null,
+          parent_id: sessionData.parentId || null,
+          thread_id: sessionData.parentId || null, // Use parent as thread root
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        // Stage navigation now handled by session_tree_update events
         break;
       }
 
@@ -336,6 +359,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             updated_at: new Date().toISOString(),
           });
         }
+        // Stage navigation now handled by session_tree_update events
         break;
       }
     }
@@ -382,7 +406,8 @@ function handleSubagentActivity(
 
   switch (eventType) {
     case 'reasoning_start': {
-      // Create a new reasoning block
+      // Stage navigation now handled by session_tree_update events
+      // Just create a new reasoning block for the activity feed
       const block: ReasoningBlock = {
         id: generateId(),
         timestamp,
@@ -507,6 +532,7 @@ function handleSubagentActivity(
 
     case 'complete': {
       // Mark subagent as inactive
+      // Stage navigation now handled by session_tree_update events
       set({ subagentActive: false });
       break;
     }

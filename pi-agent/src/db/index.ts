@@ -8,8 +8,18 @@
 export { getDatabase, closeDatabase, generateId } from './database.js';
 
 // Repositories
-export { CliSessionsRepository } from './repositories/cli-sessions.js';
-export type { CliSession, SessionStatus, CreateSessionInput } from './repositories/cli-sessions.js';
+export { CliSessionsRepository, SessionsRepository } from './repositories/cli-sessions.js';
+export type {
+  Session,
+  CliSession,
+  SessionStatus,
+  SessionType,
+  AgentName,
+  SessionTreeNode,
+  CreateSessionInput,
+  CreateOrchestratorInput,
+  CreateTerminalInput,
+} from './repositories/cli-sessions.js';
 
 export { CliEventsRepository } from './repositories/cli-events.js';
 export type { CliEvent, EventType, CreateEventInput } from './repositories/cli-events.js';

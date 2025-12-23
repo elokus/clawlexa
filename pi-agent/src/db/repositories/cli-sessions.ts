@@ -1,7 +1,8 @@
 /**
- * CLI Sessions Repository
+ * Sessions Repository
  *
- * CRUD operations for Mac CLI session metadata.
+ * Unified CRUD operations for orchestrators and terminals.
+ * Voice sessions are NOT persisted (fire-and-forget).
  */
 
 import type Database from 'better-sqlite3';
@@ -15,18 +16,66 @@ export type SessionStatus =
   | 'error'
   | 'cancelled';
 
-export interface CliSession {
+export type SessionType = 'orchestrator' | 'terminal';
+
+export type AgentName = 'cli' | 'web_search' | 'deep_thinking';
+
+export interface Session {
   id: string;
+  type: SessionType;
   goal: string;
   status: SessionStatus;
+  // Hierarchy
+  parent_id: string | null;
+  // Orchestrator-specific
+  agent_name: AgentName | null;
+  model: string | null;
+  conversation_history: string | null; // JSON array
+  // Terminal-specific
   mac_session_id: string | null;
+  // Timestamps
   created_at: string;
   updated_at: string;
+  finished_at: string | null;
 }
 
+/** @deprecated Use Session instead */
+export type CliSession = Session;
+
+export interface CreateOrchestratorInput {
+  id?: string;
+  goal: string;
+  agent_name: AgentName;
+  model: string;
+  parent_id?: string;
+}
+
+export interface CreateTerminalInput {
+  id?: string;
+  goal: string;
+  parent_id: string; // Terminals must have an orchestrator parent
+  mac_session_id?: string;
+}
+
+/** @deprecated Use CreateOrchestratorInput or CreateTerminalInput instead */
 export interface CreateSessionInput {
   goal: string;
   id?: string;
+  parent_id?: string;
+  thread_id?: string;
+}
+
+/**
+ * Session tree node for UI rendering
+ */
+export interface SessionTreeNode {
+  id: string;
+  type: SessionType;
+  status: SessionStatus;
+  goal: string;
+  agent_name: AgentName | null;
+  created_at: string;
+  children: SessionTreeNode[];
 }
 
 export class CliSessionsRepository {
@@ -36,71 +85,315 @@ export class CliSessionsRepository {
     this.db = db ?? getDatabase();
   }
 
+  // ============================================================================
+  // CREATE METHODS
+  // ============================================================================
+
   /**
-   * Create a new CLI session.
+   * Create a new orchestrator session (stateful LLM agent).
    */
-  create(input: CreateSessionInput): CliSession {
+  createOrchestrator(input: CreateOrchestratorInput): Session {
     const id = input.id ?? generateId();
     const now = new Date().toISOString();
 
     this.db
       .prepare(
-        `INSERT INTO cli_sessions (id, goal, status, created_at, updated_at)
-         VALUES (?, ?, 'pending', ?, ?)`
+        `INSERT INTO cli_sessions
+         (id, type, goal, status, parent_id, agent_name, model, conversation_history, created_at, updated_at)
+         VALUES (?, 'orchestrator', ?, 'running', ?, ?, ?, '[]', ?, ?)`
       )
-      .run(id, input.goal, now, now);
+      .run(id, input.goal, input.parent_id ?? null, input.agent_name, input.model, now, now);
 
     return this.findById(id)!;
   }
 
   /**
+   * Create a new terminal session (Claude Code CLI).
+   */
+  createTerminal(input: CreateTerminalInput): Session {
+    const id = input.id ?? generateId();
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO cli_sessions
+         (id, type, goal, status, parent_id, mac_session_id, created_at, updated_at)
+         VALUES (?, 'terminal', ?, 'running', ?, ?, ?, ?)`
+      )
+      .run(id, input.goal, input.parent_id, input.mac_session_id ?? null, now, now);
+
+    return this.findById(id)!;
+  }
+
+  /**
+   * @deprecated Use createOrchestrator or createTerminal instead.
+   */
+  create(input: CreateSessionInput): Session {
+    const id = input.id ?? generateId();
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO cli_sessions (id, type, goal, status, parent_id, thread_id, created_at, updated_at)
+         VALUES (?, 'terminal', ?, 'pending', ?, ?, ?, ?)`
+      )
+      .run(id, input.goal, input.parent_id ?? null, input.thread_id ?? null, now, now);
+
+    return this.findById(id)!;
+  }
+
+  // ============================================================================
+  // READ METHODS
+  // ============================================================================
+
+  /**
    * Find a session by ID.
    */
-  findById(id: string): CliSession | null {
+  findById(id: string): Session | null {
     return (
-      (this.db.prepare('SELECT * FROM cli_sessions WHERE id = ?').get(id) as CliSession) ?? null
+      (this.db.prepare('SELECT * FROM cli_sessions WHERE id = ?').get(id) as Session) ?? null
     );
   }
 
   /**
-   * List all sessions, optionally filtered by status.
+   * Find a running orchestrator by agent name.
+   * Used to resume existing orchestrators instead of creating new ones.
    */
-  list(status?: SessionStatus): CliSession[] {
-    if (status) {
-      return this.db
-        .prepare('SELECT * FROM cli_sessions WHERE status = ? ORDER BY created_at DESC')
-        .all(status) as CliSession[];
+  findRunningOrchestrator(agentName: AgentName): Session | null {
+    return (
+      (this.db
+        .prepare(
+          `SELECT * FROM cli_sessions
+           WHERE type = 'orchestrator'
+           AND agent_name = ?
+           AND status = 'running'
+           ORDER BY created_at DESC
+           LIMIT 1`
+        )
+        .get(agentName) as Session) ?? null
+    );
+  }
+
+  /**
+   * List all sessions, optionally filtered by status and/or type.
+   */
+  list(options?: { status?: SessionStatus; type?: SessionType }): Session[] {
+    let query = 'SELECT * FROM cli_sessions WHERE 1=1';
+    const params: (string | null)[] = [];
+
+    if (options?.status) {
+      query += ' AND status = ?';
+      params.push(options.status);
     }
+    if (options?.type) {
+      query += ' AND type = ?';
+      params.push(options.type);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    return this.db.prepare(query).all(...params) as Session[];
+  }
+
+  /**
+   * Get active sessions (pending, running, or waiting_for_input).
+   */
+  getActive(): Session[] {
     return this.db
-      .prepare('SELECT * FROM cli_sessions ORDER BY created_at DESC')
-      .all() as CliSession[];
+      .prepare(
+        `SELECT * FROM cli_sessions
+         WHERE status IN ('pending', 'running', 'waiting_for_input')
+         ORDER BY created_at DESC`
+      )
+      .all() as Session[];
+  }
+
+  /**
+   * Get all root orchestrators (no parent) that are active.
+   */
+  getActiveRoots(): Session[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM cli_sessions
+         WHERE type = 'orchestrator'
+         AND parent_id IS NULL
+         AND status IN ('pending', 'running', 'waiting_for_input')
+         ORDER BY created_at DESC`
+      )
+      .all() as Session[];
+  }
+
+  /**
+   * Get direct children of a session.
+   */
+  getChildren(parentId: string): Session[] {
+    return this.db
+      .prepare('SELECT * FROM cli_sessions WHERE parent_id = ? ORDER BY created_at ASC')
+      .all(parentId) as Session[];
+  }
+
+  /**
+   * Get running children of a session.
+   */
+  getRunningChildren(parentId: string): Session[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM cli_sessions
+         WHERE parent_id = ?
+         AND status IN ('pending', 'running', 'waiting_for_input')
+         ORDER BY created_at ASC`
+      )
+      .all(parentId) as Session[];
+  }
+
+  /**
+   * Build a tree structure starting from a root session.
+   */
+  getTree(rootId: string): SessionTreeNode | null {
+    const session = this.findById(rootId);
+    if (!session) return null;
+
+    const buildNode = (s: Session): SessionTreeNode => {
+      const children = this.getChildren(s.id);
+      return {
+        id: s.id,
+        type: s.type,
+        status: s.status,
+        goal: s.goal,
+        agent_name: s.agent_name,
+        created_at: s.created_at,
+        children: children.map(buildNode),
+      };
+    };
+
+    return buildNode(session);
+  }
+
+  /**
+   * Get all active trees (roots with their children).
+   */
+  getActiveTrees(): SessionTreeNode[] {
+    const roots = this.getActiveRoots();
+    return roots.map((root) => this.getTree(root.id)!).filter(Boolean);
+  }
+
+  /**
+   * Get a session with its direct children.
+   * @deprecated Use getTree for full hierarchy.
+   */
+  getWithChildren(id: string): { session: Session; children: Session[] } | null {
+    const session = this.findById(id);
+    if (!session) return null;
+
+    const children = this.getChildren(id);
+    return { session, children };
+  }
+
+  /**
+   * Get all sessions belonging to a thread.
+   * @deprecated thread_id is no longer used; use getTree instead.
+   */
+  getByThread(threadId: string): Session[] {
+    return this.db
+      .prepare('SELECT * FROM cli_sessions WHERE thread_id = ? ORDER BY created_at ASC')
+      .all(threadId) as Session[];
+  }
+
+  // ============================================================================
+  // UPDATE METHODS
+  // ============================================================================
+
+  /**
+   * Update session fields.
+   */
+  update(
+    id: string,
+    fields: Partial<{
+      status: SessionStatus;
+      goal: string;
+      mac_session_id: string;
+      conversation_history: string;
+      finished_at: string;
+    }>
+  ): boolean {
+    const updates: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (fields.status !== undefined) {
+      updates.push('status = ?');
+      params.push(fields.status);
+    }
+    if (fields.goal !== undefined) {
+      updates.push('goal = ?');
+      params.push(fields.goal);
+    }
+    if (fields.mac_session_id !== undefined) {
+      updates.push('mac_session_id = ?');
+      params.push(fields.mac_session_id);
+    }
+    if (fields.conversation_history !== undefined) {
+      updates.push('conversation_history = ?');
+      params.push(fields.conversation_history);
+    }
+    if (fields.finished_at !== undefined) {
+      updates.push('finished_at = ?');
+      params.push(fields.finished_at);
+    }
+
+    if (updates.length === 0) return false;
+
+    updates.push("updated_at = datetime('now')");
+    params.push(id);
+
+    const result = this.db
+      .prepare(`UPDATE cli_sessions SET ${updates.join(', ')} WHERE id = ?`)
+      .run(...params);
+
+    return result.changes > 0;
   }
 
   /**
    * Update session status.
+   * @deprecated Use update({ status }) instead.
    */
   updateStatus(id: string, status: SessionStatus): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE cli_sessions SET status = ?, updated_at = datetime('now')
-         WHERE id = ?`
-      )
-      .run(status, id);
-    return result.changes > 0;
+    return this.update(id, { status });
   }
 
   /**
    * Set the Mac daemon session ID.
+   * @deprecated Use update({ mac_session_id }) instead.
    */
   setMacSessionId(id: string, macSessionId: string): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE cli_sessions SET mac_session_id = ?, updated_at = datetime('now')
-         WHERE id = ?`
-      )
-      .run(macSessionId, id);
-    return result.changes > 0;
+    return this.update(id, { mac_session_id: macSessionId });
   }
+
+  /**
+   * Append to conversation history (for orchestrators).
+   */
+  appendToHistory(id: string, messages: Array<{ role: string; content: string }>): boolean {
+    const session = this.findById(id);
+    if (!session || session.type !== 'orchestrator') return false;
+
+    const history = JSON.parse(session.conversation_history || '[]');
+    history.push(...messages);
+
+    return this.update(id, { conversation_history: JSON.stringify(history) });
+  }
+
+  /**
+   * Mark session as finished.
+   */
+  finish(id: string, status: 'finished' | 'cancelled' | 'error' = 'finished'): boolean {
+    return this.update(id, {
+      status,
+      finished_at: new Date().toISOString(),
+    });
+  }
+
+  // ============================================================================
+  // DELETE METHODS
+  // ============================================================================
 
   /**
    * Delete a session and its events (cascade).
@@ -111,15 +404,59 @@ export class CliSessionsRepository {
   }
 
   /**
-   * Get active sessions (pending, running, or waiting_for_input).
+   * Cancel a session and all its descendants (cascading cancel).
+   * Returns the number of sessions cancelled.
    */
-  getActive(): CliSession[] {
-    return this.db
+  cancelTree(rootId: string): number {
+    const session = this.findById(rootId);
+    if (!session) return 0;
+
+    let count = 0;
+
+    // Recursively cancel children first
+    const children = this.getChildren(rootId);
+    for (const child of children) {
+      count += this.cancelTree(child.id);
+    }
+
+    // Cancel this session if running
+    if (['pending', 'running', 'waiting_for_input'].includes(session.status)) {
+      this.finish(rootId, 'cancelled');
+      count++;
+    }
+
+    return count;
+  }
+
+  /**
+   * Cleanup old sessions based on retention policy.
+   * - Leaf orchestrators without children: 24 hours
+   * - All other finished sessions: 10 days
+   */
+  cleanup(): { deleted: number } {
+    // Delete leaf orchestrators after 24h
+    const leafResult = this.db
       .prepare(
-        `SELECT * FROM cli_sessions
-         WHERE status IN ('pending', 'running', 'waiting_for_input')
-         ORDER BY created_at DESC`
+        `DELETE FROM cli_sessions
+         WHERE type = 'orchestrator'
+         AND status IN ('finished', 'cancelled', 'error')
+         AND id NOT IN (SELECT DISTINCT parent_id FROM cli_sessions WHERE parent_id IS NOT NULL)
+         AND finished_at < datetime('now', '-24 hours')`
       )
-      .all() as CliSession[];
+      .run();
+
+    // Delete all finished sessions after 10 days
+    const oldResult = this.db
+      .prepare(
+        `DELETE FROM cli_sessions
+         WHERE status IN ('finished', 'cancelled', 'error')
+         AND finished_at < datetime('now', '-10 days')`
+      )
+      .run();
+
+    return { deleted: leafResult.changes + oldResult.changes };
   }
 }
+
+// Also export as SessionsRepository for new code
+export { CliSessionsRepository as SessionsRepository };

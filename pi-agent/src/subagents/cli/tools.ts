@@ -1,10 +1,11 @@
 /**
  * CLI Agent Tools - Tools for managing Mac CLI sessions.
  *
- * These tools are used by the CLI orchestration agent to:
- * - Start headless sessions (claude -p) for quick tasks
- * - Start interactive sessions for complex implementations
- * - Monitor and control running sessions
+ * These tools create TERMINAL sessions as children of the CLI orchestrator.
+ * Session Hierarchy:
+ *   Orchestrator (stateful, created in index.ts)
+ *     → Terminal 1 (long-running Claude Code CLI)
+ *     → Terminal 2
  */
 
 import { tool } from 'ai';
@@ -17,6 +18,7 @@ import {
 import * as macClient from '../../tools/mac-client.js';
 import { waitForSessionCompletion } from '../../api/webhooks.js';
 import { wsBroadcast } from '../../api/websocket.js';
+import { getCurrentOrchestratorId } from './index.js';
 
 /**
  * Check if the Mac daemon is available.
@@ -39,82 +41,86 @@ export const startHeadlessSessionTool = tool({
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
-    const sessionId = generateId();
+    const terminalId = generateId();
+    const orchestratorId = getCurrentOrchestratorId();
     const command = `cd ${project_path} && claude -p "${prompt.replace(/"/g, '\\"')}"`;
 
-    console.log(`[CliAgent] Starting headless session: ${sessionId}`);
+    console.log(`[CliAgent] Starting headless terminal: ${terminalId}`);
+    console.log(`[CliAgent] Parent orchestrator: ${orchestratorId ?? 'none'}`);
     console.log(`[CliAgent] Command: ${command}`);
 
-    // Create DB entry
-    sessionsRepo.create({
-      id: sessionId,
+    if (!orchestratorId) {
+      return 'Fehler: Kein aktiver Orchestrator. Bitte starte eine neue Anfrage.';
+    }
+
+    // Create terminal session as child of orchestrator
+    sessionsRepo.createTerminal({
+      id: terminalId,
       goal: `Headless: ${prompt.substring(0, 100)}...`,
+      parent_id: orchestratorId,
     });
-    sessionsRepo.updateStatus(sessionId, 'running');
 
     eventsRepo.create({
-      session_id: sessionId,
+      session_id: terminalId,
       event_type: 'started',
       payload: { command, project_path, prompt },
     });
 
-    // Broadcast session start
-    wsBroadcast.cliSessionCreated({
-      id: sessionId,
-      goal: prompt.substring(0, 100),
-      mode: 'headless',
-      projectPath: project_path,
-      command,
-    });
+    // Broadcast tree update (terminal added)
+    wsBroadcast.sessionTreeUpdate(orchestratorId);
 
     try {
       // Start session on Mac
-      const result = await macClient.startCliSession(sessionId, prompt, command);
+      const result = await macClient.startCliSession(terminalId, prompt, command);
 
       if (!result.success) {
-        sessionsRepo.updateStatus(sessionId, 'error');
+        sessionsRepo.finish(terminalId, 'error');
         eventsRepo.create({
-          session_id: sessionId,
+          session_id: terminalId,
           event_type: 'error',
           payload: result.message,
         });
+        wsBroadcast.sessionTreeUpdate(orchestratorId);
         return `Fehler beim Starten der Session: ${result.message}`;
       }
 
       // Wait for completion via webhook (no polling!)
-      const completion = await waitForSessionCompletion(sessionId, 120_000);
+      const completion = await waitForSessionCompletion(terminalId, 120_000);
 
       if (completion) {
-        sessionsRepo.updateStatus(
-          sessionId,
+        sessionsRepo.finish(
+          terminalId,
           completion.status === 'finished' ? 'finished' : 'error'
         );
         eventsRepo.create({
-          session_id: sessionId,
+          session_id: terminalId,
           event_type: 'finished',
           payload: { message: completion.message },
         });
 
         // Cleanup: terminate the tmux session since headless is done
         try {
-          await macClient.terminateSession(sessionId);
-          console.log(`[CliAgent] Terminated tmux session for ${sessionId}`);
+          await macClient.terminateSession(terminalId);
+          console.log(`[CliAgent] Terminated tmux session for ${terminalId}`);
         } catch (cleanupError) {
-          console.warn(`[CliAgent] Failed to cleanup tmux session ${sessionId}:`, cleanupError);
+          console.warn(`[CliAgent] Failed to cleanup tmux session ${terminalId}:`, cleanupError);
         }
 
+        wsBroadcast.sessionTreeUpdate(orchestratorId);
         return completion.message || 'Aufgabe abgeschlossen, keine Ausgabe.';
       } else {
-        sessionsRepo.updateStatus(sessionId, 'error');
+        sessionsRepo.finish(terminalId, 'error');
+        wsBroadcast.sessionTreeUpdate(orchestratorId);
         return 'Die Aufgabe hat zu lange gedauert. Bitte prüfe die Session manuell.';
       }
     } catch (error) {
-      sessionsRepo.updateStatus(sessionId, 'error');
+      sessionsRepo.finish(terminalId, 'error');
       eventsRepo.create({
-        session_id: sessionId,
+        session_id: terminalId,
         event_type: 'error',
         payload: String(error),
       });
+      wsBroadcast.sessionTreeUpdate(orchestratorId);
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
   },
@@ -131,7 +137,8 @@ export const startInteractiveSessionTool = tool({
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
-    const sessionId = generateId();
+    const terminalId = generateId();
+    const orchestratorId = getCurrentOrchestratorId();
 
     // Escape the prompt for shell
     const escapedPrompt = initial_prompt
@@ -142,51 +149,53 @@ export const startInteractiveSessionTool = tool({
     // Start Claude with the initial prompt - stays interactive after first response
     const command = `cd ${project_path} && claude --dangerously-skip-permissions "${escapedPrompt}"`;
 
-    console.log(`[CliAgent] Starting interactive session: ${sessionId}`);
+    console.log(`[CliAgent] Starting interactive terminal: ${terminalId}`);
+    console.log(`[CliAgent] Parent orchestrator: ${orchestratorId ?? 'none'}`);
     console.log(`[CliAgent] Command: ${command}`);
     console.log(`[CliAgent] Initial prompt: ${initial_prompt}`);
 
-    // Create DB entry
-    sessionsRepo.create({
-      id: sessionId,
+    if (!orchestratorId) {
+      return 'Fehler: Kein aktiver Orchestrator. Bitte starte eine neue Anfrage.';
+    }
+
+    // Create terminal session as child of orchestrator
+    sessionsRepo.createTerminal({
+      id: terminalId,
       goal: initial_prompt.substring(0, 200),
+      parent_id: orchestratorId,
     });
-    sessionsRepo.updateStatus(sessionId, 'running');
 
     eventsRepo.create({
-      session_id: sessionId,
+      session_id: terminalId,
       event_type: 'started',
       payload: { command, project_path, initial_prompt },
     });
 
-    // Broadcast session start
-    wsBroadcast.cliSessionCreated({
-      id: sessionId,
-      goal: initial_prompt.substring(0, 100),
-      mode: 'interactive',
-      projectPath: project_path,
-      command,
-    });
+    // Broadcast tree update (terminal added)
+    wsBroadcast.sessionTreeUpdate(orchestratorId);
 
     try {
-      const result = await macClient.startCliSession(sessionId, initial_prompt, command);
+      const result = await macClient.startCliSession(terminalId, initial_prompt, command);
 
       if (!result.success) {
-        sessionsRepo.updateStatus(sessionId, 'error');
+        sessionsRepo.finish(terminalId, 'error');
+        wsBroadcast.sessionTreeUpdate(orchestratorId);
         return `Fehler beim Starten: ${result.message}`;
       }
 
-      sessionsRepo.setMacSessionId(sessionId, result.tmuxSession);
+      sessionsRepo.update(terminalId, { mac_session_id: result.tmuxSession });
 
       eventsRepo.create({
-        session_id: sessionId,
+        session_id: terminalId,
         event_type: 'input',
         payload: { input: initial_prompt },
       });
 
+      wsBroadcast.sessionTreeUpdate(orchestratorId);
       return `Interaktive Session gestartet in ${project_path}. Claude arbeitet jetzt an der Aufgabe.`;
     } catch (error) {
-      sessionsRepo.updateStatus(sessionId, 'error');
+      sessionsRepo.finish(terminalId, 'error');
+      wsBroadcast.sessionTreeUpdate(orchestratorId);
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
   },
@@ -276,14 +285,23 @@ export const terminateSessionTool = tool({
     const eventsRepo = new CliEventsRepository();
 
     try {
+      // Get session to find parent for tree update
+      const session = sessionsRepo.findById(session_id);
+      const parentId = session?.parent_id;
+
       await macClient.terminateSession(session_id);
-      sessionsRepo.updateStatus(session_id, 'cancelled');
+      sessionsRepo.finish(session_id, 'cancelled');
 
       eventsRepo.create({
         session_id,
         event_type: 'finished',
         payload: { reason: 'terminated' },
       });
+
+      // Broadcast tree update if we have a parent
+      if (parentId) {
+        wsBroadcast.sessionTreeUpdate(parentId);
+      }
 
       return 'Session beendet.';
     } catch (error) {

@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef } from 'react';
+import { useStageStore } from '../stores/stage';
 import type { TranscriptMessage } from '../types';
 
 interface ConversationStreamProps {
@@ -53,33 +54,35 @@ function TypingIndicator() {
   );
 }
 
-// Single message bubble
-function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLatest: boolean }) {
+// HUD-style message - floating text without bubble containers
+function HUDMessage({ message, isLatest }: { message: TranscriptMessage; isLatest: boolean }) {
   const isUser = message.role === 'user';
 
   const timestamp = new Date(message.timestamp).toLocaleTimeString('de-DE', {
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
   });
 
   return (
     <div
-      className={`msg-bubble ${isUser ? 'user' : 'agent'} ${message.pending ? 'pending' : ''} ${isLatest ? 'latest' : ''}`}
+      className={`hud-message ${isUser ? 'user' : 'agent'} ${message.pending ? 'pending' : ''} ${isLatest ? 'latest' : ''}`}
     >
       <style>{`
-        .msg-bubble {
+        .hud-message {
           display: flex;
           flex-direction: column;
-          max-width: 80%;
-          margin-bottom: 16px;
-          animation: msg-appear 0.25s var(--ease-out) forwards;
+          max-width: 85%;
+          margin-bottom: 32px;
+          animation: hud-appear 0.3s var(--ease-out) forwards;
           opacity: 0;
+          position: relative;
         }
 
-        @keyframes msg-appear {
+        @keyframes hud-appear {
           from {
             opacity: 0;
-            transform: translateY(8px);
+            transform: translateY(12px);
           }
           to {
             opacity: 1;
@@ -87,136 +90,131 @@ function MessageBubble({ message, isLatest }: { message: TranscriptMessage; isLa
           }
         }
 
-        .msg-bubble.user {
+        /* User messages - right aligned */
+        .hud-message.user {
           align-self: flex-end;
           align-items: flex-end;
+          text-align: right;
         }
 
-        .msg-bubble.agent {
+        /* Agent messages - left aligned with accent border */
+        .hud-message.agent {
           align-self: flex-start;
           align-items: flex-start;
+          padding-left: 16px;
+          border-left: 2px solid rgba(56, 189, 248, 0.3);
         }
 
-        .msg-header {
+        .hud-message.agent.latest {
+          border-left-color: rgba(56, 189, 248, 0.6);
+        }
+
+        /* Metadata header - monospaced, dim */
+        .hud-meta {
           display: flex;
           align-items: center;
-          gap: 8px;
-          margin-bottom: 6px;
-          padding: 0 2px;
+          gap: 12px;
+          margin-bottom: 10px;
+          opacity: 0.5;
         }
 
-        .msg-role {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          font-weight: 600;
-          letter-spacing: 0.08em;
+        .hud-message.user .hud-meta {
+          flex-direction: row-reverse;
+        }
+
+        .hud-role {
+          font-family: var(--font-display);
+          font-size: 9px;
+          letter-spacing: 0.2em;
           text-transform: uppercase;
         }
 
-        .msg-bubble.user .msg-role {
+        .hud-message.user .hud-role {
           color: var(--color-cyan);
         }
 
-        .msg-bubble.agent .msg-role {
+        .hud-message.agent .hud-role {
           color: var(--color-emerald);
         }
 
-        .msg-time {
+        .hud-time {
           font-family: var(--font-mono);
           font-size: 10px;
           color: var(--color-text-ghost);
+          letter-spacing: 0.05em;
         }
 
-        .msg-content {
-          padding: 14px 18px;
-          border-radius: 18px;
-          position: relative;
-        }
-
-        /* User messages */
-        .msg-bubble.user .msg-content {
-          background: linear-gradient(135deg,
-            rgba(56, 189, 248, 0.12) 0%,
-            rgba(56, 189, 248, 0.06) 100%
-          );
-          border: 1px solid rgba(56, 189, 248, 0.18);
-          border-bottom-right-radius: 6px;
-        }
-
-        /* Agent messages */
-        .msg-bubble.agent .msg-content {
-          background: rgba(18, 18, 26, 0.7);
-          border: 1px solid rgba(52, 211, 153, 0.12);
-          border-bottom-left-radius: 6px;
-        }
-
-        .msg-text {
+        /* Message content - clean floating text */
+        .hud-content {
           font-family: var(--font-ui);
-          font-size: 15px;
-          font-weight: 450;
-          line-height: 1.6;
+          font-size: 17px;
+          line-height: 1.65;
           margin: 0;
           word-wrap: break-word;
           overflow-wrap: break-word;
+          text-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
         }
 
-        .msg-bubble.user .msg-text {
-          color: var(--color-text-bright);
+        .hud-message.user .hud-content {
+          color: #ffffff;
+          font-weight: 450;
         }
 
-        .msg-bubble.agent .msg-text {
-          color: var(--color-text-normal);
+        .hud-message.agent .hud-content {
+          color: #cccccc;
+          font-weight: 400;
         }
 
-        .msg-bubble.pending .msg-text {
+        .hud-message.pending .hud-content {
           color: var(--color-text-dim);
         }
 
-        .msg-bubble.latest.agent .msg-content {
-          box-shadow: 0 0 24px rgba(52, 211, 153, 0.08);
+        /* Latest message subtle emphasis */
+        .hud-message.latest .hud-content {
+          text-shadow: 0 0 40px rgba(56, 189, 248, 0.15);
         }
 
-        .msg-bubble.latest.user .msg-content {
-          box-shadow: 0 0 24px rgba(56, 189, 248, 0.12);
+        .hud-message.latest .hud-meta {
+          opacity: 0.7;
         }
 
         @media (max-width: 768px) {
-          .msg-bubble {
-            max-width: 88%;
-            margin-bottom: 14px;
+          .hud-message {
+            max-width: 92%;
+            margin-bottom: 28px;
           }
 
-          .msg-content {
-            padding: 12px 16px;
-            border-radius: 16px;
+          .hud-message.agent {
+            padding-left: 14px;
           }
 
-          .msg-text {
-            font-size: 15px;
+          .hud-content {
+            font-size: 16px;
           }
         }
       `}</style>
 
-      <div className="msg-header">
-        <span className="msg-role">{isUser ? 'You' : 'Agent'}</span>
-        <span className="msg-time">{timestamp}</span>
+      <div className="hud-meta">
+        <span className="hud-role">{isUser ? 'You' : 'Agent'}</span>
+        <span className="hud-time">{timestamp}</span>
       </div>
-      <div className="msg-content">
-        <p className="msg-text">
-          {message.pending && !message.content ? (
-            <TypingIndicator />
-          ) : (
-            message.content
-          )}
-        </p>
-      </div>
+      <p className="hud-content">
+        {message.pending && !message.content ? (
+          <TypingIndicator />
+        ) : (
+          message.content
+        )}
+      </p>
     </div>
   );
 }
 
-// Tool execution card
+// Tool execution card - Portal style for session-creating tools
 function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknown> } }) {
-  const toolConfig: Record<string, { label: string; icon: string; color: string }> = {
+  const pushStage = useStageStore((s) => s.pushStage);
+  const activeStage = useStageStore((s) => s.activeStage);
+
+  const toolConfig: Record<string, { label: string; icon: string; color: string; isPortal?: boolean }> = {
     view_todos: { label: 'Checking tasks', icon: '◈', color: 'var(--color-violet)' },
     add_todo: { label: 'Adding task', icon: '◈', color: 'var(--color-violet)' },
     delete_todo: { label: 'Removing task', icon: '◈', color: 'var(--color-violet)' },
@@ -226,46 +224,107 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
     web_search: { label: 'Searching web', icon: '⌘', color: 'var(--color-cyan)' },
     control_light: { label: 'Adjusting lights', icon: '◉', color: 'var(--color-emerald)' },
     deep_thinking: { label: 'Deep analysis', icon: '◇', color: 'var(--color-violet)' },
-    developer_session: { label: 'Dev session', icon: '▣', color: 'var(--color-cyan)' },
+    developer_session: { label: 'Dev Session', icon: '▣', color: 'var(--color-cyan)', isPortal: true },
   };
 
   const config = toolConfig[tool.name] || { label: 'Processing', icon: '◆', color: 'var(--color-text-dim)' };
+  const isPortal = config.isPortal === true;
+  const sessionId = tool.args?.sessionId as string | undefined;
+
+  // Check if this session is currently on stage
+  const isOnStage = activeStage.type === 'terminal' && activeStage.data?.sessionId === sessionId;
+
+  const handleViewSession = () => {
+    if (sessionId && !isOnStage) {
+      pushStage({
+        id: `terminal-${sessionId}`,
+        type: 'terminal',
+        title: (tool.args?.goal as string) || 'CLI Session',
+        status: 'active',
+        data: { sessionId },
+      });
+    }
+  };
 
   return (
-    <div className="tool-card">
+    <div className={`tool-card ${isPortal ? 'is-portal' : ''} ${isOnStage ? 'is-docked' : ''}`}>
       <style>{`
         .tool-card {
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 12px 16px;
-          margin: 8px 0 16px 0;
-          background: rgba(18, 18, 26, 0.5);
-          border-radius: 12px;
+          padding: 14px 18px;
+          margin: 10px 0 18px 0;
+          background: linear-gradient(
+            135deg,
+            rgba(10, 10, 15, 0.7) 0%,
+            rgba(8, 8, 12, 0.8) 100%
+          );
+          backdrop-filter: blur(12px);
+          border-radius: 14px;
+          border: 1px solid var(--color-glass-border);
           border-left: 3px solid ${config.color};
-          animation: tool-appear 0.2s var(--ease-out) forwards;
+          animation: tool-appear 0.25s var(--ease-out) forwards;
+          transition: all 0.25s var(--ease-out);
+        }
+
+        .tool-card.is-portal {
+          border: 1px solid rgba(56, 189, 248, 0.2);
+          border-left: 3px solid var(--color-cyan);
+          box-shadow:
+            0 0 20px rgba(56, 189, 248, 0.08),
+            0 4px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        .tool-card.is-portal:hover:not(.is-docked) {
+          border-color: rgba(56, 189, 248, 0.35);
+          box-shadow:
+            0 0 30px rgba(56, 189, 248, 0.12),
+            0 4px 20px rgba(0, 0, 0, 0.25);
+        }
+
+        .tool-card.is-docked {
+          opacity: 0.6;
+          border-color: rgba(56, 189, 248, 0.1);
+          box-shadow: none;
         }
 
         @keyframes tool-appear {
           from {
             opacity: 0;
-            transform: translateX(-8px);
+            transform: translateX(-12px) scale(0.98);
           }
           to {
             opacity: 1;
-            transform: translateX(0);
+            transform: translateX(0) scale(1);
           }
+        }
+
+        .tool-icon-wrapper {
+          width: 36px;
+          height: 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: ${config.color}15;
+          border: 1px solid ${config.color}25;
+          border-radius: 8px;
+          flex-shrink: 0;
         }
 
         .tool-icon {
           font-size: 16px;
           color: ${config.color};
-          animation: tool-pulse 1s ease-in-out infinite;
+          animation: tool-pulse 1.2s ease-in-out infinite;
+        }
+
+        .tool-card.is-portal .tool-icon {
+          text-shadow: 0 0 8px ${config.color};
         }
 
         @keyframes tool-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.6; }
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(0.95); }
         }
 
         .tool-info {
@@ -274,22 +333,34 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
         }
 
         .tool-label {
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: ${config.color};
+          font-family: var(--font-ui);
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--color-text-normal);
+        }
+
+        .tool-card.is-portal .tool-label {
+          color: var(--color-cyan);
         }
 
         .tool-name {
           font-family: var(--font-mono);
           font-size: 10px;
           color: var(--color-text-ghost);
-          margin-top: 2px;
+          margin-top: 3px;
+          letter-spacing: 0.02em;
+        }
+
+        .tool-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
         }
 
         .tool-spinner {
-          width: 16px;
-          height: 16px;
-          border: 2px solid var(--color-border);
+          width: 18px;
+          height: 18px;
+          border: 2px solid rgba(255, 255, 255, 0.08);
           border-top-color: ${config.color};
           border-radius: 50%;
           animation: spin 0.8s linear infinite;
@@ -298,14 +369,68 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
+
+        .tool-view-btn {
+          padding: 6px 12px;
+          border-radius: 6px;
+          border: 1px solid rgba(56, 189, 248, 0.25);
+          background: rgba(56, 189, 248, 0.08);
+          color: var(--color-cyan);
+          font-family: var(--font-mono);
+          font-size: 10px;
+          font-weight: 500;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .tool-view-btn:hover {
+          background: rgba(56, 189, 248, 0.15);
+          border-color: rgba(56, 189, 248, 0.4);
+          box-shadow: 0 0 12px rgba(56, 189, 248, 0.15);
+        }
+
+        .tool-docked-label {
+          font-family: var(--font-mono);
+          font-size: 9px;
+          color: var(--color-text-ghost);
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+        }
+
+        /* Portal connection indicator */
+        .tool-card.is-portal::after {
+          content: '';
+          position: absolute;
+          right: -8px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 8px;
+          height: 2px;
+          background: linear-gradient(90deg, var(--color-cyan), transparent);
+          opacity: 0.5;
+        }
       `}</style>
 
-      <span className="tool-icon">{config.icon}</span>
+      <div className="tool-icon-wrapper">
+        <span className="tool-icon">{config.icon}</span>
+      </div>
       <div className="tool-info">
         <div className="tool-label">{config.label}</div>
         <div className="tool-name">{tool.name}</div>
       </div>
-      <div className="tool-spinner" />
+      <div className="tool-actions">
+        {isPortal && sessionId && !isOnStage && (
+          <button className="tool-view-btn" onClick={handleViewSession}>
+            View
+          </button>
+        )}
+        {isOnStage && (
+          <span className="tool-docked-label">On Stage</span>
+        )}
+        {!isOnStage && <div className="tool-spinner" />}
+      </div>
     </div>
   );
 }
@@ -472,7 +597,7 @@ export function ConversationStream({ messages, currentTool }: ConversationStream
       ) : (
         <div className="messages-container">
           {messages.map((msg, index) => (
-            <MessageBubble
+            <HUDMessage
               key={msg.id}
               message={msg}
               isLatest={index === messages.length - 1}

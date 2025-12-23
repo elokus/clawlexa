@@ -17,6 +17,7 @@
 
 import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
+import { CliSessionsRepository } from '../db/index.js';
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
 
@@ -69,7 +70,9 @@ export type WSMessageType =
   | 'subagent_activity'
   // Multi-client master/replica coordination
   | 'welcome'               // Sent on connect with clientId and isMaster
-  | 'master_changed';       // Broadcast when master changes
+  | 'master_changed'        // Broadcast when master changes
+  // Session hierarchy tree updates
+  | 'session_tree_update';  // Full session tree for ThreadRail
 
 interface WSMessage {
   type: WSMessageType;
@@ -459,6 +462,7 @@ export const wsBroadcast = {
     mode: 'headless' | 'interactive';
     projectPath: string;
     command: string;
+    parentId?: string;
   }) => broadcast('cli_session_created', session),
 
   cliSessionOutput: (sessionId: string, output: string) =>
@@ -467,4 +471,20 @@ export const wsBroadcast = {
   // Unified subagent activity events (replaces workerActivity and cliAgent* events)
   subagentActivity: (payload: SubagentActivityPayload) =>
     broadcast('subagent_activity', payload),
+
+  // Session hierarchy tree update (for ThreadRail)
+  sessionTreeUpdate: (rootId: string) => {
+    const sessionsRepo = new CliSessionsRepository();
+    const tree = sessionsRepo.getTree(rootId);
+    if (tree) {
+      broadcast('session_tree_update', { rootId, tree });
+    }
+  },
+
+  // Broadcast all active trees (for initial load)
+  allActiveTreesUpdate: () => {
+    const sessionsRepo = new CliSessionsRepository();
+    const trees = sessionsRepo.getActiveTrees();
+    broadcast('session_tree_update', { trees });
+  },
 };

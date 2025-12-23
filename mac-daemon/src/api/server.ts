@@ -1,4 +1,6 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
+import { createServer as createHttpServer, Server as HttpServer } from 'http';
+import cors from 'cors';
 import { SessionManager } from '../sessions/manager.js';
 import { createSessionRoutes } from './routes.js';
 
@@ -7,10 +9,16 @@ export interface ServerConfig {
   sessionManager: SessionManager;
 }
 
-export function createServer(config: ServerConfig): Express {
+export interface ServerResult {
+  app: Express;
+  httpServer: HttpServer;
+}
+
+export function createServer(config: ServerConfig): ServerResult {
   const app = express();
 
   // Middleware
+  app.use(cors()); // Enable CORS for browser connections
   app.use(express.json());
 
   // Request logging
@@ -47,16 +55,19 @@ export function createServer(config: ServerConfig): Express {
     });
   });
 
-  return app;
+  // Create HTTP server for WebSocket upgrade support
+  const httpServer = createHttpServer(app);
+
+  return { app, httpServer };
 }
 
-export async function startServer(config: ServerConfig): Promise<void> {
-  const app = createServer(config);
+export async function startServer(config: ServerConfig): Promise<HttpServer> {
+  const { httpServer } = createServer(config);
 
   return new Promise((resolve) => {
-    app.listen(config.port, () => {
+    httpServer.listen(config.port, () => {
       console.log(`[API] Server listening on port ${config.port}`);
-      resolve();
+      resolve(httpServer);
     });
   });
 }

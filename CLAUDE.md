@@ -50,7 +50,7 @@ voice-agent/
 │
 ├── web/                   # Web Dashboard (React + Vite + Bun)
 │   ├── src/
-│   │   ├── main.tsx          # Entry point
+│   │   ├── main.tsx          # Entry point with routing
 │   │   ├── App.tsx           # Main dashboard layout
 │   │   ├── components/       # UI components
 │   │   │   ├── VoiceVisualizer.tsx  # Audio waveform animation
@@ -58,6 +58,13 @@ voice-agent/
 │   │   │   ├── TranscriptView.tsx   # Conversation history
 │   │   │   ├── SessionSidebar.tsx   # CLI sessions panel
 │   │   │   └── EventLog.tsx         # Real-time event stream
+│   │   ├── dev/              # Component Dev Environment (/dev)
+│   │   │   ├── DevPage.tsx       # Dev page with sidebar
+│   │   │   ├── registry.ts       # Demo registration
+│   │   │   ├── components/       # Sidebar, Canvas, Controls
+│   │   │   ├── hooks/            # Stream simulator
+│   │   │   └── demos/            # Component demos
+│   │   │       └── activity-feed/
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts      # WebSocket connection
 │   │   ├── stores/           # Zustand state management
@@ -285,6 +292,35 @@ SQLite at `~/voice-agent.db`:
 | `cli_events` | Session event log |
 | `timers` | Timers and reminders |
 | `agent_runs` | Conversation history |
+
+## Component Dev Environment
+
+Isolated component development with simulated agent streaming. Access at `/dev`.
+
+```bash
+# Start both backend and frontend for dev mode
+cd pi-agent && npm run dev &
+cd web && npm run dev
+
+# Open component lab
+open http://localhost:5173/dev
+```
+
+**Features:**
+- Sidebar with categorized component list
+- Stream playback controls (play/pause/step/reset)
+- Speed control (0.5x - 10x)
+- Backend/frontend toggle (use real SSE streams or mock data)
+- Event inspector panel
+
+**Adding a demo:** See `docs/COMPONENT_DEV.md` for full documentation.
+
+Quick setup:
+1. Create `web/src/dev/demos/my-component/`
+2. Add `scenarios.ts` with mock event streams
+3. Add `component.tsx` wrapper
+4. Add `index.ts` to register demo
+5. Import in `web/src/dev/demos/index.ts`
 
 ## Development Commands
 
@@ -615,6 +651,97 @@ setTimeout(() => {
     socketToClose.close();
   }
 }, 500); // 500ms delay for StrictMode
+```
+
+### PTY Session Multiplexing (Mac Daemon)
+
+**Problem**: Multiple WebSocket connections to the same terminal session each spawned a new `tmux attach-session` process, causing:
+1. Terminal output repeating (each PTY shows full tmux history)
+2. Duplicate keystrokes ("r" → "rr") because multiple PTYs write to same tmux
+
+**Solution**: One PTY per session, multiple WebSocket viewers:
+
+```typescript
+// mac-daemon/src/pty/manager.ts
+interface PtyConnection {
+  pty: IPty;
+  viewers: Set<WebSocket>; // Multiple viewers share one PTY
+  sessionId: string;
+  // ...
+}
+
+attach(sessionId: string, ws: WebSocket) {
+  const existing = this.connections.get(sessionId);
+  if (existing) {
+    // Add as viewer to existing PTY - DON'T create new tmux attachment
+    existing.viewers.add(ws);
+    this.wireWebSocketInput(ws, existing.pty, sessionId);
+    return { success: true };
+  }
+  // Only spawn tmux attach-session for first connection
+  const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxSessionName], {...});
+  // ...
+}
+```
+
+### Terminal Client Singleton Pattern
+
+**Problem**: React StrictMode and component remounts created multiple WebSocket connections to the same terminal session.
+
+**Solution**: Module-level singleton map keyed by sessionId with ref counting:
+
+```typescript
+// web/src/lib/terminal-client.ts
+const activeConnections = new Map<string, { client: TerminalClient; refCount: number }>();
+
+export function getTerminalClient(sessionId: string, options: TerminalClientOptions): TerminalClient {
+  const existing = activeConnections.get(sessionId);
+  if (existing) {
+    existing.refCount++;
+    existing.client.updateCallbacks(options); // Update callbacks to latest
+    return existing.client;
+  }
+  // Create new client only if none exists
+  const client = new TerminalClient(options);
+  activeConnections.set(sessionId, { client, refCount: 1 });
+  return client;
+}
+
+export function releaseTerminalClient(sessionId: string): void {
+  const existing = activeConnections.get(sessionId);
+  if (!existing) return;
+  existing.refCount--;
+  if (existing.refCount <= 0) {
+    // Delay cleanup for StrictMode double-mount
+    setTimeout(() => {
+      const current = activeConnections.get(sessionId);
+      if (current && current.refCount <= 0) {
+        current.client.disconnect();
+        activeConnections.delete(sessionId);
+      }
+    }, 500);
+  }
+}
+```
+
+### CSS 3D Transform Perspective Nesting
+
+**Problem**: Nested elements with `perspective` and `transform-style: preserve-3d` cause compounded 3D transforms, making UI elements appear extremely rotated.
+
+**Solution**:
+1. Only apply `perspective` to ONE ancestor, not nested elements
+2. Cap depth effects to prevent extreme transforms for many items:
+
+```typescript
+// web/src/components/rails/ThreadRail.tsx
+// BAD: Extreme depth for item index 9
+const depthZ = -40 * index; // = -360px for index 9!
+
+// GOOD: Cap effects at 5 items
+const cappedIndex = Math.min(index, 5);
+const depthZ = -30 * cappedIndex;
+const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12);
+const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025);
 ```
 
 ### Future Improvement: WebRTC Transport

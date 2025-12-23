@@ -19,15 +19,21 @@ interface SessionsStore {
   sessionEvents: Record<string, CliEvent[]>;
   loading: boolean;
   error: string | null;
+  hasFetched: boolean; // Track if initial fetch has been done
 
   // Actions
   setSessions: (sessions: CliSession[]) => void;
   selectSession: (id: string | null) => void;
   updateSession: (session: CliSession) => void;
+  addSession: (session: CliSession) => void;
   addEvent: (sessionId: string, event: CliEvent) => void;
   setSessionEvents: (sessionId: string, events: CliEvent[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+
+  // Computed
+  getSessionsByThread: () => Map<string, CliSession[]>;
+  getActiveSessionCount: () => number;
 
   // Async actions
   fetchSessions: () => Promise<void>;
@@ -40,6 +46,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   sessionEvents: {},
   loading: false,
   error: null,
+  hasFetched: false,
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -57,6 +64,15 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
         s.id === session.id ? session : s
       ),
     })),
+
+  addSession: (session) =>
+    set((state) => {
+      // Avoid duplicates
+      if (state.sessions.some((s) => s.id === session.id)) {
+        return { sessions: state.sessions.map((s) => (s.id === session.id ? session : s)) };
+      }
+      return { sessions: [...state.sessions, session] };
+    }),
 
   addEvent: (sessionId, event) =>
     set((state) => ({
@@ -78,6 +94,35 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
   setError: (error) => set({ error }),
 
+  // Group sessions by thread_id (or by their own id if no thread)
+  getSessionsByThread: () => {
+    const sessions = get().sessions;
+    const grouped = new Map<string, CliSession[]>();
+
+    for (const session of sessions) {
+      const threadKey = session.thread_id || session.id;
+      const existing = grouped.get(threadKey) || [];
+      grouped.set(threadKey, [...existing, session]);
+    }
+
+    // Sort sessions within each thread by created_at
+    for (const [key, threadSessions] of grouped) {
+      grouped.set(
+        key,
+        threadSessions.sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        )
+      );
+    }
+
+    return grouped;
+  },
+
+  // Count active (non-finished) sessions
+  getActiveSessionCount: () => {
+    return get().sessions.filter((s) => s.status === 'running' || s.status === 'waiting_for_input').length;
+  },
+
   fetchSessions: async () => {
     if (IS_DEMO_MODE) {
       console.log('[Sessions] Demo mode - skipping fetch');
@@ -91,12 +136,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const sessions: CliSession[] = await response.json();
-      set({ sessions, loading: false });
+      set({ sessions, loading: false, hasFetched: true });
       console.log(`[Sessions] Fetched ${sessions.length} sessions`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to fetch sessions';
       console.error('[Sessions] Fetch error:', message);
-      set({ error: message, loading: false });
+      set({ error: message, loading: false, hasFetched: true });
     }
   },
 

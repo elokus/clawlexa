@@ -23,12 +23,14 @@ const developerSessionParameters = z.object({
     ),
 });
 
-export const developerSessionTool = tool<
-  typeof developerSessionParameters,
-  RealtimeContextData
->({
-  name: 'developer_session',
-  description: `Start or manage a coding session on the Mac. Use this when the user wants to:
+/**
+ * Factory function to create the developer_session tool with an injected session ID.
+ * This avoids polluting the conversation context with the session ID.
+ */
+export function createDeveloperSessionTool(sessionId: string) {
+  return tool<typeof developerSessionParameters, RealtimeContextData>({
+    name: 'developer_session',
+    description: `Start or manage a coding session on the Mac. Use this when the user wants to:
 - Review code in a project
 - Implement a new feature
 - Fix a bug
@@ -41,27 +43,31 @@ Examples:
 - "Implement dark mode in the frontend"
 - "Fix the authentication bug in weka"
 - "Start a session for the BEGA project"`,
-  parameters: developerSessionParameters,
-  async execute({ request }, details) {
-    console.log('[DeveloperSession] Tool called with request:', request);
+    parameters: developerSessionParameters,
+    async execute({ request }, details) {
+      console.log('[DeveloperSession] Tool called with request:', request);
 
-    // Check if Mac daemon is available
-    const macAvailable = await isMacDaemonAvailable();
-    if (!macAvailable) {
-      console.log('[DeveloperSession] Mac daemon not available');
-      return 'Der Mac ist gerade nicht erreichbar. Bitte stelle sicher, dass der Mac Daemon läuft.';
-    }
+      // Check if Mac daemon is available
+      const macAvailable = await isMacDaemonAvailable();
+      if (!macAvailable) {
+        console.log('[DeveloperSession] Mac daemon not available');
+        return 'Der Mac ist gerade nicht erreichbar. Bitte stelle sicher, dass der Mac Daemon läuft.';
+      }
 
-    // Get conversation history from context
-    const history: RealtimeItem[] = details?.context?.history ?? [];
-    console.log('[DeveloperSession] Got history with', history.length, 'items');
+      // Get conversation history from context
+      const history: RealtimeItem[] = details?.context?.history ?? [];
+      console.log('[DeveloperSession] Got history with', history.length, 'items');
 
-    // Delegate to the CLI orchestration agent
-    const result = await handleDeveloperRequest(request, history);
+      // Use the injected sessionId directly (no need to extract from history)
+      console.log('[DeveloperSession] Using injected voice session ID:', sessionId);
 
-    return result;
-  },
-});
+      // Delegate to the CLI orchestration agent
+      const result = await handleDeveloperRequest(request, history, sessionId);
+
+      return result;
+    },
+  });
+}
 
 // Additional tools for session management from voice
 

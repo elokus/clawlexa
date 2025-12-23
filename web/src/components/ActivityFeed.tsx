@@ -29,11 +29,29 @@ function formatDuration(ms: number): string {
   return (ms / 1000).toFixed(1);
 }
 
+// Check if reasoning content is meaningful (not empty/placeholder)
+function hasUsefulReasoning(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  // Filter out known placeholder patterns from models that hide reasoning
+  const placeholders = ['[REDACTED]', '[redacted]', 'Redacted', '[Web search in progress...]'];
+  return !placeholders.some(p => trimmed === p || trimmed.startsWith(p));
+}
+
 // Reasoning Block Component
 function ReasoningBlockView({ block }: { block: ReasoningBlock }) {
   const [isOpen, setIsOpen] = useState(false);
 
+  // Don't render completed reasoning blocks with no useful content
+  if (block.isComplete && !hasUsefulReasoning(block.content)) {
+    return null;
+  }
+
   if (!block.isComplete) {
+    // Only show "in progress" if there's content being streamed
+    if (!block.content.trim()) {
+      return null;
+    }
     // Active reasoning - show pulsing preview
     return (
       <div className="activity-item reasoning active">

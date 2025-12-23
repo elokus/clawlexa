@@ -159,6 +159,37 @@ export function createSessionRoutes(sessionManager: SessionManager): Router {
   });
 
   /**
+   * GET /sessions/:id/context - Get terminal context with ANSI colors preserved
+   * Used for UI restoration when switching between terminal views.
+   */
+  router.get('/sessions/:id/context', async (req: Request, res: Response) => {
+    try {
+      const { id } = SessionIdParamSchema.parse(req.params);
+      const lines = parseInt(req.query.lines as string) || 100;
+
+      const context = await sessionManager.readContext(id, lines);
+
+      res.json({
+        success: true,
+        data: { lines: context },
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          details: error.errors,
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const status = message.includes('not found') ? 404 : 500;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  /**
    * DELETE /sessions/:id - Terminate a session
    */
   router.delete('/sessions/:id', async (req: Request, res: Response) => {

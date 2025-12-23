@@ -241,6 +241,33 @@ export class TmuxManager {
   getTmuxSessionName(sessionId: string): string {
     return this.getSessionName(sessionId);
   }
+
+  /**
+   * Capture pane context with ANSI escape codes preserved.
+   * Used for UI restoration when switching between terminal views.
+   */
+  async captureContext(
+    sessionId: string,
+    lines: number = 100
+  ): Promise<string[]> {
+    const sessionName = this.getSessionName(sessionId);
+
+    const exists = await this.sessionExists(sessionId);
+    if (!exists) {
+      throw new Error(`Session ${sessionName} does not exist`);
+    }
+
+    try {
+      // -e flag preserves ANSI escape codes for terminal rendering
+      const { stdout } = await execAsync(
+        `tmux capture-pane -t "${sessionName}" -p -e -S -${lines}`
+      );
+      return stdout.split('\n');
+    } catch (error) {
+      console.error(`Failed to capture context for ${sessionName}:`, error);
+      return [];
+    }
+  }
 }
 
 export const tmuxManager = new TmuxManager();

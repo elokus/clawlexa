@@ -25,6 +25,8 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.12",
+    "framer-motion": "^12.23.26",
+    "ghostty-web": "^0.4.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "zustand": "^5.0.9"

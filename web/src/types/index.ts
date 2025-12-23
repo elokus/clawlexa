@@ -35,6 +35,8 @@ export interface CliSession {
   goal: string;
   status: SessionStatus;
   mac_session_id: string | null;
+  parent_id: string | null;
+  thread_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +74,8 @@ export type WSMessageType =
   | 'cli_session_output'
   // Unified subagent activity stream
   | 'subagent_activity'
+  // Session tree updates (v2 architecture)
+  | 'session_tree_update'
   // Multi-client master/replica coordination
   | 'welcome'
   | 'master_changed'
@@ -96,6 +100,11 @@ export interface MasterChangedPayload {
 export interface StateChangePayload {
   state: AgentState;
   profile: string | null;
+}
+
+export interface SessionStartedPayload {
+  sessionId?: string;
+  profile?: string;
 }
 
 export interface TranscriptPayload {
@@ -129,6 +138,7 @@ export interface CliSessionCreatedPayload {
   mode: 'headless' | 'interactive';
   projectPath: string;
   command: string;
+  parentId?: string;
 }
 
 export interface CliSessionOutputPayload {
@@ -192,3 +202,6 @@ export interface ErrorBlock extends BaseBlock {
 }
 
 export type ActivityBlock = ReasoningBlock | ToolBlock | ContentBlock | ErrorBlock;
+
+// Re-export stage types
+export * from './stage';
