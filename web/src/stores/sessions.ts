@@ -26,6 +26,8 @@ interface SessionsStore {
   selectSession: (id: string | null) => void;
   updateSession: (session: CliSession) => void;
   addSession: (session: CliSession) => void;
+  removeSession: (id: string) => void;
+  clearSessions: () => void;
   addEvent: (sessionId: string, event: CliEvent) => void;
   setSessionEvents: (sessionId: string, events: CliEvent[]) => void;
   setLoading: (loading: boolean) => void;
@@ -38,6 +40,8 @@ interface SessionsStore {
   // Async actions
   fetchSessions: () => Promise<void>;
   fetchSessionEvents: (sessionId: string) => Promise<void>;
+  deleteSession: (id: string) => Promise<void>;
+  deleteAllSessions: () => Promise<void>;
 }
 
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
@@ -72,6 +76,23 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
         return { sessions: state.sessions.map((s) => (s.id === session.id ? session : s)) };
       }
       return { sessions: [...state.sessions, session] };
+    }),
+
+  removeSession: (id) =>
+    set((state) => {
+      const { [id]: _removed, ...remainingEvents } = state.sessionEvents;
+      return {
+        sessions: state.sessions.filter((s) => s.id !== id),
+        sessionEvents: remainingEvents,
+        selectedSessionId: state.selectedSessionId === id ? null : state.selectedSessionId,
+      };
+    }),
+
+  clearSessions: () =>
+    set({
+      sessions: [],
+      sessionEvents: {},
+      selectedSessionId: null,
     }),
 
   addEvent: (sessionId, event) =>
@@ -131,13 +152,14 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
     set({ loading: true, error: null });
     try {
-      const response = await fetch(`${API_BASE_URL}/api/sessions`);
+      // Fetch only active sessions (pending, running, waiting_for_input)
+      const response = await fetch(`${API_BASE_URL}/api/sessions/active`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const sessions: CliSession[] = await response.json();
       set({ sessions, loading: false, hasFetched: true });
-      console.log(`[Sessions] Fetched ${sessions.length} sessions`);
+      console.log(`[Sessions] Fetched ${sessions.length} active sessions`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to fetch sessions';
       console.error('[Sessions] Fetch error:', message);
@@ -165,6 +187,47 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       console.log(`[Sessions] Fetched ${events.length} events for session ${sessionId}`);
     } catch (error) {
       console.error('[Sessions] Fetch events error:', error);
+    }
+  },
+
+  deleteSession: async (id: string) => {
+    if (IS_DEMO_MODE) {
+      get().removeSession(id);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      get().removeSession(id);
+      console.log(`[Sessions] Deleted session ${id}`);
+    } catch (error) {
+      console.error('[Sessions] Delete session error:', error);
+    }
+  },
+
+  deleteAllSessions: async () => {
+    if (IS_DEMO_MODE) {
+      get().clearSessions();
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const result = await response.json();
+      get().clearSessions();
+      console.log(`[Sessions] Deleted all ${result.deleted} sessions`);
+    } catch (error) {
+      console.error('[Sessions] Delete all sessions error:', error);
     }
   },
 }));

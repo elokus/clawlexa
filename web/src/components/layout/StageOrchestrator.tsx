@@ -8,7 +8,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { AnimatePresence } from 'framer-motion';
-import { useFocusedSession } from '../../stores/stage';
+import { useFocusedSession, useStageStore } from '../../stores/stage';
+import { useAgentStore, useSubagentActivities } from '../../stores/agent';
 import { BackgroundRail } from '../rails/BackgroundRail';
 import { ThreadRail } from '../rails/ThreadRail';
 import { ChatStage } from '../stages/ChatStage';
@@ -38,11 +39,39 @@ const ROOT_STAGE: StageItem = {
  * Renders the appropriate stage based on focused session.
  * - terminal sessions → TerminalStage
  * - orchestrator sessions → SubagentStage (shows activity feed)
+ * - active subagent (no session yet) → SubagentStage (early transition)
  * - no session → ChatStage (voice conversation)
  */
 function ActiveStage({ session }: { session: SessionTreeNode | null }) {
-  // No session tree - show voice conversation
+  // Check for active subagent work (before session tree arrives)
+  const subagentActivities = useSubagentActivities();
+  const subagentActive = useAgentStore((s) => s.subagentActive);
+  // Check if we have a session tree (for distinguishing early transition vs navigation)
+  const hasSessionTree = useStageStore((s) => s.sessionTree !== null);
+
+  // No session tree - check for subagent activity
   if (!session) {
+    // IMPORTANT: Only show SubagentStage in "early transition" case when:
+    // 1. There are activities or subagent is active
+    // 2. We DON'T have a session tree yet (true early transition)
+    // If we have a session tree but focusedSessionId is null, user explicitly
+    // navigated back to voice - show ChatStage
+    if ((subagentActivities.length > 0 || subagentActive) && !hasSessionTree) {
+      const agentName = subagentActivities[0]?.agent || 'Agent';
+      return (
+        <SubagentStage
+          stage={{
+            id: `pending-${agentName}`,
+            type: 'subagent',
+            title: agentName,
+            status: 'active',
+            createdAt: Date.now(),
+            data: { agentName },
+          }}
+        />
+      );
+    }
+    // No subagent activity OR user navigated back to voice - show voice conversation
     return <ChatStage stage={ROOT_STAGE} />;
   }
 
@@ -87,6 +116,15 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
 export function StageOrchestrator() {
   // Use the new tree-based focused session
   const focusedSession = useFocusedSession();
+
+  // Check for pending subagent (for key generation)
+  const subagentActivities = useSubagentActivities();
+  const pendingAgentName = !focusedSession && subagentActivities.length > 0
+    ? subagentActivities[0]?.agent
+    : null;
+
+  // Generate unique key for AnimatePresence transitions
+  const stageKey = focusedSession?.id ?? (pendingAgentName ? `pending-${pendingAgentName}` : 'root');
 
   return (
     <div className="stage-orchestrator-wrapper stage-perspective">
@@ -211,7 +249,7 @@ export function StageOrchestrator() {
         <div className="orchestrator-stage">
           <div className="stage-container">
             <AnimatePresence mode="wait">
-              <ActiveStage key={focusedSession?.id ?? 'root'} session={focusedSession} />
+              <ActiveStage key={stageKey} session={focusedSession} />
             </AnimatePresence>
 
             {/* Glass HUD - shows when viewing terminal and agent is speaking */}

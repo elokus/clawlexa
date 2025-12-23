@@ -18,6 +18,7 @@
 import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { CliSessionsRepository } from '../db/index.js';
+import { eventRecorder } from './event-recorder.js';
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
 
@@ -66,6 +67,7 @@ export type WSMessageType =
   | 'cli_session_update'
   | 'cli_session_created'   // New tmux session created
   | 'cli_session_output'    // Session output streaming
+  | 'cli_session_deleted'   // Session deleted from database
   // Unified subagent activity stream (replaces worker_activity and cli_agent_* events)
   | 'subagent_activity'
   // Multi-client master/replica coordination
@@ -136,6 +138,18 @@ export function startWebSocketServer(): Promise<void> {
         payload: { state: lastAgentState, profile: null },
         timestamp: Date.now(),
       }));
+
+      // Send active session trees (so clients can navigate to running sessions)
+      const sessionsRepo = new CliSessionsRepository();
+      const activeTrees = sessionsRepo.getActiveTrees();
+      if (activeTrees.length > 0) {
+        ws.send(JSON.stringify({
+          type: 'session_tree_update',
+          payload: { trees: activeTrees },
+          timestamp: Date.now(),
+        }));
+        console.log(`[WS] Sent ${activeTrees.length} active session trees to ${clientId.slice(0, 8)}`);
+      }
 
       // Handle disconnection
       ws.on('close', () => {
@@ -257,14 +271,20 @@ export function stopWebSocketServer(): Promise<void> {
 
 /**
  * Broadcast a message to all connected clients.
+ * Also records the event if recording is active.
  */
 export function broadcast(type: WSMessageType, payload: unknown): void {
+  const timestamp = Date.now();
+
+  // Record event if recording is active
+  eventRecorder.record(type, payload, timestamp);
+
   if (clients.size === 0) return;
 
   const message: WSMessage = {
     type,
     payload,
-    timestamp: Date.now(),
+    timestamp,
   };
 
   const data = JSON.stringify(message);
@@ -420,6 +440,8 @@ export interface SubagentActivityPayload {
   type: SubagentEventType;
   /** Event-specific payload */
   payload: unknown;
+  /** Orchestrator session ID for per-session activity tracking */
+  orchestratorId?: string;
 }
 
 // Convenience broadcast functions
@@ -467,6 +489,12 @@ export const wsBroadcast = {
 
   cliSessionOutput: (sessionId: string, output: string) =>
     broadcast('cli_session_output', { sessionId, output }),
+
+  cliSessionDeleted: (sessionId: string) =>
+    broadcast('cli_session_deleted', { sessionId }),
+
+  cliAllSessionsDeleted: () =>
+    broadcast('cli_session_deleted', { all: true }),
 
   // Unified subagent activity events (replaces workerActivity and cliAgent* events)
   subagentActivity: (payload: SubagentActivityPayload) =>

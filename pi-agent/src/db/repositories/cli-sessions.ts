@@ -33,6 +33,7 @@ export interface Session {
   conversation_history: string | null; // JSON array
   // Terminal-specific
   mac_session_id: string | null;
+  tool_call_id: string | null; // Links to the tool call that created this session
   // Timestamps
   created_at: string;
   updated_at: string;
@@ -55,6 +56,7 @@ export interface CreateTerminalInput {
   goal: string;
   parent_id: string; // Terminals must have an orchestrator parent
   mac_session_id?: string;
+  tool_call_id?: string; // Links to the tool call that created this session
 }
 
 /** @deprecated Use CreateOrchestratorInput or CreateTerminalInput instead */
@@ -74,6 +76,7 @@ export interface SessionTreeNode {
   status: SessionStatus;
   goal: string;
   agent_name: AgentName | null;
+  tool_call_id: string | null; // For terminals: links to the tool call that created them
   created_at: string;
   children: SessionTreeNode[];
 }
@@ -117,10 +120,18 @@ export class CliSessionsRepository {
     this.db
       .prepare(
         `INSERT INTO cli_sessions
-         (id, type, goal, status, parent_id, mac_session_id, created_at, updated_at)
-         VALUES (?, 'terminal', ?, 'running', ?, ?, ?, ?)`
+         (id, type, goal, status, parent_id, mac_session_id, tool_call_id, created_at, updated_at)
+         VALUES (?, 'terminal', ?, 'running', ?, ?, ?, ?, ?)`
       )
-      .run(id, input.goal, input.parent_id, input.mac_session_id ?? null, now, now);
+      .run(
+        id,
+        input.goal,
+        input.parent_id,
+        input.mac_session_id ?? null,
+        input.tool_call_id ?? null,
+        now,
+        now
+      );
 
     return this.findById(id)!;
   }
@@ -209,16 +220,29 @@ export class CliSessionsRepository {
   }
 
   /**
-   * Get all root orchestrators (no parent) that are active.
+   * Get all root orchestrators (no parent) that are active OR have active descendants.
+   * This ensures we can navigate to running terminals even if their parent orchestrator has finished.
    */
   getActiveRoots(): Session[] {
+    // Use recursive CTE to find all roots with any active descendants
     return this.db
       .prepare(
-        `SELECT * FROM cli_sessions
-         WHERE type = 'orchestrator'
-         AND parent_id IS NULL
-         AND status IN ('pending', 'running', 'waiting_for_input')
-         ORDER BY created_at DESC`
+        `WITH RECURSIVE ancestry AS (
+           -- Start with all active sessions
+           SELECT id, parent_id FROM cli_sessions
+           WHERE status IN ('pending', 'running', 'waiting_for_input')
+
+           UNION
+
+           -- Walk up to parents
+           SELECT p.id, p.parent_id FROM cli_sessions p
+           INNER JOIN ancestry a ON a.parent_id = p.id
+         )
+         SELECT DISTINCT r.* FROM cli_sessions r
+         WHERE r.type = 'orchestrator'
+         AND r.parent_id IS NULL
+         AND r.id IN (SELECT id FROM ancestry)
+         ORDER BY r.created_at DESC`
       )
       .all() as Session[];
   }
@@ -261,6 +285,7 @@ export class CliSessionsRepository {
         status: s.status,
         goal: s.goal,
         agent_name: s.agent_name,
+        tool_call_id: s.tool_call_id,
         created_at: s.created_at,
         children: children.map(buildNode),
       };
@@ -401,6 +426,15 @@ export class CliSessionsRepository {
   delete(id: string): boolean {
     const result = this.db.prepare('DELETE FROM cli_sessions WHERE id = ?').run(id);
     return result.changes > 0;
+  }
+
+  /**
+   * Delete all sessions and their events (cascade).
+   * Returns the number of sessions deleted.
+   */
+  deleteAll(): number {
+    const result = this.db.prepare('DELETE FROM cli_sessions').run();
+    return result.changes;
   }
 
   /**

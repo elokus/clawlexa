@@ -39,12 +39,36 @@ const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
 // Set before running the agent, accessed by tools during execution
 let currentOrchestratorId: string | undefined;
 
+// Track pending tool calls for session-creating tools
+// Maps orchestratorId → toolCallId
+// Set by agent-runner when tool-call event fires, consumed by tools when creating sessions
+const pendingSessionToolCalls = new Map<string, string>();
+
 /**
  * Get the current orchestrator session ID for terminal tracking.
  * Called by CLI tools when creating new terminal sessions.
  */
 export function getCurrentOrchestratorId(): string | undefined {
   return currentOrchestratorId;
+}
+
+/**
+ * Set a pending tool call ID for session-creating tools.
+ * Called by agent-runner when it sees a tool-call event for start_headless_session or start_interactive_session.
+ */
+export function setPendingToolCall(orchestratorId: string, toolCallId: string): void {
+  pendingSessionToolCalls.set(orchestratorId, toolCallId);
+}
+
+/**
+ * Consume the pending tool call ID for the given orchestrator.
+ * Called by CLI tools when creating terminal sessions.
+ * Returns the toolCallId and removes it from the map.
+ */
+export function consumePendingToolCall(orchestratorId: string): string | undefined {
+  const toolCallId = pendingSessionToolCalls.get(orchestratorId);
+  pendingSessionToolCalls.delete(orchestratorId);
+  return toolCallId;
 }
 
 /**
@@ -175,6 +199,7 @@ Analyze this request and take appropriate action. Remember:
 
   try {
     // Run the agent using the Observable Agent Runner pattern
+    // Pass orchestratorId for per-session activity tracking on frontend
     const output = await runObservableAgent({
       name: config.name,
       model,
@@ -182,6 +207,7 @@ Analyze this request and take appropriate action. Remember:
       prompt: userMessage,
       tools: cliAgentTools,
       maxSteps: config.maxSteps ?? 3,
+      orchestratorId: orchestrator.id,
     });
 
     console.log('[CliAgent] Agent response:');

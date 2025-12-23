@@ -35,6 +35,7 @@ export interface SessionTreeNode {
   status: SessionStatus;
   goal: string;
   agent_name: AgentName | null;
+  tool_call_id: string | null; // For terminals: links to the tool call that created them
   created_at: string;
   children: SessionTreeNode[];
 }

@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAgentStore } from '../../stores/agent';
 import { useStageStore } from '../../stores/stage';
 import { VoiceIndicator } from '../VoiceIndicator';
+import type { TranscriptItem } from '../../types';
 
 interface GlassHUDProps {
   /** Show even when not on terminal stage */
@@ -17,7 +18,7 @@ interface GlassHUDProps {
 export function GlassHUD({ forceShow = false }: GlassHUDProps) {
   const state = useAgentStore((s) => s.state);
   const profile = useAgentStore((s) => s.profile);
-  const messages = useAgentStore((s) => s.messages);
+  const timeline = useAgentStore((s) => s.timeline);
   const activeStage = useStageStore((s) => s.activeStage);
 
   // Only show HUD when:
@@ -27,11 +28,14 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
   const isTerminalStage = activeStage.type === 'terminal';
   const shouldShow = isAgentActive && (isTerminalStage || forceShow);
 
-  // Get the latest assistant message (what's being spoken)
+  // Get the latest assistant message (what's being spoken) from timeline
   const latestMessage = useMemo(() => {
-    const assistantMessages = messages.filter((m) => m.role === 'assistant');
-    return assistantMessages[assistantMessages.length - 1];
-  }, [messages]);
+    const assistantTranscripts = timeline.filter(
+      (item): item is TranscriptItem =>
+        item.type === 'transcript' && item.role === 'assistant'
+    );
+    return assistantTranscripts[assistantTranscripts.length - 1] || null;
+  }, [timeline]);
 
   // Split content into words for highlighting effect
   const words = useMemo(() => {

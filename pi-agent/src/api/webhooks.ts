@@ -10,12 +10,15 @@
  */
 
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import {
   CliSessionsRepository,
   CliEventsRepository,
   type SessionStatus,
 } from '../db/index.js';
 import { handleDemoRequest } from '../demo/index.js';
+import { eventRecorder } from './event-recorder.js';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
 
@@ -84,7 +87,7 @@ function resolvePendingCompletion(payload: WebhookPayload): void {
  */
 function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
@@ -187,6 +190,129 @@ async function handleWebhook(
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to fetch session events' }));
     }
+    return;
+  }
+
+  // DELETE /api/sessions - Delete all sessions
+  if (req.method === 'DELETE' && req.url === '/api/sessions') {
+    try {
+      const sessionsRepo = new CliSessionsRepository();
+      const deleted = sessionsRepo.deleteAll();
+      console.log(`[API] Deleted all ${deleted} sessions`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ deleted }));
+    } catch (error) {
+      console.error('[API] Error deleting sessions:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to delete sessions' }));
+    }
+    return;
+  }
+
+  // DELETE /api/sessions/:id - Delete a specific session
+  const deleteSessionMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'DELETE' && deleteSessionMatch) {
+    try {
+      const sessionId = deleteSessionMatch[1]!;
+      const sessionsRepo = new CliSessionsRepository();
+      const deleted = sessionsRepo.delete(sessionId);
+      if (deleted) {
+        console.log(`[API] Deleted session ${sessionId}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ deleted: true }));
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+      }
+    } catch (error) {
+      console.error('[API] Error deleting session:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to delete session' }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Event Recording API
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // POST /api/recording/start - Start recording events
+  if (req.method === 'POST' && req.url === '/api/recording/start') {
+    eventRecorder.start();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'recording', message: 'Recording started' }));
+    return;
+  }
+
+  // POST /api/recording/stop - Stop recording
+  if (req.method === 'POST' && req.url === '/api/recording/stop') {
+    const events = eventRecorder.stop();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'stopped', eventCount: events.length }));
+    return;
+  }
+
+  // GET /api/recording/status - Check recording status
+  if (req.method === 'GET' && req.url === '/api/recording/status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      recording: eventRecorder.recording,
+      eventCount: eventRecorder.count,
+    }));
+    return;
+  }
+
+  // GET /api/recording/events - Get current events (without stopping)
+  if (req.method === 'GET' && req.url === '/api/recording/events') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(eventRecorder.getEvents()));
+    return;
+  }
+
+  // POST /api/recording/export - Export as scenario
+  if (req.method === 'POST' && req.url === '/api/recording/export') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const { name, description, saveToFile } = JSON.parse(body) as {
+          name: string;
+          description: string;
+          saveToFile?: boolean;
+        };
+
+        const scenario = eventRecorder.exportScenario(
+          name || 'recorded-scenario',
+          description || 'Recorded session'
+        );
+
+        // Optionally save to file
+        if (saveToFile) {
+          const scenariosDir = path.join(process.cwd(), '..', 'web', 'src', 'dev', 'demos', 'captured');
+          if (!fs.existsSync(scenariosDir)) {
+            fs.mkdirSync(scenariosDir, { recursive: true });
+          }
+          const filePath = path.join(scenariosDir, `${scenario.id}.json`);
+          fs.writeFileSync(filePath, JSON.stringify(scenario, null, 2));
+          console.log(`[Recording] Scenario saved to ${filePath}`);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(scenario));
+      } catch (error) {
+        console.error('[Recording] Export error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid request' }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/recording/clear - Clear events without stopping
+  if (req.method === 'POST' && req.url === '/api/recording/clear') {
+    eventRecorder.clear();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'cleared' }));
     return;
   }
 

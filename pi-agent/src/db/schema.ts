@@ -108,6 +108,16 @@ export const migrations: Migration[] = [
       UPDATE cli_sessions SET type = 'terminal' WHERE type IS NULL;
     `,
   },
+  {
+    version: 4,
+    name: 'add_tool_call_id',
+    up: `
+      -- Link terminal sessions to the tool call that created them
+      -- Enables clicking on tool calls in ActivityFeed to navigate to the session
+      ALTER TABLE cli_sessions ADD COLUMN tool_call_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_cli_sessions_tool_call ON cli_sessions(tool_call_id);
+    `,
+  },
 ];
 
 /**

@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useStageStore, useSessionPath } from '../../stores/stage';
+import { useStageStore, useSessionPath, useFocusedSessionChildren } from '../../stores/stage';
 import { useAgentStore } from '../../stores/agent';
 import type { SessionTreeNode } from '../../types';
 
@@ -56,41 +56,33 @@ function ThreadCard({
     ? session.goal.substring(0, 30) + '...'
     : session.goal;
 
-  // 3D depth calculations - capped to prevent extreme transforms
-  const cappedIndex = Math.min(index, 5); // Cap depth effects at 5 items
-  const depthZ = -30 * cappedIndex;
-  const depthY = 6 * cappedIndex;
-  const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12);
-  const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025);
+  // Depth effects - use opacity/scale only, no translateZ (causes click issues)
+  const cappedIndex = Math.min(index, 5);
+  const depthOpacity = Math.max(0.4, 1 - cappedIndex * 0.1);
+  const depthScale = Math.max(0.9, 1 - cappedIndex * 0.02);
 
   return (
     <motion.button
       className={`thread-card ${isFocused ? 'is-active' : ''}`}
       data-type={session.type}
       onClick={onClick}
-      initial={{ opacity: 0, x: 20, rotateY: -5 }}
+      initial={{ opacity: 0, x: 20 }}
       animate={{
         opacity: depthOpacity,
         x: 0,
-        rotateY: -3,
-        translateZ: depthZ,
-        translateY: depthY,
         scale: depthScale,
       }}
-      exit={{ opacity: 0, x: 20, rotateY: -5, scale: 0.95 }}
+      exit={{ opacity: 0, x: 20, scale: 0.95 }}
       transition={{
-        duration: 0.35,
-        delay: index * 0.05,
+        duration: 0.3,
+        delay: index * 0.04,
         ease: [0.4, 0, 0.2, 1],
       }}
-      style={{
-        transformStyle: 'preserve-3d',
-        transformOrigin: 'right center',
-      }}
       whileHover={{
-        x: -6,
-        rotateY: -1,
-        transition: { duration: 0.2 },
+        x: -4,
+        scale: 1,
+        opacity: 1,
+        transition: { duration: 0.15 },
       }}
     >
       <div className="thread-card-inner">
@@ -109,36 +101,44 @@ function ThreadCard({
 }
 
 // Virtual Voice Session card - shown when voice is active and there are child sessions
-function VoiceCard({ profile, index }: { profile: string | null; index: number }) {
+function VoiceCard({
+  profile,
+  index,
+  isFocused,
+  onClick,
+}: {
+  profile: string | null;
+  index: number;
+  isFocused: boolean;
+  onClick: () => void;
+}) {
   const displayName = profile || 'Voice';
   const cappedIndex = Math.min(index, 5);
-  const depthZ = -30 * cappedIndex;
-  const depthY = 6 * cappedIndex;
-  const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12);
-  const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025);
+  const depthOpacity = Math.max(0.4, 1 - cappedIndex * 0.1);
+  const depthScale = Math.max(0.9, 1 - cappedIndex * 0.02);
 
   return (
-    <motion.div
-      className="thread-card is-active"
+    <motion.button
+      className={`thread-card ${isFocused ? 'is-active' : ''}`}
       data-type="voice"
-      initial={{ opacity: 0, x: 20, rotateY: -5 }}
+      onClick={onClick}
+      initial={{ opacity: 0, x: 20 }}
       animate={{
         opacity: depthOpacity,
         x: 0,
-        rotateY: -3,
-        translateZ: depthZ,
-        translateY: depthY,
         scale: depthScale,
       }}
-      exit={{ opacity: 0, x: 20, rotateY: -5, scale: 0.95 }}
+      exit={{ opacity: 0, x: 20, scale: 0.95 }}
       transition={{
-        duration: 0.35,
-        delay: index * 0.05,
+        duration: 0.3,
+        delay: index * 0.04,
         ease: [0.4, 0, 0.2, 1],
       }}
-      style={{
-        transformStyle: 'preserve-3d',
-        transformOrigin: 'right center',
+      whileHover={{
+        x: -4,
+        scale: 1,
+        opacity: 1,
+        transition: { duration: 0.15 },
       }}
     >
       <div className="thread-card-inner">
@@ -147,10 +147,77 @@ function VoiceCard({ profile, index }: { profile: string | null; index: number }
           <div className="thread-title">{displayName}</div>
           <div className="thread-type">voice session</div>
         </div>
-        <span className="thread-status-dot" />
+        {isFocused ? (
+          <span className="thread-status-dot" />
+        ) : (
+          <span className="thread-arrow">←</span>
+        )}
       </div>
-      <div className="thread-card-glow" />
-    </motion.div>
+      {isFocused && <div className="thread-card-glow" />}
+    </motion.button>
+  );
+}
+
+// Child session card - shown below focused session to indicate drill-down targets
+function ChildCard({
+  session,
+  index,
+  onClick,
+}: {
+  session: SessionTreeNode;
+  index: number;
+  onClick: () => void;
+}) {
+  // Get icon - prefer agent-specific, fallback to type-based
+  const icon = session.agent_name
+    ? AGENT_ICONS[session.agent_name] || SESSION_ICONS[session.type]
+    : SESSION_ICONS[session.type] || '◆';
+
+  // Get display label
+  const typeLabel = session.agent_name || SESSION_TYPE_LABELS[session.type] || session.type;
+
+  // Truncate goal for display
+  const displayTitle = session.goal.length > 25
+    ? session.goal.substring(0, 25) + '...'
+    : session.goal;
+
+  // Staggered animation delay
+  const staggerDelay = index * 0.05;
+
+  return (
+    <motion.button
+      className="thread-card child-card"
+      data-type={session.type}
+      onClick={onClick}
+      initial={{ opacity: 0, x: 30, scale: 0.95 }}
+      animate={{
+        opacity: 0.85,
+        x: 0,
+        scale: 0.97,
+      }}
+      exit={{ opacity: 0, x: 30, scale: 0.9 }}
+      transition={{
+        duration: 0.25,
+        delay: staggerDelay,
+        ease: [0.4, 0, 0.2, 1],
+      }}
+      whileHover={{
+        x: -4,
+        scale: 1,
+        opacity: 1,
+        transition: { duration: 0.15 },
+      }}
+    >
+      <div className="thread-card-inner child-inner">
+        <div className="child-indent">↳</div>
+        <div className="thread-icon">{icon}</div>
+        <div className="thread-info">
+          <div className="thread-title">{displayTitle}</div>
+          <div className="thread-type">{typeLabel}</div>
+        </div>
+        <span className="thread-arrow">←</span>
+      </div>
+    </motion.button>
   );
 }
 
@@ -193,8 +260,10 @@ function StageConnector({ hasItems }: { hasItems: boolean }) {
 export function ThreadRail() {
   // Use new tree-based path instead of legacy threadRail
   const sessionPath = useSessionPath();
+  const focusedChildren = useFocusedSessionChildren();
   const focusedSessionId = useStageStore((s) => s.focusedSessionId);
   const focusSession = useStageStore((s) => s.focusSession);
+  const clearFocusedSession = useStageStore((s) => s.clearFocusedSession);
   const voiceActive = useStageStore((s) => s.voiceActive);
   const profile = useAgentStore((s) => s.profile);
   const subagentActive = useAgentStore((s) => s.subagentActive);
@@ -202,12 +271,21 @@ export function ThreadRail() {
   // Show voice card when voice is active AND there's either a session tree or subagent work
   const showVoiceRoot = voiceActive && (sessionPath.length > 0 || subagentActive);
 
-  // Total items including virtual voice card
-  const totalItems = showVoiceRoot ? sessionPath.length + 1 : sessionPath.length;
+  // Voice is "focused" when no session is focused (showing ChatStage)
+  const isVoiceFocused = focusedSessionId === null;
+
+  // Total items including virtual voice card and children
+  const totalItems = (showVoiceRoot ? 1 : 0) + sessionPath.length + focusedChildren.length;
 
   const handleCardClick = (session: SessionTreeNode) => {
+    console.log('[ThreadRail] Card clicked:', session.id, session.type, session.goal);
     // Focus the clicked session (no popping!)
     focusSession(session.id);
+  };
+
+  const handleVoiceClick = () => {
+    console.log('[ThreadRail] Voice card clicked - returning to voice view');
+    clearFocusedSession();
   };
 
   return (
@@ -257,9 +335,7 @@ export function ThreadRail() {
         .thread-stack {
           display: flex;
           flex-direction: column;
-          gap: 12px;
-          perspective: 800px;
-          transform-style: preserve-3d;
+          gap: 10px;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
@@ -274,7 +350,11 @@ export function ThreadRail() {
           border: none;
           cursor: pointer;
           text-align: left;
-          transform-style: preserve-3d;
+          /* Use flat transform-style for reliable click handling */
+          transform-style: flat;
+          /* Ensure clicks register despite 3D parent context */
+          pointer-events: auto;
+          z-index: 1;
         }
 
         .thread-card-inner {
@@ -385,6 +465,70 @@ export function ThreadRail() {
 
         .thread-card.is-active .thread-icon {
           box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
+           CHILD CARDS - Drill-down targets below focused session
+           ═══════════════════════════════════════════════════════════════════ */
+
+        .children-divider {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 16px 4px;
+          margin-top: 4px;
+        }
+
+        .children-label {
+          font-family: var(--font-mono);
+          font-size: 9px;
+          letter-spacing: 0.15em;
+          text-transform: uppercase;
+          color: var(--color-text-ghost);
+          opacity: 0.6;
+        }
+
+        .thread-card.child-card {
+          margin-left: 12px;
+        }
+
+        .thread-card.child-card .thread-card-inner {
+          padding: 10px 14px;
+          background: linear-gradient(
+            135deg,
+            rgba(8, 8, 12, 0.75) 0%,
+            rgba(6, 6, 10, 0.8) 100%
+          );
+          border-color: rgba(56, 189, 248, 0.12);
+        }
+
+        .thread-card.child-card:hover .thread-card-inner {
+          border-color: rgba(56, 189, 248, 0.3);
+        }
+
+        .child-inner {
+          gap: 8px;
+        }
+
+        .child-indent {
+          font-family: var(--font-mono);
+          font-size: 12px;
+          color: var(--color-text-ghost);
+          opacity: 0.4;
+        }
+
+        .thread-card.child-card .thread-icon {
+          width: 28px;
+          height: 28px;
+          font-size: 12px;
+        }
+
+        .thread-card.child-card .thread-title {
+          font-size: 12px;
+        }
+
+        .thread-card.child-card .thread-type {
+          font-size: 8px;
         }
 
         .thread-info {
@@ -535,7 +679,13 @@ export function ThreadRail() {
             <AnimatePresence>
               {/* Virtual Voice Session card at root when voice is active */}
               {showVoiceRoot && (
-                <VoiceCard key="voice-root" profile={profile} index={0} />
+                <VoiceCard
+                  key="voice-root"
+                  profile={profile}
+                  index={0}
+                  isFocused={isVoiceFocused}
+                  onClick={handleVoiceClick}
+                />
               )}
               {/* Session tree path - offset index if voice card is shown */}
               {sessionPath.map((session, index) => (
@@ -545,6 +695,20 @@ export function ThreadRail() {
                   index={showVoiceRoot ? index + 1 : index}
                   isFocused={session.id === focusedSessionId}
                   onClick={() => handleCardClick(session)}
+                />
+              ))}
+              {/* Children of focused session - clickable to drill down */}
+              {focusedChildren.length > 0 && (
+                <div className="children-divider">
+                  <span className="children-label">children</span>
+                </div>
+              )}
+              {focusedChildren.map((child, index) => (
+                <ChildCard
+                  key={child.id}
+                  session={child}
+                  index={index}
+                  onClick={() => handleCardClick(child)}
                 />
               ))}
             </AnimatePresence>

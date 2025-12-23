@@ -13,8 +13,7 @@ interface ChatStageProps {
 }
 
 export function ChatStage({ stage }: ChatStageProps) {
-  const messages = useAgentStore((s) => s.messages);
-  const currentTool = useAgentStore((s) => s.currentTool);
+  const timeline = useAgentStore((s) => s.timeline);
   const state = useAgentStore((s) => s.state);
 
   const stateLabels: Record<string, { label: string; color: string; pulse: boolean }> = {
@@ -198,7 +197,7 @@ export function ChatStage({ stage }: ChatStageProps) {
 
       {/* Floating Content */}
       <div className="chat-content">
-        <ConversationStream messages={messages} currentTool={currentTool} />
+        <ConversationStream timeline={timeline} />
       </div>
     </motion.div>
   );

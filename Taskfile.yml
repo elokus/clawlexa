@@ -52,3 +52,25 @@ tasks:
     desc: List all encrypted .env.enc files
     cmds:
       - find . -name '.env.enc' -not -path './node_modules/*'
+
+  # Development tasks
+  dev:daemon:
+    desc: Start mac daemon
+    dir: mac-daemon
+    cmds:
+      - npm run dev
+
+  dev:agent:
+    desc: Start pi-agent (backend)
+    dir: pi-agent
+    env:
+      SKIP_STATIC_SERVER: "true"
+      TRANSPORT_MODE: web
+    cmds:
+      - npm run dev
+
+  dev:web:
+    desc: Start web frontend (Vite dev server)
+    dir: web
+    cmds:
+      - npm run dev

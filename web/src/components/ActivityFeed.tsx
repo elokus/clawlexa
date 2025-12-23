@@ -1,45 +1,45 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // Activity Feed - Unified UI for subagent activity blocks
+// Supports multiple display modes: full (with header), compact (list only)
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useRef, useEffect, useState } from 'react';
+import {
+  getLastSentence,
+  formatDuration,
+  hasUsefulReasoning,
+} from '../lib/activity-utils';
 import type {
   ActivityBlock,
   ReasoningBlock,
   ToolBlock,
   ContentBlock,
   ErrorBlock,
+  SessionTreeNode,
 } from '../types';
 
-interface ActivityFeedProps {
+export interface ActivityFeedProps {
   blocks: ActivityBlock[];
-  isActive: boolean;
-  onClear: () => void;
+  isActive?: boolean;
+  /** Show header with status and clear button */
+  showHeader?: boolean;
+  /** Callback when clear button is clicked */
+  onClear?: () => void;
+  /** Max blocks to show (for compact displays) */
+  maxBlocks?: number;
+  /** Custom empty state message */
+  emptyMessage?: string;
+  /** Additional CSS class */
+  className?: string;
+  /** Child sessions of the focused orchestrator (for linking tool calls) */
+  childSessions?: SessionTreeNode[];
+  /** Callback when user clicks on a linked session in a tool call */
+  onNavigateToSession?: (sessionId: string) => void;
 }
 
-// Get the last sentence from text for preview
-function getLastSentence(text: string): string {
-  const sentences = text.split(/[.!?]\s+/);
-  const last = sentences[sentences.length - 1] || '';
-  return last.slice(0, 60) + (last.length > 60 ? '...' : '');
-}
-
-// Format duration in seconds
-function formatDuration(ms: number): string {
-  return (ms / 1000).toFixed(1);
-}
-
-// Check if reasoning content is meaningful (not empty/placeholder)
-function hasUsefulReasoning(content: string): boolean {
-  const trimmed = content.trim();
-  if (!trimmed) return false;
-  // Filter out known placeholder patterns from models that hide reasoning
-  const placeholders = ['[REDACTED]', '[redacted]', 'Redacted', '[Web search in progress...]'];
-  return !placeholders.some(p => trimmed === p || trimmed.startsWith(p));
-}
-
-// Reasoning Block Component
+// Reasoning Block Component - Expandable for both active and completed states
 function ReasoningBlockView({ block }: { block: ReasoningBlock }) {
+  // Default to collapsed
   const [isOpen, setIsOpen] = useState(false);
 
   // Don't render completed reasoning blocks with no useful content
@@ -47,53 +47,30 @@ function ReasoningBlockView({ block }: { block: ReasoningBlock }) {
     return null;
   }
 
-  if (!block.isComplete) {
-    // Only show "in progress" if there's content being streamed
-    if (!block.content.trim()) {
-      return null;
-    }
-    // Active reasoning - show pulsing preview
-    return (
-      <div className="activity-item reasoning active">
-        <style>{`
-          .activity-item.reasoning {
-            border-left-color: var(--color-violet);
-          }
-          .activity-item.reasoning.active {
-            animation: pulse-border 1.5s ease-in-out infinite;
-          }
-          @keyframes pulse-border {
-            0%, 100% { border-left-color: var(--color-violet); }
-            50% { border-left-color: color-mix(in srgb, var(--color-violet) 40%, transparent); }
-          }
-          .reasoning-preview {
-            font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--color-violet);
-            font-style: italic;
-          }
-          .reasoning-label {
-            font-family: var(--font-mono);
-            font-size: 9px;
-            text-transform: uppercase;
-            color: var(--color-text-ghost);
-            margin-bottom: 4px;
-          }
-        `}</style>
-        <div className="reasoning-label">Thinking...</div>
-        <div className="reasoning-preview">
-          {getLastSentence(block.content) || 'Processing...'}
-        </div>
-      </div>
-    );
+  // Don't render if no content yet
+  if (!block.content.trim()) {
+    return null;
   }
 
-  // Completed reasoning - collapsible
+  const isActive = !block.isComplete;
+
   return (
-    <details className="activity-item reasoning" open={isOpen} onToggle={(e) => setIsOpen(e.currentTarget.open)}>
+    <details
+      className={`activity-item reasoning ${isActive ? 'active' : ''}`}
+      open={isOpen}
+      onToggle={(e) => setIsOpen(e.currentTarget.open)}
+    >
       <style>{`
-        details.activity-item.reasoning {
+        .activity-item.reasoning {
+          border-left-color: var(--color-violet);
           cursor: pointer;
+        }
+        .activity-item.reasoning.active {
+          animation: pulse-border 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-border {
+          0%, 100% { border-left-color: var(--color-violet); }
+          50% { border-left-color: color-mix(in srgb, var(--color-violet) 40%, transparent); }
         }
         details.activity-item.reasoning summary {
           font-family: var(--font-mono);
@@ -115,6 +92,24 @@ function ReasoningBlockView({ block }: { block: ReasoningBlock }) {
         details.activity-item.reasoning[open] summary::before {
           transform: rotate(90deg);
         }
+        .reasoning-summary-content {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .reasoning-active-dot {
+          width: 6px;
+          height: 6px;
+          background: var(--color-violet);
+          border-radius: 50%;
+          box-shadow: 0 0 8px var(--color-violet);
+          animation: pulse-glow 1s ease-in-out infinite;
+        }
+        @keyframes pulse-glow {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
         .reasoning-content {
           margin-top: 8px;
           padding: 8px;
@@ -128,20 +123,83 @@ function ReasoningBlockView({ block }: { block: ReasoningBlock }) {
           max-height: 200px;
           overflow-y: auto;
         }
+        .reasoning-cursor {
+          display: inline-block;
+          width: 2px;
+          height: 1em;
+          background: var(--color-violet);
+          margin-left: 2px;
+          animation: cursor-blink 0.8s ease-in-out infinite;
+        }
+        @keyframes cursor-blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
       `}</style>
       <summary>
-        Reasoned for {formatDuration(block.durationMs || 0)}s
+        <span className="reasoning-summary-content">
+          {isActive ? 'Thinking...' : `Reasoned for ${formatDuration(block.durationMs || 0)}s`}
+          {isActive && <span className="reasoning-active-dot" />}
+        </span>
       </summary>
       <div className="reasoning-content">
         {block.content}
+        {isActive && <span className="reasoning-cursor" />}
       </div>
     </details>
   );
 }
 
 // Tool Block Component
-function ToolBlockView({ block }: { block: ToolBlock }) {
+interface ToolBlockViewProps {
+  block: ToolBlock;
+  childSessions?: SessionTreeNode[];
+  onNavigateToSession?: (sessionId: string) => void;
+}
+
+// Tools that are known to create terminal sessions
+const SESSION_CREATING_TOOLS = ['start_interactive_session', 'start_headless_session'];
+
+function ToolBlockView({ block, childSessions, onNavigateToSession }: ToolBlockViewProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  // Find linked child session:
+  // 1. First try exact match by tool_call_id
+  // 2. Fallback: for session-creating tools, find terminal children
+  let linkedSession = childSessions?.find(
+    (child) => child.tool_call_id && child.tool_call_id === block.toolCallId
+  );
+
+  // Fallback for session-creating tools when tool_call_id isn't set
+  if (!linkedSession && SESSION_CREATING_TOOLS.includes(block.toolName)) {
+    if (childSessions?.length) {
+      // Find terminal sessions among children
+      const terminalChildren = childSessions.filter((child) => child.type === 'terminal');
+      // Use the most recent one (last in array) as a best guess
+      linkedSession = terminalChildren[terminalChildren.length - 1];
+      console.log('[ToolBlockView] Fallback session linking:', {
+        toolName: block.toolName,
+        childSessions: childSessions.map((c) => ({ id: c.id, type: c.type, goal: c.goal })),
+        terminalChildren: terminalChildren.length,
+        linkedSession: linkedSession?.id,
+      });
+    } else {
+      console.log('[ToolBlockView] Session-creating tool but no childSessions:', {
+        toolName: block.toolName,
+        childSessions,
+      });
+    }
+  }
+
+  const handleSessionClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (linkedSession && onNavigateToSession) {
+      onNavigateToSession(linkedSession.id);
+    }
+  };
+
+  const hasLinkedSession = linkedSession && onNavigateToSession;
 
   return (
     <details className="activity-item tool" open={isOpen} onToggle={(e) => setIsOpen(e.currentTarget.open)}>
@@ -173,14 +231,23 @@ function ToolBlockView({ block }: { block: ToolBlock }) {
           content: '▶';
           font-size: 8px;
           transition: transform 0.2s ease;
+          flex-shrink: 0;
         }
         details.activity-item.tool[open] summary::before {
           transform: rotate(90deg);
+        }
+        .tool-summary-content {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
         }
         .tool-status {
           font-size: 9px;
           padding: 2px 6px;
           border-radius: 3px;
+          flex-shrink: 0;
         }
         .tool-status.pending {
           background: rgba(56, 189, 248, 0.1);
@@ -189,6 +256,30 @@ function ToolBlockView({ block }: { block: ToolBlock }) {
         .tool-status.complete {
           background: rgba(52, 211, 153, 0.1);
           color: var(--color-emerald);
+        }
+        .tool-view-session-btn {
+          padding: 3px 8px;
+          border-radius: 4px;
+          border: 1px solid rgba(56, 189, 248, 0.3);
+          background: rgba(56, 189, 248, 0.1);
+          color: var(--color-cyan);
+          font-family: var(--font-mono);
+          font-size: 9px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          flex-shrink: 0;
+        }
+        .tool-view-session-btn:hover {
+          background: rgba(56, 189, 248, 0.2);
+          border-color: rgba(56, 189, 248, 0.5);
+          box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+        }
+        .tool-view-session-btn .icon {
+          font-size: 10px;
         }
         .tool-details {
           margin-top: 8px;
@@ -217,12 +308,66 @@ function ToolBlockView({ block }: { block: ToolBlock }) {
           max-height: 150px;
           overflow-y: auto;
         }
+        .tool-session-link {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 10px;
+          background: rgba(56, 189, 248, 0.08);
+          border: 1px solid rgba(56, 189, 248, 0.2);
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .tool-session-link:hover {
+          background: rgba(56, 189, 248, 0.15);
+          border-color: rgba(56, 189, 248, 0.4);
+          transform: translateX(4px);
+        }
+        .tool-session-icon {
+          font-size: 14px;
+          color: var(--color-cyan);
+        }
+        .tool-session-info {
+          flex: 1;
+          min-width: 0;
+        }
+        .tool-session-label {
+          font-family: var(--font-mono);
+          font-size: 9px;
+          text-transform: uppercase;
+          color: var(--color-text-ghost);
+        }
+        .tool-session-goal {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          color: var(--color-cyan);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .tool-session-arrow {
+          font-size: 12px;
+          color: var(--color-text-ghost);
+        }
       `}</style>
       <summary>
-        <span>&gt; Used {block.toolName}</span>
-        <span className={`tool-status ${block.isComplete ? 'complete' : 'pending'}`}>
-          {block.isComplete ? 'done' : 'running'}
+        <span className="tool-summary-content">
+          <span>&gt; {block.toolName}</span>
+          <span className={`tool-status ${block.isComplete ? 'complete' : 'pending'}`}>
+            {block.isComplete ? 'done' : 'running'}
+          </span>
         </span>
+        {hasLinkedSession && (
+          <button
+            type="button"
+            className="tool-view-session-btn"
+            onClick={handleSessionClick}
+          >
+            <span className="icon">▣</span>
+            <span>View</span>
+          </button>
+        )}
       </summary>
       <div className="tool-details">
         <div className="tool-section">
@@ -238,6 +383,24 @@ function ToolBlockView({ block }: { block: ToolBlock }) {
               {block.result.length > 500 ? block.result.slice(0, 500) + '...' : block.result}
             </div>
           </div>
+        )}
+        {linkedSession && onNavigateToSession && (
+          <button
+            type="button"
+            className="tool-session-link"
+            onClick={handleSessionClick}
+          >
+            <span className="tool-session-icon">▣</span>
+            <div className="tool-session-info">
+              <div className="tool-session-label">View Session</div>
+              <div className="tool-session-goal">
+                {linkedSession.goal.length > 40
+                  ? linkedSession.goal.substring(0, 40) + '...'
+                  : linkedSession.goal}
+              </div>
+            </div>
+            <span className="tool-session-arrow">→</span>
+          </button>
         )}
       </div>
     </details>
@@ -300,12 +463,24 @@ function ErrorBlockView({ block }: { block: ErrorBlock }) {
 }
 
 // Block Router
-function ActivityBlockView({ block }: { block: ActivityBlock }) {
+interface ActivityBlockViewProps {
+  block: ActivityBlock;
+  childSessions?: SessionTreeNode[];
+  onNavigateToSession?: (sessionId: string) => void;
+}
+
+function ActivityBlockView({ block, childSessions, onNavigateToSession }: ActivityBlockViewProps) {
   switch (block.type) {
     case 'reasoning':
       return <ReasoningBlockView block={block} />;
     case 'tool':
-      return <ToolBlockView block={block} />;
+      return (
+        <ToolBlockView
+          block={block}
+          childSessions={childSessions}
+          onNavigateToSession={onNavigateToSession}
+        />
+      );
     case 'content':
       return <ContentBlockView block={block} />;
     case 'error':
@@ -315,8 +490,21 @@ function ActivityBlockView({ block }: { block: ActivityBlock }) {
   }
 }
 
-export function ActivityFeed({ blocks, isActive, onClear }: ActivityFeedProps) {
+export function ActivityFeed({
+  blocks,
+  isActive = false,
+  showHeader = true,
+  onClear,
+  maxBlocks,
+  emptyMessage = 'Subagent idle\nWaiting for activity',
+  className = '',
+  childSessions,
+  onNavigateToSession,
+}: ActivityFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Apply maxBlocks limit if specified
+  const displayBlocks = maxBlocks ? blocks.slice(-maxBlocks) : blocks;
 
   // Auto-scroll to bottom when new blocks arrive
   useEffect(() => {
@@ -326,12 +514,16 @@ export function ActivityFeed({ blocks, isActive, onClear }: ActivityFeedProps) {
   }, [blocks]);
 
   return (
-    <div className="activity-feed">
+    <div className={`activity-feed ${className}`}>
       <style>{`
         .activity-feed {
           display: flex;
           flex-direction: column;
           height: 100%;
+        }
+
+        .activity-feed.compact {
+          height: auto;
         }
 
         .activity-header {
@@ -395,6 +587,11 @@ export function ActivityFeed({ blocks, isActive, onClear }: ActivityFeedProps) {
           padding: 8px;
         }
 
+        .activity-feed.compact .activity-list {
+          overflow-y: visible;
+          padding: 0;
+        }
+
         .activity-item {
           padding: 10px;
           margin-bottom: 6px;
@@ -431,41 +628,51 @@ export function ActivityFeed({ blocks, isActive, onClear }: ActivityFeedProps) {
           font-family: var(--font-mono);
           font-size: 11px;
           color: var(--color-text-dim);
+          white-space: pre-line;
         }
       `}</style>
 
-      <div className="activity-header">
-        <div className="activity-status">
-          <span className={`activity-dot ${isActive ? 'active' : ''}`} />
-          <span className={`activity-label ${isActive ? 'active' : ''}`}>
-            {isActive ? 'Processing' : 'Idle'}
-          </span>
+      {showHeader && (
+        <div className="activity-header">
+          <div className="activity-status">
+            <span className={`activity-dot ${isActive ? 'active' : ''}`} />
+            <span className={`activity-label ${isActive ? 'active' : ''}`}>
+              {isActive ? 'Processing' : 'Idle'}
+            </span>
+          </div>
+          {blocks.length > 0 && onClear && (
+            <button className="activity-clear" onClick={onClear} type="button">
+              Clear
+            </button>
+          )}
         </div>
-        {blocks.length > 0 && (
-          <button className="activity-clear" onClick={onClear} type="button">
-            Clear
-          </button>
-        )}
-      </div>
+      )}
 
       <div className="activity-list" ref={scrollRef}>
-        {blocks.length === 0 ? (
+        {displayBlocks.length === 0 ? (
           <div className="empty-activity">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <circle cx="12" cy="12" r="10" />
               <path d="M12 6v6l4 2" />
             </svg>
             <span className="empty-activity-text">
-              Subagent idle<br />
-              Waiting for activity
+              {emptyMessage}
             </span>
           </div>
         ) : (
-          blocks.map((block) => (
-            <ActivityBlockView key={block.id} block={block} />
+          displayBlocks.map((block) => (
+            <ActivityBlockView
+              key={block.id}
+              block={block}
+              childSessions={childSessions}
+              onNavigateToSession={onNavigateToSession}
+            />
           ))
         )}
       </div>
     </div>
   );
 }
+
+// Export block components for reuse
+export { ActivityBlockView, ReasoningBlockView, ToolBlockView, ContentBlockView, ErrorBlockView };

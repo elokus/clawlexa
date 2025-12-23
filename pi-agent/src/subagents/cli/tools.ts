@@ -18,7 +18,7 @@ import {
 import * as macClient from '../../tools/mac-client.js';
 import { waitForSessionCompletion } from '../../api/webhooks.js';
 import { wsBroadcast } from '../../api/websocket.js';
-import { getCurrentOrchestratorId } from './index.js';
+import { getCurrentOrchestratorId, consumePendingToolCall } from './index.js';
 
 /**
  * Check if the Mac daemon is available.
@@ -53,11 +53,16 @@ export const startHeadlessSessionTool = tool({
       return 'Fehler: Kein aktiver Orchestrator. Bitte starte eine neue Anfrage.';
     }
 
+    // Get the tool call ID for linking this session to the tool call
+    const toolCallId = consumePendingToolCall(orchestratorId);
+    console.log(`[CliAgent] Tool call ID: ${toolCallId ?? 'none'}`);
+
     // Create terminal session as child of orchestrator
     sessionsRepo.createTerminal({
       id: terminalId,
       goal: `Headless: ${prompt.substring(0, 100)}...`,
       parent_id: orchestratorId,
+      tool_call_id: toolCallId,
     });
 
     eventsRepo.create({
@@ -158,11 +163,16 @@ export const startInteractiveSessionTool = tool({
       return 'Fehler: Kein aktiver Orchestrator. Bitte starte eine neue Anfrage.';
     }
 
+    // Get the tool call ID for linking this session to the tool call
+    const toolCallId = consumePendingToolCall(orchestratorId);
+    console.log(`[CliAgent] Tool call ID: ${toolCallId ?? 'none'}`);
+
     // Create terminal session as child of orchestrator
     sessionsRepo.createTerminal({
       id: terminalId,
       goal: initial_prompt.substring(0, 200),
       parent_id: orchestratorId,
+      tool_call_id: toolCallId,
     });
 
     eventsRepo.create({
@@ -274,7 +284,7 @@ export const listActiveSessionsTool = tool({
 });
 
 export const terminateSessionTool = tool({
-  description: 'Terminate/cancel a running session',
+  description: 'Terminate/cancel a running session and delete it from the database',
   inputSchema: z.object({
     session_id: z.string().describe('The session ID to terminate'),
   }),
@@ -282,28 +292,79 @@ export const terminateSessionTool = tool({
     console.log(`[CliAgent] Terminating session ${session_id}`);
 
     const sessionsRepo = new CliSessionsRepository();
-    const eventsRepo = new CliEventsRepository();
 
     try {
       // Get session to find parent for tree update
       const session = sessionsRepo.findById(session_id);
       const parentId = session?.parent_id;
 
+      // Terminate on Mac daemon
       await macClient.terminateSession(session_id);
-      sessionsRepo.finish(session_id, 'cancelled');
 
-      eventsRepo.create({
-        session_id,
-        event_type: 'finished',
-        payload: { reason: 'terminated' },
-      });
+      // Delete from database (cascade deletes events too)
+      sessionsRepo.delete(session_id);
+      console.log(`[CliAgent] Deleted session ${session_id} from database`);
+
+      // Broadcast deletion to connected clients
+      wsBroadcast.cliSessionDeleted(session_id);
 
       // Broadcast tree update if we have a parent
       if (parentId) {
         wsBroadcast.sessionTreeUpdate(parentId);
       }
 
-      return 'Session beendet.';
+      return 'Session beendet und gelöscht.';
+    } catch (error) {
+      return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  },
+});
+
+export const terminateAllSessionsTool = tool({
+  description: 'Terminate all active sessions and delete them from the database',
+  inputSchema: z.object({}),
+  execute: async () => {
+    console.log(`[CliAgent] Terminating all sessions`);
+
+    const sessionsRepo = new CliSessionsRepository();
+
+    try {
+      // Get all active sessions
+      const activeSessions = sessionsRepo.getActive();
+
+      if (activeSessions.length === 0) {
+        return 'Keine aktiven Sessions zum Beenden.';
+      }
+
+      let terminatedCount = 0;
+      const errors: string[] = [];
+
+      for (const session of activeSessions) {
+        try {
+          // Terminate on Mac daemon (skip if no mac_session_id - might be orchestrator)
+          if (session.mac_session_id || session.type === 'terminal') {
+            await macClient.terminateSession(session.id);
+          }
+
+          // Delete from database
+          sessionsRepo.delete(session.id);
+          terminatedCount++;
+          console.log(`[CliAgent] Deleted session ${session.id}`);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          errors.push(`${session.id.substring(0, 8)}: ${msg}`);
+          console.error(`[CliAgent] Failed to terminate session ${session.id}:`, error);
+        }
+      }
+
+      // Broadcast that all sessions have been deleted
+      wsBroadcast.cliAllSessionsDeleted();
+
+      if (errors.length > 0) {
+        return `${terminatedCount} Sessions beendet. Fehler bei: ${errors.join(', ')}`;
+      }
+
+      return `${terminatedCount} Sessions beendet und gelöscht.`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -320,4 +381,5 @@ export const cliAgentTools = {
   check_session_status: checkSessionStatusTool,
   list_active_sessions: listActiveSessionsTool,
   terminate_session: terminateSessionTool,
+  terminate_all_sessions: terminateAllSessionsTool,
 };

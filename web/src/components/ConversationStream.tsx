@@ -1,15 +1,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // Conversation Stream - Full-height conversation interface
 // Clean, minimal design optimized for the conversation-first layout
+// Renders unified timeline (transcripts + tools interleaved)
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStageStore } from '../stores/stage';
-import type { TranscriptMessage } from '../types';
+import type { TimelineItem, TranscriptItem, ToolItem } from '../types';
 
 interface ConversationStreamProps {
-  messages: TranscriptMessage[];
-  currentTool: { name: string; args?: Record<string, unknown> } | null;
+  timeline: TimelineItem[];
 }
 
 // Typing indicator with pulsing dots
@@ -55,10 +55,10 @@ function TypingIndicator() {
 }
 
 // HUD-style message - floating text without bubble containers
-function HUDMessage({ message, isLatest }: { message: TranscriptMessage; isLatest: boolean }) {
-  const isUser = message.role === 'user';
+function HUDMessage({ item, isLatest }: { item: TranscriptItem; isLatest: boolean }) {
+  const isUser = item.role === 'user';
 
-  const timestamp = new Date(message.timestamp).toLocaleTimeString('de-DE', {
+  const timestamp = new Date(item.timestamp).toLocaleTimeString('de-DE', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -66,7 +66,7 @@ function HUDMessage({ message, isLatest }: { message: TranscriptMessage; isLates
 
   return (
     <div
-      className={`hud-message ${isUser ? 'user' : 'agent'} ${message.pending ? 'pending' : ''} ${isLatest ? 'latest' : ''}`}
+      className={`hud-message ${isUser ? 'user' : 'agent'} ${item.pending ? 'pending' : ''} ${isLatest ? 'latest' : ''}`}
     >
       <style>{`
         .hud-message {
@@ -199,20 +199,21 @@ function HUDMessage({ message, isLatest }: { message: TranscriptMessage; isLates
         <span className="hud-time">{timestamp}</span>
       </div>
       <p className="hud-content">
-        {message.pending && !message.content ? (
+        {item.pending && !item.content ? (
           <TypingIndicator />
         ) : (
-          message.content
+          item.content
         )}
       </p>
     </div>
   );
 }
 
-// Tool execution card - Portal style for session-creating tools
-function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknown> } }) {
-  const pushStage = useStageStore((s) => s.pushStage);
-  const activeStage = useStageStore((s) => s.activeStage);
+// Tool execution card - Expandable with details about arguments
+function ToolCard({ item }: { item: ToolItem }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const focusSession = useStageStore((s) => s.focusSession);
+  const focusedSessionId = useStageStore((s) => s.focusedSessionId);
 
   const toolConfig: Record<string, { label: string; icon: string; color: string; isPortal?: boolean }> = {
     view_todos: { label: 'Checking tasks', icon: '◈', color: 'var(--color-violet)' },
@@ -227,32 +228,35 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
     developer_session: { label: 'Dev Session', icon: '▣', color: 'var(--color-cyan)', isPortal: true },
   };
 
-  const config = toolConfig[tool.name] || { label: 'Processing', icon: '◆', color: 'var(--color-text-dim)' };
+  const config = toolConfig[item.name] || { label: 'Processing', icon: '◆', color: 'var(--color-text-dim)' };
   const isPortal = config.isPortal === true;
-  const sessionId = tool.args?.sessionId as string | undefined;
+  const sessionId = item.args?.sessionId as string | undefined;
+  const isRunning = item.status === 'running';
+  const isCompleted = item.status === 'completed';
 
-  // Check if this session is currently on stage
-  const isOnStage = activeStage.type === 'terminal' && activeStage.data?.sessionId === sessionId;
+  // Check if this session is currently focused
+  const isOnStage = sessionId && focusedSessionId === sessionId;
 
-  const handleViewSession = () => {
+  const handleViewSession = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (sessionId && !isOnStage) {
-      pushStage({
-        id: `terminal-${sessionId}`,
-        type: 'terminal',
-        title: (tool.args?.goal as string) || 'CLI Session',
-        status: 'active',
-        data: { sessionId },
-      });
+      focusSession(sessionId);
     }
   };
 
+  const handleToggleExpand = () => {
+    setIsExpanded((prev) => !prev);
+  };
+
+  const hasArgs = item.args && Object.keys(item.args).length > 0;
+  const hasResult = item.result !== undefined;
+
   return (
-    <div className={`tool-card ${isPortal ? 'is-portal' : ''} ${isOnStage ? 'is-docked' : ''}`}>
+    <div className={`tool-card ${isPortal ? 'is-portal' : ''} ${isOnStage ? 'is-docked' : ''} ${isExpanded ? 'is-expanded' : ''}`}>
       <style>{`
         .tool-card {
           display: flex;
-          align-items: center;
-          gap: 12px;
+          flex-direction: column;
           padding: 14px 18px;
           margin: 10px 0 18px 0;
           background: linear-gradient(
@@ -298,6 +302,13 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
             opacity: 1;
             transform: translateX(0) scale(1);
           }
+        }
+
+        .tool-header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          cursor: pointer;
         }
 
         .tool-icon-wrapper {
@@ -370,6 +381,16 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
           to { transform: rotate(360deg); }
         }
 
+        .tool-expand-chevron {
+          font-size: 10px;
+          color: var(--color-text-ghost);
+          transition: transform 0.2s ease;
+        }
+
+        .tool-card.is-expanded .tool-expand-chevron {
+          transform: rotate(90deg);
+        }
+
         .tool-view-btn {
           padding: 6px 12px;
           border-radius: 6px;
@@ -411,26 +432,115 @@ function ToolCard({ tool }: { tool: { name: string; args?: Record<string, unknow
           background: linear-gradient(90deg, var(--color-cyan), transparent);
           opacity: 0.5;
         }
+
+        .tool-expanded-content {
+          overflow: hidden;
+          max-height: 0;
+          opacity: 0;
+          transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+          padding-top: 0;
+          margin-top: 0;
+          border-top: none;
+        }
+
+        .tool-card.is-expanded .tool-expanded-content {
+          max-height: 400px;
+          opacity: 1;
+          padding-top: 12px;
+          margin-top: 12px;
+          border-top: 1px solid var(--color-border);
+        }
+
+        .tool-args-code {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: var(--color-text-dim);
+          white-space: pre-wrap;
+          word-break: break-word;
+          background: rgba(0, 0, 0, 0.2);
+          padding: 10px;
+          border-radius: 6px;
+          max-height: 150px;
+          overflow-y: auto;
+          margin-bottom: 8px;
+        }
+
+        .tool-result-section {
+          margin-top: 8px;
+        }
+
+        .tool-result-label {
+          font-family: var(--font-mono);
+          font-size: 9px;
+          color: var(--color-text-ghost);
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          margin-bottom: 4px;
+        }
+
+        .tool-result-code {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: var(--color-emerald);
+          white-space: pre-wrap;
+          word-break: break-word;
+          background: rgba(52, 211, 153, 0.05);
+          padding: 10px;
+          border-radius: 6px;
+          border: 1px solid rgba(52, 211, 153, 0.1);
+          max-height: 150px;
+          overflow-y: auto;
+        }
+
+        .tool-checkmark {
+          color: var(--color-emerald);
+          font-size: 16px;
+        }
       `}</style>
 
-      <div className="tool-icon-wrapper">
-        <span className="tool-icon">{config.icon}</span>
+      {/* Header - clickable to expand */}
+      <div className="tool-header" onClick={handleToggleExpand}>
+        <div className="tool-icon-wrapper">
+          <span className="tool-icon">{config.icon}</span>
+        </div>
+        <div className="tool-info">
+          <div className="tool-label">{config.label}</div>
+          <div className="tool-name">{item.name}</div>
+        </div>
+        <div className="tool-actions">
+          {isPortal && sessionId && !isOnStage && (
+            <button className="tool-view-btn" onClick={handleViewSession}>
+              View
+            </button>
+          )}
+          {isOnStage && (
+            <span className="tool-docked-label">On Stage</span>
+          )}
+          {isRunning && !isOnStage && <div className="tool-spinner" />}
+          {isCompleted && <span className="tool-checkmark">✓</span>}
+          {(hasArgs || hasResult) && <span className="tool-expand-chevron">▶</span>}
+        </div>
       </div>
-      <div className="tool-info">
-        <div className="tool-label">{config.label}</div>
-        <div className="tool-name">{tool.name}</div>
-      </div>
-      <div className="tool-actions">
-        {isPortal && sessionId && !isOnStage && (
-          <button className="tool-view-btn" onClick={handleViewSession}>
-            View
-          </button>
-        )}
-        {isOnStage && (
-          <span className="tool-docked-label">On Stage</span>
-        )}
-        {!isOnStage && <div className="tool-spinner" />}
-      </div>
+
+      {/* Expanded content with args and result */}
+      {(hasArgs || hasResult) && (
+        <div className="tool-expanded-content">
+          {hasArgs && (
+            <>
+              <div className="tool-result-label">Arguments</div>
+              <pre className="tool-args-code">
+                {JSON.stringify(item.args, null, 2)}
+              </pre>
+            </>
+          )}
+          {hasResult && (
+            <div className="tool-result-section">
+              <div className="tool-result-label">Result</div>
+              <pre className="tool-result-code">{item.result}</pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -534,10 +644,10 @@ function EmptyState() {
   );
 }
 
-export function ConversationStream({ messages, currentTool }: ConversationStreamProps) {
+export function ConversationStream({ timeline }: ConversationStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new timeline items
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({
@@ -545,7 +655,13 @@ export function ConversationStream({ messages, currentTool }: ConversationStream
         behavior: 'smooth',
       });
     }
-  }, [messages, currentTool]);
+  }, [timeline]);
+
+  // Get the last transcript for "isLatest" styling
+  const lastTranscriptIndex = timeline
+    .map((item, idx) => ({ item, idx }))
+    .filter(({ item }) => item.type === 'transcript')
+    .pop()?.idx ?? -1;
 
   return (
     <div className="conversation-stream" ref={scrollRef}>
@@ -560,7 +676,7 @@ export function ConversationStream({ messages, currentTool }: ConversationStream
           scroll-behavior: smooth;
         }
 
-        .messages-container {
+        .timeline-container {
           display: flex;
           flex-direction: column;
           padding: 8px 0 24px 0;
@@ -586,24 +702,29 @@ export function ConversationStream({ messages, currentTool }: ConversationStream
         }
 
         @media (max-width: 768px) {
-          .messages-container {
+          .timeline-container {
             padding-bottom: 100px; /* Extra space for mobile nav */
           }
         }
       `}</style>
 
-      {messages.length === 0 && !currentTool ? (
+      {timeline.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="messages-container">
-          {messages.map((msg, index) => (
-            <HUDMessage
-              key={msg.id}
-              message={msg}
-              isLatest={index === messages.length - 1}
-            />
-          ))}
-          {currentTool && <ToolCard tool={currentTool} />}
+        <div className="timeline-container">
+          {timeline.map((item, index) => {
+            if (item.type === 'transcript') {
+              return (
+                <HUDMessage
+                  key={item.id}
+                  item={item}
+                  isLatest={index === lastTranscriptIndex}
+                />
+              );
+            } else {
+              return <ToolCard key={item.id} item={item} />;
+            }
+          })}
         </div>
       )}
     </div>

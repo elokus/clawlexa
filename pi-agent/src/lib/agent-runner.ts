@@ -19,12 +19,18 @@
 
 import { streamText, stepCountIs, type ToolSet, type LanguageModel } from 'ai';
 import { wsBroadcast, type SubagentEventType } from '../api/websocket.js';
+import { setPendingToolCall } from '../subagents/cli/index.js';
+
+// Tools that create terminal sessions - need to track their tool call IDs
+const SESSION_CREATING_TOOLS = ['start_headless_session', 'start_interactive_session'];
 
 /** Event emitted by the agent runner */
 export interface AgentEvent {
   agent: string;
   type: SubagentEventType;
   payload: unknown;
+  /** Orchestrator session ID for per-session activity tracking */
+  orchestratorId?: string;
 }
 
 /** Callback for capturing agent events */
@@ -45,6 +51,8 @@ export interface AgentRunnerOptions {
   maxSteps?: number;
   /** Optional callback for event capture (in addition to WebSocket broadcast) */
   onEvent?: AgentEventCallback;
+  /** Orchestrator session ID for per-session activity tracking */
+  orchestratorId?: string;
 }
 
 /**
@@ -62,7 +70,7 @@ export interface AgentRunnerOptions {
  * @returns The complete generated text response
  */
 export async function runObservableAgent(opts: AgentRunnerOptions): Promise<string> {
-  const { model, system, prompt, tools, name, maxSteps = 3, onEvent } = opts;
+  const { model, system, prompt, tools, name, maxSteps = 3, onEvent, orchestratorId } = opts;
 
   // Track reasoning timing
   let reasoningStartTime = 0;
@@ -70,8 +78,9 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
   let fullText = '';
 
   // Helper to broadcast and optionally capture events
+  // Includes orchestratorId for per-session activity tracking on frontend
   const emit = (type: SubagentEventType, payload: unknown) => {
-    const event = { agent: name, type, payload };
+    const event = { agent: name, type, payload, orchestratorId };
     wsBroadcast.subagentActivity(event);
     onEvent?.(event);
   };
@@ -134,6 +143,13 @@ export async function runObservableAgent(opts: AgentRunnerOptions): Promise<stri
           const args = toolEvent.input ?? toolEvent.args;
 
           console.log(`[AgentRunner] ${name}: Tool called: ${toolEvent.toolName}`);
+
+          // Track tool calls that create terminal sessions
+          // The CLI tools will consume this when creating the session
+          if (SESSION_CREATING_TOOLS.includes(toolEvent.toolName) && orchestratorId) {
+            setPendingToolCall(orchestratorId, toolEvent.toolCallId);
+          }
+
           emit('tool_call', {
             toolName: toolEvent.toolName,
             toolCallId: toolEvent.toolCallId,

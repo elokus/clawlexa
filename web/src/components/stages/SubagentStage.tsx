@@ -1,168 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // Subagent Stage - Activity stream view for delegated agent tasks
 // Shows reasoning, tool calls, and responses in a drill-down stage
+// Uses shared ActivityFeed component for consistent rendering
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useRef, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useAgentStore } from '../../stores/agent';
-import { useStageStore } from '../../stores/stage';
-import type { StageItem, ActivityBlock, ReasoningBlock, ToolBlock, ContentBlock, ErrorBlock } from '../../types';
+import { useStageStore, useFocusedSessionChildren } from '../../stores/stage';
+import { ActivityFeed } from '../ActivityFeed';
+import type { StageItem } from '../../types';
 
 interface SubagentStageProps {
   stage: StageItem;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Helper Functions
-// ═══════════════════════════════════════════════════════════════════════════
-
-function getLastSentence(text: string): string {
-  const sentences = text.split(/[.!?]\s+/);
-  const last = sentences[sentences.length - 1] || '';
-  return last.slice(0, 80) + (last.length > 80 ? '...' : '');
-}
-
-function formatDuration(ms: number): string {
-  return (ms / 1000).toFixed(1);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Activity Block Components
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Check if reasoning content is meaningful (not empty/placeholder)
-function hasUsefulReasoning(content: string): boolean {
-  const trimmed = content.trim();
-  if (!trimmed) return false;
-  // Filter out known placeholder patterns from models that hide reasoning
-  const placeholders = ['[REDACTED]', '[redacted]', 'Redacted', '[Web search in progress...]'];
-  return !placeholders.some(p => trimmed === p || trimmed.startsWith(p));
-}
-
-function ReasoningBlockView({ block }: { block: ReasoningBlock }) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  // Don't render completed reasoning blocks with no useful content
-  if (block.isComplete && !hasUsefulReasoning(block.content)) {
-    return null;
-  }
-
-  if (!block.isComplete) {
-    // Only show "in progress" if there's content being streamed
-    // Skip rendering if it's just starting with no content yet
-    if (!block.content.trim()) {
-      return null;
-    }
-    return (
-      <div className="stage-activity-item reasoning active">
-        <div className="activity-icon">◇</div>
-        <div className="activity-content">
-          <div className="activity-label">Reasoning...</div>
-          <div className="activity-preview">
-            {getLastSentence(block.content) || 'Processing...'}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <details
-      className="stage-activity-item reasoning"
-      open={isOpen}
-      onToggle={(e) => setIsOpen(e.currentTarget.open)}
-    >
-      <summary>
-        <div className="activity-icon">◇</div>
-        <div className="activity-content">
-          <span className="activity-label">
-            Reasoned for {formatDuration(block.durationMs || 0)}s
-          </span>
-        </div>
-        <span className="expand-arrow">▶</span>
-      </summary>
-      <div className="activity-expanded">
-        <div className="reasoning-text">{block.content}</div>
-      </div>
-    </details>
-  );
-}
-
-function ToolBlockView({ block }: { block: ToolBlock }) {
-  const [isOpen, setIsOpen] = useState(!block.isComplete);
-
-  return (
-    <details
-      className={`stage-activity-item tool ${!block.isComplete ? 'active' : ''}`}
-      open={isOpen}
-      onToggle={(e) => setIsOpen(e.currentTarget.open)}
-    >
-      <summary>
-        <div className="activity-icon">▣</div>
-        <div className="activity-content">
-          <span className="tool-name">{block.toolName}</span>
-          <span className={`tool-status ${block.isComplete ? 'done' : 'running'}`}>
-            {block.isComplete ? '✓ Done' : 'Running...'}
-          </span>
-        </div>
-        <span className="expand-arrow">▶</span>
-      </summary>
-      <div className="activity-expanded">
-        <div className="tool-section">
-          <div className="tool-section-label">Arguments</div>
-          <pre className="tool-section-code">{JSON.stringify(block.args, null, 2)}</pre>
-        </div>
-        {block.result && (
-          <div className="tool-section">
-            <div className="tool-section-label">Result</div>
-            <pre className="tool-section-code">
-              {block.result.length > 800 ? block.result.slice(0, 800) + '...' : block.result}
-            </pre>
-          </div>
-        )}
-      </div>
-    </details>
-  );
-}
-
-function ContentBlockView({ block }: { block: ContentBlock }) {
-  return (
-    <div className="stage-activity-item content">
-      <div className="activity-icon">◈</div>
-      <div className="activity-content">
-        <div className="activity-label">Response</div>
-        <div className="content-text">{block.text}</div>
-      </div>
-    </div>
-  );
-}
-
-function ErrorBlockView({ block }: { block: ErrorBlock }) {
-  return (
-    <div className="stage-activity-item error">
-      <div className="activity-icon">⚠</div>
-      <div className="activity-content">
-        <div className="activity-label">Error</div>
-        <div className="error-message">{block.message}</div>
-      </div>
-    </div>
-  );
-}
-
-function ActivityBlockView({ block }: { block: ActivityBlock }) {
-  switch (block.type) {
-    case 'reasoning':
-      return <ReasoningBlockView block={block} />;
-    case 'tool':
-      return <ToolBlockView block={block} />;
-    case 'content':
-      return <ContentBlockView block={block} />;
-    case 'error':
-      return <ErrorBlockView block={block} />;
-    default:
-      return null;
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -170,16 +19,46 @@ function ActivityBlockView({ block }: { block: ActivityBlock }) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function SubagentStage({ stage }: SubagentStageProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const agentName = stage.data?.agentName || stage.title;
+  const stageAgentName = stage.data?.agentName || stage.title;
 
-  // Get activities filtered by this agent
-  const allActivities = useAgentStore((s) => s.subagentActivities);
+  // Get activities by orchestrator session ID
+  // stage.id is the orchestrator session ID when navigating from session tree
+  const getActivitiesForSession = useAgentStore((s) => s.getActivitiesForSession);
   const subagentActive = useAgentStore((s) => s.subagentActive);
+  const activeOrchestratorId = useAgentStore((s) => s.activeOrchestratorId);
+  const clearSubagentActivities = useAgentStore((s) => s.clearSubagentActivities);
   const popStage = useStageStore((s) => s.popStage);
+  const focusSession = useStageStore((s) => s.focusSession);
 
-  // Filter activities for this specific agent
-  const activities = allActivities.filter((block) => block.agent === agentName);
+  // Get children of the focused session for linking tool calls
+  const focusedChildren = useFocusedSessionChildren();
+  const focusedSessionId = useStageStore((s) => s.focusedSessionId);
+
+  // Determine which orchestrator ID to use:
+  // 1. If stage.id starts with 'pending-', we're in early transition (no session tree yet)
+  //    In this case, use activeOrchestratorId from the store
+  // 2. Otherwise, stage.id is the actual orchestrator session ID
+  const isPending = stage.id.startsWith('pending-');
+  const orchestratorId = isPending ? activeOrchestratorId : stage.id;
+
+  // Debug: Log child session info
+  console.log('[SubagentStage] Session linking debug:', {
+    stageId: stage.id,
+    isPending,
+    orchestratorId,
+    focusedSessionId,
+    focusedChildrenCount: focusedChildren.length,
+    focusedChildren: focusedChildren.map((c) => ({ id: c.id, type: c.type, goal: c.goal })),
+  });
+
+  // Get activities for this specific orchestrator session
+  // Falls back to all activities if orchestratorId is null
+  const activities = getActivitiesForSession(orchestratorId);
+
+  // Get the actual agent name from activities for display
+  const agentName = activities.length > 0
+    ? activities[0].agent
+    : stageAgentName;
 
   // Determine status based on activity
   const isActive = subagentActive && activities.some(
@@ -191,13 +70,6 @@ export function SubagentStage({ stage }: SubagentStageProps) {
   const statusConfig = isActive
     ? { label: 'PROCESSING', color: 'var(--color-violet)', pulse: true }
     : { label: 'COMPLETE', color: 'var(--color-emerald)', pulse: false };
-
-  // Auto-scroll to bottom when new activities arrive
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [activities]);
 
   return (
     <motion.div
@@ -237,6 +109,7 @@ export function SubagentStage({ stage }: SubagentStageProps) {
           );
           border-bottom: 1px solid rgba(139, 92, 246, 0.15);
           position: relative;
+          flex-shrink: 0;
         }
 
         .subagent-hud-header::before,
@@ -369,309 +242,35 @@ export function SubagentStage({ stage }: SubagentStageProps) {
         }
 
         /* ═══════════════════════════════════════════════════════════════════
-           ACTIVITY STREAM
+           ACTIVITY STREAM CONTAINER
            ═══════════════════════════════════════════════════════════════════ */
 
-        .activity-stream {
+        .activity-stream-container {
           flex: 1;
-          overflow-y: auto;
-          padding: 16px;
+          overflow: hidden;
           display: flex;
           flex-direction: column;
-          gap: 12px;
         }
 
-        .activity-stream::-webkit-scrollbar {
+        .activity-stream-container .activity-feed {
+          height: 100%;
+        }
+
+        .activity-stream-container .activity-list {
+          padding: 16px;
+        }
+
+        .activity-stream-container .activity-list::-webkit-scrollbar {
           width: 6px;
         }
 
-        .activity-stream::-webkit-scrollbar-track {
+        .activity-stream-container .activity-list::-webkit-scrollbar-track {
           background: rgba(0, 0, 0, 0.2);
         }
 
-        .activity-stream::-webkit-scrollbar-thumb {
+        .activity-stream-container .activity-list::-webkit-scrollbar-thumb {
           background: rgba(139, 92, 246, 0.2);
           border-radius: 3px;
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           ACTIVITY ITEMS
-           ═══════════════════════════════════════════════════════════════════ */
-
-        .stage-activity-item {
-          display: flex;
-          align-items: flex-start;
-          gap: 12px;
-          padding: 14px;
-          background: linear-gradient(
-            135deg,
-            rgba(10, 10, 15, 0.85) 0%,
-            rgba(8, 8, 12, 0.9) 100%
-          );
-          border: 1px solid var(--color-glass-border);
-          border-radius: 12px;
-          animation: item-enter 0.3s ease;
-        }
-
-        @keyframes item-enter {
-          from {
-            opacity: 0;
-            transform: translateY(8px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        .stage-activity-item.active {
-          border-color: rgba(139, 92, 246, 0.3);
-          box-shadow: 0 0 20px rgba(139, 92, 246, 0.1);
-        }
-
-        .stage-activity-item.reasoning {
-          border-left: 3px solid var(--color-violet);
-        }
-
-        .stage-activity-item.reasoning.active {
-          animation: pulse-violet 1.5s ease-in-out infinite;
-        }
-
-        @keyframes pulse-violet {
-          0%, 100% { border-left-color: var(--color-violet); }
-          50% { border-left-color: rgba(139, 92, 246, 0.4); }
-        }
-
-        .stage-activity-item.tool {
-          border-left: 3px solid var(--color-cyan);
-        }
-
-        .stage-activity-item.tool.active {
-          animation: pulse-cyan 1.5s ease-in-out infinite;
-        }
-
-        @keyframes pulse-cyan {
-          0%, 100% { border-left-color: var(--color-cyan); }
-          50% { border-left-color: rgba(56, 189, 248, 0.4); }
-        }
-
-        .stage-activity-item.content {
-          border-left: 3px solid var(--color-emerald);
-        }
-
-        .stage-activity-item.error {
-          border-left: 3px solid var(--color-rose);
-          background: rgba(244, 63, 94, 0.05);
-        }
-
-        .activity-icon {
-          width: 32px;
-          height: 32px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: rgba(139, 92, 246, 0.08);
-          border: 1px solid rgba(139, 92, 246, 0.15);
-          border-radius: 8px;
-          font-family: var(--font-mono);
-          font-size: 14px;
-          color: var(--color-violet);
-          flex-shrink: 0;
-        }
-
-        .stage-activity-item.tool .activity-icon {
-          background: rgba(56, 189, 248, 0.08);
-          border-color: rgba(56, 189, 248, 0.15);
-          color: var(--color-cyan);
-        }
-
-        .stage-activity-item.content .activity-icon {
-          background: rgba(52, 211, 153, 0.08);
-          border-color: rgba(52, 211, 153, 0.15);
-          color: var(--color-emerald);
-        }
-
-        .stage-activity-item.error .activity-icon {
-          background: rgba(244, 63, 94, 0.08);
-          border-color: rgba(244, 63, 94, 0.15);
-          color: var(--color-rose);
-        }
-
-        .activity-content {
-          flex: 1;
-          min-width: 0;
-        }
-
-        .activity-label {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: var(--color-text-ghost);
-          margin-bottom: 4px;
-        }
-
-        .activity-preview {
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-violet);
-          font-style: italic;
-          line-height: 1.5;
-        }
-
-        /* Tool specific */
-        .tool-name {
-          font-family: var(--font-mono);
-          font-size: 13px;
-          font-weight: 500;
-          color: var(--color-cyan);
-        }
-
-        .tool-status {
-          margin-left: 10px;
-          font-family: var(--font-mono);
-          font-size: 10px;
-          padding: 2px 8px;
-          border-radius: 4px;
-        }
-
-        .tool-status.running {
-          background: rgba(56, 189, 248, 0.1);
-          color: var(--color-cyan);
-        }
-
-        .tool-status.done {
-          background: rgba(52, 211, 153, 0.1);
-          color: var(--color-emerald);
-        }
-
-        /* Content specific */
-        .content-text {
-          font-size: 13px;
-          color: var(--color-text-normal);
-          line-height: 1.6;
-        }
-
-        .error-message {
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-rose);
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           EXPANDABLE DETAILS
-           ═══════════════════════════════════════════════════════════════════ */
-
-        details.stage-activity-item {
-          cursor: pointer;
-        }
-
-        details.stage-activity-item summary {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          list-style: none;
-        }
-
-        details.stage-activity-item summary::-webkit-details-marker {
-          display: none;
-        }
-
-        .expand-arrow {
-          font-size: 10px;
-          color: var(--color-text-ghost);
-          transition: transform 0.2s ease;
-          margin-left: auto;
-        }
-
-        details.stage-activity-item[open] .expand-arrow {
-          transform: rotate(90deg);
-        }
-
-        .activity-expanded {
-          margin-top: 12px;
-          padding-top: 12px;
-          border-top: 1px solid var(--color-glass-border);
-        }
-
-        .reasoning-text {
-          font-family: var(--font-mono);
-          font-size: 11px;
-          color: var(--color-text-dim);
-          line-height: 1.6;
-          white-space: pre-wrap;
-          max-height: 300px;
-          overflow-y: auto;
-          padding: 12px;
-          background: rgba(139, 92, 246, 0.05);
-          border-radius: 8px;
-        }
-
-        .tool-section {
-          margin-bottom: 12px;
-        }
-
-        .tool-section:last-child {
-          margin-bottom: 0;
-        }
-
-        .tool-section-label {
-          font-family: var(--font-mono);
-          font-size: 9px;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: var(--color-text-ghost);
-          margin-bottom: 6px;
-        }
-
-        .tool-section-code {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-text-dim);
-          background: var(--color-surface);
-          padding: 12px;
-          border-radius: 8px;
-          white-space: pre-wrap;
-          word-break: break-word;
-          max-height: 200px;
-          overflow-y: auto;
-          margin: 0;
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           EMPTY STATE
-           ═══════════════════════════════════════════════════════════════════ */
-
-        .empty-activity {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          gap: 16px;
-          padding: 32px;
-          text-align: center;
-        }
-
-        .empty-icon {
-          width: 48px;
-          height: 48px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: rgba(139, 92, 246, 0.08);
-          border: 1px solid rgba(139, 92, 246, 0.15);
-          border-radius: 12px;
-          font-size: 20px;
-          color: var(--color-violet);
-          opacity: 0.5;
-        }
-
-        .empty-text {
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-dim);
-          line-height: 1.6;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
@@ -690,14 +289,6 @@ export function SubagentStage({ stage }: SubagentStageProps) {
 
           .hud-subtitle {
             display: none;
-          }
-
-          .activity-stream {
-            padding: 12px;
-          }
-
-          .stage-activity-item {
-            padding: 12px;
           }
         }
       `}</style>
@@ -722,21 +313,17 @@ export function SubagentStage({ stage }: SubagentStageProps) {
         </div>
       </div>
 
-      {/* Activity Stream */}
-      <div className="activity-stream" ref={scrollRef}>
-        {activities.length === 0 ? (
-          <div className="empty-activity">
-            <div className="empty-icon">◇</div>
-            <div className="empty-text">
-              Waiting for activity...<br />
-              {agentName} is initializing
-            </div>
-          </div>
-        ) : (
-          activities.map((block) => (
-            <ActivityBlockView key={block.id} block={block} />
-          ))
-        )}
+      {/* Activity Stream - Uses shared ActivityFeed component */}
+      <div className="activity-stream-container">
+        <ActivityFeed
+          blocks={activities}
+          isActive={isActive}
+          showHeader={false}
+          onClear={() => clearSubagentActivities(orchestratorId || undefined)}
+          emptyMessage={`Waiting for activity...\n${agentName} is initializing`}
+          childSessions={focusedChildren}
+          onNavigateToSession={focusSession}
+        />
       </div>
     </motion.div>
   );

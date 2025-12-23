@@ -7,6 +7,7 @@
 import './activity-feed';
 
 // Session Components
+import './e2e-simulation';
 // import './terminal-stage';
 
 // Conversation Components

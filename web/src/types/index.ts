@@ -72,6 +72,7 @@ export type WSMessageType =
   | 'cli_session_update'
   | 'cli_session_created'
   | 'cli_session_output'
+  | 'cli_session_deleted'
   // Unified subagent activity stream
   | 'subagent_activity'
   // Session tree updates (v2 architecture)
@@ -164,6 +165,8 @@ export interface SubagentActivityPayload {
   agent: string;
   type: SubagentEventType;
   payload: unknown;
+  /** Orchestrator session ID for per-session activity tracking */
+  orchestratorId?: string;
 }
 
 // Activity Block types for UI rendering
@@ -173,6 +176,8 @@ interface BaseBlock {
   id: string;
   timestamp: number;
   agent: string;
+  /** Orchestrator session ID for per-session activity tracking */
+  orchestratorId?: string;
 }
 
 export interface ReasoningBlock extends BaseBlock {
@@ -205,3 +210,6 @@ export type ActivityBlock = ReasoningBlock | ToolBlock | ContentBlock | ErrorBlo
 
 // Re-export stage types
 export * from './stage';
+
+// Re-export timeline types
+export * from './timeline';

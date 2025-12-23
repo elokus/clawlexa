@@ -10,6 +10,7 @@
 import type { ProfileId } from '../hooks/useAudioSession';
 import type { AgentState } from '../types';
 import { VoiceIndicator } from './VoiceIndicator';
+import { RecordButton } from './RecordButton';
 
 interface ControlBarProps {
   activeProfile: ProfileId;
@@ -101,6 +102,13 @@ export function ControlBar({
         .profile-pill:not(.active):not(:disabled):hover {
           border-color: var(--color-text-ghost);
           color: var(--color-text-normal);
+        }
+
+        .cb-divider {
+          width: 1px;
+          height: 20px;
+          background: var(--color-border);
+          margin: 0 4px;
         }
 
         /* Center section - Mic button + indicator */
@@ -313,7 +321,7 @@ export function ControlBar({
       `}</style>
 
       <div className="control-bar-bottom">
-        {/* Left - Profile selector */}
+        {/* Left - Profile selector + Record button */}
         <div className="cb-left">
           {profiles.map((profile) => (
             <button
@@ -326,6 +334,8 @@ export function ControlBar({
               {profile.name}
             </button>
           ))}
+          <div className="cb-divider" />
+          <RecordButton />
         </div>
 
         {/* Center - Mic button + Voice indicator */}

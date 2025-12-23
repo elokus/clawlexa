@@ -5,7 +5,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { useSessionsStore } from '../stores/sessions';
-import { useAgentStore } from '../stores/agent';
+import { useAgentStore, useSubagentActivities } from '../stores/agent';
 import { ActivityFeed } from './ActivityFeed';
 import type { RealtimeEvent, CliSession } from '../types';
 
@@ -742,7 +742,8 @@ function ToolsTab() {
 
 export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: CommandPanelProps) {
   const { sessions } = useSessionsStore();
-  const { subagentActivities, subagentActive, clearSubagentActivities } = useAgentStore();
+  const subagentActivities = useSubagentActivities();
+  const { subagentActive, clearSubagentActivities } = useAgentStore();
 
   return (
     <div className="cmd-panel">
