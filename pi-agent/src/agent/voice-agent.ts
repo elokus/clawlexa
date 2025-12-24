@@ -18,8 +18,10 @@ import {
   type AgentProfile,
 } from './profiles.js';
 import type { TransportLayerAudio, RealtimeItem } from '@openai/agents/realtime';
-import { getDatabase, AgentRunsRepository } from '../db/index.js';
+import { getDatabase, AgentRunsRepository, CliSessionsRepository } from '../db/index.js';
+import type { VoiceProfile } from '../db/index.js';
 import type { IAudioTransport } from '../transport/types.js';
+import { wsBroadcast } from '../api/websocket.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
@@ -36,8 +38,10 @@ export class VoiceAgent {
   private state: AgentState = 'idle';
   private eventHandlers: Partial<VoiceAgentEvents> = {};
   private agentRunsRepo: AgentRunsRepository;
+  private sessionsRepo: CliSessionsRepository;
   private transcriptBuffer: string[] = [];
   private transport: IAudioTransport | null = null;
+  private currentSessionId: string | null = null; // Track current voice session ID for DB
 
   /**
    * Create a VoiceAgent.
@@ -48,6 +52,7 @@ export class VoiceAgent {
     // Initialize database and repositories
     getDatabase();
     this.agentRunsRepo = new AgentRunsRepository();
+    this.sessionsRepo = new CliSessionsRepository();
 
     // Set up transport if provided
     if (transport) {
@@ -137,8 +142,22 @@ export class VoiceAgent {
     // This ID is propagated to:
     // 1. createAgentFromProfile - for factory tools (e.g., developer_session)
     // 2. VoiceSession - for lifecycle tracking and logging
+    // 3. Database - for session hierarchy tracking
     const sessionId = randomUUID();
+    this.currentSessionId = sessionId;
     console.log(`[Agent] Activating profile: ${profile.name} (Session: ${sessionId})`);
+
+    // Create voice session in database - voice is now persisted in the session tree
+    const voiceProfileName = profile.name.toLowerCase() as VoiceProfile;
+    this.sessionsRepo.createVoice({
+      id: sessionId,
+      profile: voiceProfileName,
+      goal: `Voice conversation (${profile.name})`,
+    });
+    console.log(`[Agent] Created voice session in DB: ${sessionId}`);
+
+    // Broadcast tree update so frontend can show the new voice session
+    wsBroadcast.sessionTreeUpdate(sessionId);
 
     // Create session FIRST so it can buffer audio during connection
     const agent = createAgentFromProfile(profile, sessionId);
@@ -191,6 +210,16 @@ export class VoiceAgent {
     this.session.on('disconnected', () => {
       // Log the agent run to database before resetting state
       this.logAgentRun();
+
+      // Mark voice session as finished in database
+      if (this.currentSessionId) {
+        this.sessionsRepo.finish(this.currentSessionId, 'finished');
+        console.log(`[Agent] Marked voice session as finished: ${this.currentSessionId}`);
+        // Broadcast tree update so frontend knows session ended
+        wsBroadcast.sessionTreeUpdate(this.currentSessionId);
+        this.currentSessionId = null;
+      }
+
       this.state = 'idle';
       this.emit('stateChange', 'idle', null);
     });
@@ -225,6 +254,17 @@ export class VoiceAgent {
     if (this.session) {
       // Log the agent run before disconnecting
       this.logAgentRun();
+
+      // Mark voice session as finished in database (before disconnect triggers 'disconnected' event)
+      // Note: disconnect() will trigger 'disconnected' event which also handles this,
+      // but we do it here too in case deactivate() is called directly
+      if (this.currentSessionId) {
+        this.sessionsRepo.finish(this.currentSessionId, 'finished');
+        console.log(`[Agent] Marked voice session as finished: ${this.currentSessionId}`);
+        wsBroadcast.sessionTreeUpdate(this.currentSessionId);
+        this.currentSessionId = null;
+      }
+
       this.session.disconnect();
       this.session = null;
     }
@@ -277,5 +317,13 @@ export class VoiceAgent {
    */
   hasTransport(): boolean {
     return this.transport !== null;
+  }
+
+  /**
+   * Get the current voice session ID.
+   * Used by subagents to establish parent-child relationships.
+   */
+  getCurrentSessionId(): string | null {
+    return this.currentSessionId;
   }
 }

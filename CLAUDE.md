@@ -16,6 +16,15 @@ npm run dev
 # Say "Jarvis" or "Computer" to activate
 ```
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [`docs/SESSION_CENTRIC_REFACTOR_PLAN.md`](docs/SESSION_CENTRIC_REFACTOR_PLAN.md) | **Active** - Session-Centric Architecture refactoring plan |
+| [`docs/SESSION_HIERARCHY_PLAN.md`](docs/SESSION_HIERARCHY_PLAN.md) | Session hierarchy architecture (parent-child relationships) |
+| [`docs/COMPONENT_DEV.md`](docs/COMPONENT_DEV.md) | Component development environment guide |
+| [`web/CLAUDE.md`](web/CLAUDE.md) | Web dashboard architecture and patterns |
+
 ## Project Setup
 
 - **Runtime**: Node.js 20.x
@@ -754,6 +763,67 @@ The current WebSocket-based audio transport has inherent issues (manual scheduli
 4. Backend handles tool execution via server-side events
 
 See: https://platform.openai.com/docs/guides/realtime-webrtc
+
+## Planned Architecture: Session-Centric OS
+
+> See [`docs/SESSION_CENTRIC_REFACTOR_PLAN.md`](docs/SESSION_CENTRIC_REFACTOR_PLAN.md) for full implementation plan.
+
+The next major refactoring transforms the system into an "OS-like" architecture where every agent is a first-class, chatable "Process" (Session).
+
+### Key Concepts
+
+1. **Universal Session Model**: Voice agent becomes a persisted session identical to subagents
+2. **Session Registry**: Frontend state organized by `sessionId`, not global arrays
+3. **Input Routing**: Backend routes user input (voice/text) to the *focused* session
+4. **Chatable Subagents**: Users can directly interact with any focused agent
+5. **AI SDK Protocol**: All streaming uses Vercel AI SDK Data Stream Protocol
+
+### Target Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Frontend (React)                                                            │
+│  ┌───────────────┐  ┌─────────────────────────────┐  ┌───────────────────┐ │
+│  │ ThreadRail    │  │   AgentStage                │  │ BackgroundRail    │ │
+│  │ (navigation)  │  │   (unified for all types)   │  │ (minimized tasks) │ │
+│  │               │  │                             │  │                   │ │
+│  │ Voice ──────▶│  │   useAgentChat(sessionId)   │  │                   │ │
+│  │   Orch ────▶ │  │   - AI SDK streaming        │  │                   │ │
+│  │     Term ──▶ │  │   - Chat input              │  │                   │ │
+│  └───────────────┘  └─────────────────────────────┘  └───────────────────┘ │
+│                                 │                                           │
+│                    WebSocket + AI SDK Protocol                              │
+└────────────────────────────────────┬────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Backend (Node.js)                                                           │
+│  ┌─────────────────────┐                                                    │
+│  │   Input Router      │ ← Routes input to focused session                  │
+│  │   (per-client focus)│                                                    │
+│  └──────────┬──────────┘                                                    │
+│             │                                                               │
+│  ┌──────────┴──────────┬──────────────────┬─────────────────┐              │
+│  ▼                     ▼                  ▼                 ▼              │
+│  Voice Session    CLI Orchestrator    Web Search      Terminal             │
+│  (OpenAI RT)      (Grok via AI SDK)   (Grok:online)   (Mac Daemon)         │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Sessions Repository (SQLite)                                        │   │
+│  │  - Unified schema for all session types                              │   │
+│  │  - Conversation history for orchestrators                            │   │
+│  │  - Parent-child relationships                                        │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Libraries to Adopt
+
+| Library | Replaces | Purpose |
+|---------|----------|---------|
+| `ai` (Vercel AI SDK Core) | Custom `runObservableAgent` | Unified streaming protocol |
+| `ai/react` hooks | Manual message accumulation | `useChat` pattern for sessions |
+| AI Elements (shadcn) | Custom `ChatStage`/`SubagentStage` | Reusable chat UI components |
 
 ## Notes
 

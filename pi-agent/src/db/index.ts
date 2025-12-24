@@ -15,8 +15,11 @@ export type {
   SessionStatus,
   SessionType,
   AgentName,
+  VoiceProfile,
   SessionTreeNode,
   CreateSessionInput,
+  CreateVoiceInput,
+  CreateSubagentInput,
   CreateOrchestratorInput,
   CreateTerminalInput,
 } from './repositories/cli-sessions.js';

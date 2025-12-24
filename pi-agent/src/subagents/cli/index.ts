@@ -82,21 +82,21 @@ export function getCurrentParentId(): string | undefined {
  * Handle a developer request by delegating to the CLI orchestration agent.
  *
  * This function:
- * 1. Finds an existing running CLI orchestrator OR creates a new one
- * 2. Loads the orchestrator's conversation history from the database
+ * 1. Finds an existing running CLI subagent OR creates a new one
+ * 2. Loads the subagent's conversation history from the database
  * 3. Runs the agent with full context
  * 4. Saves the updated conversation history back to the database
  *
- * The orchestrator stays 'running' while it has active terminal sessions.
+ * The subagent stays 'running' while it has active terminal sessions.
  *
  * @param request - The user's coding request
  * @param history - Conversation history from the realtime session (voice context)
- * @param _parentId - Deprecated: Voice sessions are no longer tracked
+ * @param voiceSessionId - Voice session ID to establish parent-child relationship
  */
 export async function handleDeveloperRequest(
   request: string,
   history: RealtimeItem[],
-  _parentId?: string
+  voiceSessionId?: string
 ): Promise<string> {
   const sessionsRepo = new CliSessionsRepository();
 
@@ -104,6 +104,7 @@ export async function handleDeveloperRequest(
   console.log('[CliAgent] Handling developer request');
   console.log(`[CliAgent] Request: ${request}`);
   console.log(`[CliAgent] Voice context items: ${history.length}`);
+  console.log(`[CliAgent] Voice session ID: ${voiceSessionId ?? 'none'}`);
 
   if (!OPENROUTER_API_KEY) {
     return 'Fehler: OPEN_ROUTER_API_KEY environment variable is not set';
@@ -112,25 +113,26 @@ export async function handleDeveloperRequest(
   // Load config and prompt from disk
   const { config, prompt: systemPrompt } = await loadAgentConfig(import.meta.dirname);
 
-  // Find or create the CLI orchestrator session
-  let orchestrator = sessionsRepo.findRunningOrchestrator('cli');
+  // Find or create the CLI subagent session
+  let subagent = sessionsRepo.findRunningSubagent('cli');
 
-  if (orchestrator) {
-    console.log(`[CliAgent] Resuming existing orchestrator: ${orchestrator.id}`);
+  if (subagent) {
+    console.log(`[CliAgent] Resuming existing subagent: ${subagent.id}`);
   } else {
-    orchestrator = sessionsRepo.createOrchestrator({
+    subagent = sessionsRepo.createSubagent({
       goal: request.substring(0, 100),
       agent_name: 'cli',
       model: config.model,
+      parent_id: voiceSessionId, // Link to voice session for hierarchy
     });
-    console.log(`[CliAgent] Created new orchestrator: ${orchestrator.id}`);
+    console.log(`[CliAgent] Created new subagent: ${subagent.id} (parent: ${voiceSessionId ?? 'none'})`);
 
-    // Broadcast new orchestrator session to UI
-    wsBroadcast.sessionTreeUpdate(orchestrator.id);
+    // Broadcast tree update - use voice session as root if available, otherwise subagent
+    wsBroadcast.sessionTreeUpdate(voiceSessionId ?? subagent.id);
   }
 
-  // Set orchestrator ID for tools to access during this request
-  currentOrchestratorId = orchestrator.id;
+  // Set subagent ID for tools to access during this request
+  currentOrchestratorId = subagent.id;
 
   console.log(`[CliAgent] Using model: ${config.model} via OpenRouter`);
 
@@ -140,9 +142,9 @@ export async function handleDeveloperRequest(
   });
   const model = openrouter.chat(config.model);
 
-  // Load orchestrator's conversation history from database
-  const orchestratorHistory: Array<{ role: string; content: string }> = JSON.parse(
-    orchestrator.conversation_history || '[]'
+  // Load subagent's conversation history from database
+  const subagentHistory: Array<{ role: string; content: string }> = JSON.parse(
+    subagent.conversation_history || '[]'
   );
 
   // Format voice conversation context (current session only)
@@ -169,14 +171,14 @@ export async function handleDeveloperRequest(
     .filter(Boolean)
     .join('\n');
 
-  // Format orchestrator's own history (persistent across voice sessions)
-  const orchestratorHistoryText = orchestratorHistory
+  // Format subagent's own history (persistent across voice sessions)
+  const subagentHistoryText = subagentHistory
     .map((msg) => `${msg.role}: ${msg.content}`)
     .join('\n');
 
   const userMessage = `
 ## Your Previous Conversation History (persistent)
-${orchestratorHistoryText || '(this is a new session)'}
+${subagentHistoryText || '(this is a new session)'}
 
 ## Current Voice Context
 ${voiceContextText || '(direct request, no voice context)'}
@@ -199,7 +201,7 @@ Analyze this request and take appropriate action. Remember:
 
   try {
     // Run the agent using the Observable Agent Runner pattern
-    // Pass orchestratorId for per-session activity tracking on frontend
+    // Pass subagentId for per-session activity tracking on frontend
     const output = await runObservableAgent({
       name: config.name,
       model,
@@ -207,7 +209,7 @@ Analyze this request and take appropriate action. Remember:
       prompt: userMessage,
       tools: cliAgentTools,
       maxSteps: config.maxSteps ?? 3,
-      orchestratorId: orchestrator.id,
+      orchestratorId: subagent.id,
     });
 
     console.log('[CliAgent] Agent response:');
@@ -216,23 +218,23 @@ Analyze this request and take appropriate action. Remember:
     console.log('========================================\n');
 
     // Save conversation to history
-    sessionsRepo.appendToHistory(orchestrator.id, [
+    sessionsRepo.appendToHistory(subagent.id, [
       { role: 'user', content: request },
       { role: 'assistant', content: output || 'No response' },
     ]);
 
-    // Check if orchestrator should finish (no running children)
-    const runningChildren = sessionsRepo.getRunningChildren(orchestrator.id);
+    // Check if subagent should finish (no running children)
+    const runningChildren = sessionsRepo.getRunningChildren(subagent.id);
     if (runningChildren.length === 0) {
-      // No active terminals, but keep orchestrator running for potential follow-ups
+      // No active terminals, but keep subagent running for potential follow-ups
       // It will be auto-cleaned after 24h of inactivity
-      console.log('[CliAgent] No active terminals, orchestrator stays running for follow-ups');
+      console.log('[CliAgent] No active terminals, subagent stays running for follow-ups');
     } else {
-      console.log(`[CliAgent] Orchestrator has ${runningChildren.length} active terminal(s)`);
+      console.log(`[CliAgent] Subagent has ${runningChildren.length} active terminal(s)`);
     }
 
-    // Broadcast tree update
-    wsBroadcast.sessionTreeUpdate(orchestrator.id);
+    // Broadcast tree update - use voice session as root if available
+    wsBroadcast.sessionTreeUpdate(voiceSessionId ?? subagent.id);
 
     return output || 'Keine Antwort erhalten.';
   } catch (error) {
@@ -241,7 +243,7 @@ Analyze this request and take appropriate action. Remember:
     wsBroadcast.error(`CLI Agent error: ${errorMsg}`);
     return `Es gab einen Fehler bei der Verarbeitung: ${errorMsg}`;
   } finally {
-    // Clear orchestrator ID to avoid leaking to subsequent requests
+    // Clear subagent ID to avoid leaking to subsequent requests
     currentOrchestratorId = undefined;
   }
 }

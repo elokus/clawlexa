@@ -118,6 +118,23 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_cli_sessions_tool_call ON cli_sessions(tool_call_id);
     `,
   },
+  {
+    version: 5,
+    name: 'session_centric_architecture',
+    up: `
+      -- Phase 2 of Session-Centric Refactor: Voice sessions are now persisted
+      -- Session types: 'voice' | 'subagent' | 'terminal' (replaces 'orchestrator')
+
+      -- Add profile column for voice sessions (stores 'jarvis', 'marvin', etc.)
+      ALTER TABLE cli_sessions ADD COLUMN profile TEXT;
+
+      -- Rename 'orchestrator' → 'subagent' for terminology alignment
+      UPDATE cli_sessions SET type = 'subagent' WHERE type = 'orchestrator';
+
+      -- Index for quick profile lookups (voice session by profile)
+      CREATE INDEX IF NOT EXISTS idx_cli_sessions_profile ON cli_sessions(profile);
+    `,
+  },
 ];
 
 /**
