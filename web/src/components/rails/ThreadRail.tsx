@@ -8,6 +8,7 @@
 // - Click to focus any session in the path
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   useUnifiedSessionsStore,
@@ -15,6 +16,9 @@ import {
   useFocusedSessionChildren,
 } from '../../stores';
 import type { SessionTreeNode } from '../../types';
+
+// API base URL
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 // Icons for session types
 const SESSION_ICONS: Record<string, string> = {
@@ -261,21 +265,52 @@ function StageConnector({ hasItems }: { hasItems: boolean }) {
 }
 
 export function ThreadRail() {
+  const [isClearing, setIsClearing] = useState(false);
+
   // Use new tree-based path instead of legacy threadRail
-  const sessionPath = useSessionPath();
+  const rawSessionPath = useSessionPath();
   const focusedChildren = useFocusedSessionChildren();
-  const focusedSessionId = useStageStore((s) => s.focusedSessionId);
-  const focusSession = useStageStore((s) => s.focusSession);
-  const clearFocusedSession = useStageStore((s) => s.clearFocusedSession);
-  const voiceActive = useStageStore((s) => s.voiceActive);
-  const profile = useAgentStore((s) => s.profile);
-  const subagentActive = useAgentStore((s) => s.subagentActive);
+  // Use unified store for all state
+  const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
+  const sessionTree = useUnifiedSessionsStore((s) => s.sessionTree);
+  const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
+  const voiceActive = useUnifiedSessionsStore((s) => s.voiceActive);
+  const profile = useUnifiedSessionsStore((s) => s.voiceProfile);
+  const subagentActive = useUnifiedSessionsStore((s) => s.subagentActive);
+
+  // Clear all agent sessions from database
+  const handleClearSessions = async () => {
+    if (isClearing) return;
+    setIsClearing(true);
+    try {
+      const res = await fetch(`${API_URL}/api/sessions`, { method: 'DELETE' });
+      if (!res.ok) {
+        console.error('[ThreadRail] Failed to clear sessions:', res.status);
+      } else {
+        const data = await res.json();
+        console.log('[ThreadRail] Cleared', data.deleted, 'sessions');
+      }
+    } catch (err) {
+      console.error('[ThreadRail] Error clearing sessions:', err);
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  // Get voice session ID from tree root (if it's a voice session)
+  const voiceSessionId = sessionTree?.type === 'voice' ? sessionTree.id : null;
 
   // Show voice card when voice is active AND there's either a session tree or subagent work
-  const showVoiceRoot = voiceActive && (sessionPath.length > 0 || subagentActive);
+  const showVoiceRoot = voiceActive && (rawSessionPath.length > 0 || subagentActive);
 
-  // Voice is "focused" when no session is focused (showing ChatStage)
-  const isVoiceFocused = focusedSessionId === null;
+  // Filter out voice sessions from sessionPath when VoiceCard is shown
+  // (VoiceCard already represents the voice session with nicer styling)
+  const sessionPath = showVoiceRoot
+    ? rawSessionPath.filter((s) => s.type !== 'voice')
+    : rawSessionPath;
+
+  // Voice is "focused" when the voice session is focused OR no session is focused
+  const isVoiceFocused = focusedSessionId === null || focusedSessionId === voiceSessionId;
 
   // Total items including virtual voice card and children
   const totalItems = (showVoiceRoot ? 1 : 0) + sessionPath.length + focusedChildren.length;
@@ -287,8 +322,13 @@ export function ThreadRail() {
   };
 
   const handleVoiceClick = () => {
-    console.log('[ThreadRail] Voice card clicked - returning to voice view');
-    clearFocusedSession();
+    // Focus on the actual voice session if it exists in the tree
+    if (voiceSessionId) {
+      console.log('[ThreadRail] Voice card clicked - focusing voice session:', voiceSessionId);
+      focusSession(voiceSessionId);
+    } else {
+      console.log('[ThreadRail] Voice card clicked - no voice session in tree');
+    }
   };
 
   return (
@@ -327,6 +367,34 @@ export function ThreadRail() {
           background: rgba(56, 189, 248, 0.08);
           border: 1px solid rgba(56, 189, 248, 0.15);
           border-radius: 4px;
+        }
+
+        .thread-clear-btn {
+          margin-left: auto;
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(244, 63, 94, 0.08);
+          border: 1px solid rgba(244, 63, 94, 0.2);
+          border-radius: 6px;
+          color: var(--color-rose);
+          font-size: 12px;
+          cursor: pointer;
+          opacity: 0.6;
+          transition: all 0.2s ease;
+        }
+
+        .thread-clear-btn:hover:not(:disabled) {
+          opacity: 1;
+          background: rgba(244, 63, 94, 0.15);
+          border-color: rgba(244, 63, 94, 0.4);
+        }
+
+        .thread-clear-btn:disabled {
+          opacity: 0.3;
+          cursor: not-allowed;
         }
 
         .thread-stack-container {
@@ -662,6 +730,14 @@ export function ThreadRail() {
         {totalItems > 0 && (
           <span className="thread-count">{totalItems}</span>
         )}
+        <button
+          className="thread-clear-btn"
+          onClick={handleClearSessions}
+          disabled={isClearing}
+          title="Clear all session logs"
+        >
+          {isClearing ? '...' : '✕'}
+        </button>
       </div>
 
       {totalItems === 0 ? (

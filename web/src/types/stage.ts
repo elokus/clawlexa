@@ -14,7 +14,8 @@
 // Session Tree Types (from backend)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type SessionType = 'orchestrator' | 'terminal';
+// NOTE: Backend uses 'subagent', keep 'orchestrator' as alias for compatibility
+export type SessionType = 'voice' | 'subagent' | 'orchestrator' | 'terminal';
 
 export type SessionStatus =
   | 'pending'

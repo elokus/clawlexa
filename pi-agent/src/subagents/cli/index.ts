@@ -102,10 +102,11 @@ export async function handleDeveloperRequest(
   const { config, prompt: systemPrompt } = await loadAgentConfig(import.meta.dirname);
 
   // Find or create the CLI subagent session
-  let subagent = sessionsRepo.findRunningSubagent('cli');
+  // IMPORTANT: Scope to current voice session to avoid reusing subagents from old sessions
+  let subagent = sessionsRepo.findRunningSubagent('cli', voiceSessionId);
 
   if (subagent) {
-    console.log(`[CliAgent] Resuming existing subagent: ${subagent.id}`);
+    console.log(`[CliAgent] Resuming existing subagent: ${subagent.id} (parent: ${voiceSessionId ?? 'none'})`);
   } else {
     subagent = sessionsRepo.createSubagent({
       goal: request.substring(0, 100),

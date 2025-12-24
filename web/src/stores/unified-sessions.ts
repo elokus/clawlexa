@@ -70,6 +70,7 @@ export interface SessionState {
 /** AI SDK stream event types */
 export type AISDKStreamEvent =
   | { type: 'text-delta'; textDelta: string }
+  | { type: 'user-transcript'; text: string } // Custom extension for voice user messages
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
   | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
   | { type: 'reasoning-start' }
@@ -140,7 +141,7 @@ interface UnifiedSessionsStore {
   // ─────────────────────────────────────────────────────────────────────────
   // Connection Actions
   // ─────────────────────────────────────────────────────────────────────────
-  setClientIdentity: (clientId: string, isMaster: boolean) => void;
+  setClientIdentity: (clientId: string | null, isMaster: boolean) => void;
   setIsMaster: (isMaster: boolean) => void;
   setWsError: (error: string | null) => void;
 
@@ -191,6 +192,7 @@ interface UnifiedSessionsStore {
   // Events & Overlay
   // ─────────────────────────────────────────────────────────────────────────
   addEvent: (type: string, payload: unknown) => void;
+  clearEvents: () => void;
   setActiveOverlay: (overlay: OverlayType) => void;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -502,7 +504,31 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
     });
   },
 
-  clearSessions: () => set({ sessions: new Map() }),
+  clearSessions: () => {
+    const { focusTimeout } = get();
+    if (focusTimeout) clearTimeout(focusTimeout);
+    // Clear all session-related state but keep connection state
+    set({
+      // Keep: clientId, isMaster, wsError (connection state)
+      // Clear session state:
+      voiceState: 'idle',
+      voiceProfile: null,
+      voiceActive: false,
+      voiceTimeline: [],
+      currentTool: null,
+      sessionTree: null,
+      allTrees: new Map(),
+      focusedSessionId: null,
+      backgroundTreeIds: [],
+      focusTimeout: null,
+      sessions: new Map(),
+      activitiesBySession: {},
+      activeOrchestratorId: null,
+      subagentActive: false,
+      events: [],
+      activeOverlay: null,
+    });
+  },
 
   // ─────────────────────────────────────────────────────────────────────────
   // Activity Actions
@@ -698,6 +724,17 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
           break;
         }
 
+        case 'user-transcript': {
+          // User transcripts always create a new user message
+          messages.push({
+            id: generateId(),
+            role: 'user',
+            parts: [{ type: 'text', text: event.text }],
+            createdAt: Date.now(),
+          });
+          break;
+        }
+
         case 'tool-call': {
           const toolPart: MessagePart = {
             type: 'tool-call',
@@ -797,6 +834,10 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         { id: generateId(), type, timestamp: Date.now(), data: payload },
       ],
     }));
+  },
+
+  clearEvents: () => {
+    set({ events: [] });
   },
 
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),

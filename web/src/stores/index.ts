@@ -67,7 +67,7 @@ export {
 // Message Handler
 // ─────────────────────────────────────────────────────────────────────────────
 
-export { handleWebSocketMessage, createDualModeHandler } from './message-handler';
+export { handleWebSocketMessage } from './message-handler';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Legacy Stores - DELETED (2025-12-24)

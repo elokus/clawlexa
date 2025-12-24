@@ -38,13 +38,14 @@ export function TerminalStage({ stage }: TerminalStageProps) {
   const [exitCode, setExitCode] = useState<number | null>(null);
 
   const sessionId = stage.data?.sessionId;
-  const sessions = useSessionsStore((s) => s.sessions);
-  const backgroundStage = useStageStore((s) => s.backgroundStage);
+  // Use unified store for sessions (Map) and minimize action
+  const sessions = useSessions();
+  const minimizeTree = useUnifiedSessionsStore((s) => s.minimizeTree);
 
-  // Find the session data
-  const session = sessions.find((s) => s.id === sessionId);
+  // Find the session data from Map
+  const session = sessionId ? sessions.get(sessionId) : undefined;
   const sessionStatus = session?.status || 'pending';
-  const sessionStatusConfig = SESSION_STATUS_CONFIG[sessionStatus];
+  const sessionStatusConfig = SESSION_STATUS_CONFIG[sessionStatus as SessionStatus];
   const terminalStatusConfig = TERMINAL_STATUS_CONFIG[terminalStatus];
 
   // Handle status changes from terminal client
@@ -118,7 +119,7 @@ export function TerminalStage({ stage }: TerminalStageProps) {
 
   const handleMinimize = () => {
     if (sessionId) {
-      backgroundStage(stage.id);
+      minimizeTree(); // Minimizes the current session tree
     }
   };
 

@@ -19,6 +19,7 @@ import {
 } from '../db/index.js';
 import { handleDemoRequest } from '../demo/index.js';
 import { eventRecorder } from './event-recorder.js';
+import { wsBroadcast } from './websocket.js';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
 
@@ -199,6 +200,8 @@ async function handleWebhook(
       const sessionsRepo = new CliSessionsRepository();
       const deleted = sessionsRepo.deleteAll();
       console.log(`[API] Deleted all ${deleted} sessions`);
+      // Broadcast to all connected clients
+      wsBroadcast.cliAllSessionsDeleted();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ deleted }));
     } catch (error) {

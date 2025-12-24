@@ -12,6 +12,11 @@ async function main() {
 
   const config = loadConfig();
 
+  // Log demo mode status
+  if (config.demoMode) {
+    console.log('[Init] ⚠️  DEMO_MODE enabled - terminal sessions will start without commands');
+  }
+
   // Check tmux availability
   const tmuxAvailable = await tmuxManager.checkTmuxAvailable();
   if (!tmuxAvailable) {
@@ -24,6 +29,7 @@ async function main() {
   // Initialize session manager
   const sessionManager = new SessionManager({
     piWebhookUrl: config.piWebhookUrl,
+    demoMode: config.demoMode,
   });
 
   // Recover any existing sessions

@@ -12,7 +12,9 @@ import {
   onBinaryMessage,
   getClients,
   onClientCommand,
+  onSessionInput,
 } from './api/websocket.js';
+import { handleDirectInput } from './subagents/direct-input.js';
 import { startStaticServer, stopStaticServer } from './api/static.js';
 import { LocalTransport, WebSocketTransport, type IAudioTransport } from './transport/index.js';
 
@@ -114,28 +116,12 @@ async function main() {
     }
   });
 
-  agent.on('transcript', (text, role) => {
-    console.log(`[${role}] ${text}`);
-    // Broadcast transcript to WebSocket clients
-    wsBroadcast.transcript(text, role);
-  });
-
-  agent.on('audio', () => {
-    // Audio is now handled internally by the transport
-    // This event is still emitted for logging/debugging if needed
-  });
+  // Note: transcript, toolStart, toolEnd are now emitted via stream_chunk
+  // through the AI SDK adapter in VoiceAgent. These handlers are no longer needed.
 
   agent.on('error', (error) => {
     console.error('[Error]', error.message);
-    wsBroadcast.error(error.message);
-  });
-
-  agent.on('toolStart', (name, args) => {
-    wsBroadcast.toolStart(name, args);
-  });
-
-  agent.on('toolEnd', (name, result) => {
-    wsBroadcast.toolEnd(name, result);
+    // Error is also emitted via stream_chunk adapter, but we keep this for logging
   });
 
   // Set up wakeword detection (only in local mode)
@@ -216,6 +202,9 @@ async function main() {
       }
     }
   });
+
+  // Register session input handler for direct text input to subagents
+  onSessionInput(handleDirectInput);
 
   // Start the timer scheduler
   scheduler.start();

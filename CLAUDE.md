@@ -20,7 +20,8 @@ npm run dev
 
 | Document | Description |
 |----------|-------------|
-| [`docs/SESSION_CENTRIC_REFACTOR_PLAN.md`](docs/SESSION_CENTRIC_REFACTOR_PLAN.md) | **Active** - Session-Centric Architecture refactoring plan |
+| [`docs/SESSION_MANAGEMENT.md`](docs/SESSION_MANAGEMENT.md) | **Primary** - Agent session management architecture |
+| [`docs/SESSION_CENTRIC_REFACTOR_PLAN.md`](docs/SESSION_CENTRIC_REFACTOR_PLAN.md) | Session-Centric Architecture refactoring plan (Complete) |
 | [`docs/SESSION_HIERARCHY_PLAN.md`](docs/SESSION_HIERARCHY_PLAN.md) | Session hierarchy architecture (parent-child relationships) |
 | [`docs/COMPONENT_DEV.md`](docs/COMPONENT_DEV.md) | Component development environment guide |
 | [`web/CLAUDE.md`](web/CLAUDE.md) | Web dashboard architecture and patterns |
@@ -55,34 +56,41 @@ voice-agent/
 ├── CLAUDE.md              # This file
 ├── .env                   # API keys (not in git)
 ├── docs/
-│   └── IMPLEMENTATION_PLAN.md
+│   ├── SESSION_MANAGEMENT.md      # Agent session architecture (primary)
+│   ├── SESSION_CENTRIC_REFACTOR_PLAN.md  # Refactoring plan (complete)
+│   └── COMPONENT_DEV.md           # Dev environment guide
 │
-├── web/                   # Web Dashboard (React + Vite + Bun)
+├── web/                   # Web Dashboard (React + Vite)
 │   ├── src/
 │   │   ├── main.tsx          # Entry point with routing
 │   │   ├── App.tsx           # Main dashboard layout
-│   │   ├── components/       # UI components
-│   │   │   ├── VoiceVisualizer.tsx  # Audio waveform animation
-│   │   │   ├── StatusIndicator.tsx  # Connection/state display
-│   │   │   ├── TranscriptView.tsx   # Conversation history
-│   │   │   ├── SessionSidebar.tsx   # CLI sessions panel
-│   │   │   └── EventLog.tsx         # Real-time event stream
-│   │   ├── dev/              # Component Dev Environment (/dev)
-│   │   │   ├── DevPage.tsx       # Dev page with sidebar
-│   │   │   ├── registry.ts       # Demo registration
-│   │   │   ├── components/       # Sidebar, Canvas, Controls
-│   │   │   ├── hooks/            # Stream simulator
-│   │   │   └── demos/            # Component demos
-│   │   │       └── activity-feed/
+│   │   ├── components/
+│   │   │   ├── stages/           # Stage components
+│   │   │   │   ├── AgentStage.tsx    # Unified agent renderer (voice + subagent)
+│   │   │   │   └── TerminalStage.tsx # PTY terminal renderer
+│   │   │   ├── rails/            # Navigation rails
+│   │   │   │   ├── ThreadRail.tsx    # Session tree navigation
+│   │   │   │   └── BackgroundRail.tsx # Minimized sessions
+│   │   │   ├── layout/           # Layout components
+│   │   │   │   └── StageOrchestrator.tsx # Stage routing
+│   │   │   ├── ai-elements/      # AI SDK UI components
+│   │   │   │   ├── conversation.tsx
+│   │   │   │   ├── message.tsx
+│   │   │   │   └── loader.tsx
+│   │   │   └── ui/               # shadcn/ui components
 │   │   ├── hooks/
-│   │   │   └── useWebSocket.ts      # WebSocket connection
+│   │   │   └── useWebSocket.ts      # WebSocket singleton
 │   │   ├── stores/           # Zustand state management
-│   │   │   ├── agent.ts          # Agent state/transcripts
-│   │   │   └── sessions.ts       # CLI sessions
+│   │   │   ├── unified-sessions.ts  # Single unified store (921 LoC)
+│   │   │   ├── message-handler.ts   # WebSocket event routing
+│   │   │   └── index.ts             # Store exports + selectors
 │   │   ├── styles/
 │   │   │   └── index.css         # Tailwind + dark theme
+│   │   ├── lib/
+│   │   │   └── utils.ts          # Utility functions
 │   │   └── types/
-│   │       └── index.ts          # TypeScript types
+│   │       ├── index.ts          # TypeScript types
+│   │       └── stage.ts          # Stage-specific types
 │   ├── package.json
 │   └── vite.config.ts
 │
@@ -93,64 +101,42 @@ voice-agent/
     │   │
     │   ├── agent/             # Agent definitions
     │   │   ├── profiles.ts        # Wake word → profile mapping
-    │   │   └── voice-agent.ts     # Main VoiceAgent class
+    │   │   └── voice-agent.ts     # VoiceAgent class + adapter integration
     │   │
     │   ├── realtime/          # OpenAI Realtime SDK
     │   │   ├── index.ts
-    │   │   └── session.ts         # RealtimeSession + state machine
+    │   │   ├── session.ts         # RealtimeSession + state machine
+    │   │   └── ai-sdk-adapter.ts  # Voice → AI SDK event conversion
     │   │
-    │   ├── wakeword/          # Porcupine wake word detection
-    │   │   ├── index.ts
-    │   │   └── porcupine.ts       # Porcupine integration
-    │   │
-    │   ├── audio/             # Audio I/O
-    │   │   ├── index.ts
-    │   │   ├── capture.ts         # Microphone capture (pw-record)
-    │   │   ├── playback.ts        # Speaker output (pw-play)
-    │   │   ├── resample.ts        # Sample rate conversion
-    │   │   └── tts.ts             # OpenAI TTS client
-    │   │
-    │   ├── lib/               # Shared utilities
-    │   │   └── agent-runner.ts    # Observable agent runner (streaming)
+    │   ├── api/               # HTTP + WebSocket API
+    │   │   ├── websocket.ts       # WebSocket server (8 message types)
+    │   │   ├── stream-types.ts    # AI SDK event type definitions
+    │   │   └── webhooks.ts        # Mac daemon webhook receiver
     │   │
     │   ├── subagents/         # Modular subagents (config + prompts)
     │   │   ├── loader.ts          # Load config.json + PROMPT.md
+    │   │   ├── direct-input.ts    # Text input to focused subagent
     │   │   ├── cli/               # CLI orchestration agent
     │   │   │   ├── config.json        # Model: grok-code-fast-1
-    │   │   │   ├── PROMPT.md          # System instructions + projects
+    │   │   │   ├── PROMPT.md          # System instructions
     │   │   │   ├── tools.ts           # Session management tools
     │   │   │   └── index.ts           # handleDeveloperRequest
     │   │   └── web-search/        # Web search agent
     │   │       ├── config.json        # Model: grok-4.1-fast:online
-    │   │       ├── PROMPT.md          # Search assistant instructions
+    │   │       ├── PROMPT.md          # Search instructions
     │   │       └── index.ts           # webSearchTool
     │   │
     │   ├── db/                # SQLite database
     │   │   ├── index.ts
     │   │   ├── database.ts        # Connection manager
-    │   │   ├── schema.ts          # Migrations
+    │   │   ├── schema.ts          # Migrations (5 versions)
     │   │   └── repositories/
-    │   │       ├── cli-sessions.ts
-    │   │       ├── cli-events.ts
-    │   │       ├── timers.ts
-    │   │       └── agent-runs.ts
+    │   │       └── cli-sessions.ts    # Session CRUD + tree queries
     │   │
+    │   ├── wakeword/          # Porcupine wake word detection
+    │   ├── audio/             # Audio I/O (PipeWire)
     │   ├── scheduler/         # Timer scheduler
-    │   │   ├── index.ts
-    │   │   └── time-parser.ts     # Natural language time parsing
-    │   │
-    │   ├── api/               # HTTP API
-    │   │   ├── webhooks.ts        # Mac daemon webhook receiver
-    │   │   └── websocket.ts       # WebSocket server for dashboard
-    │   │
     │   └── tools/             # Agent tools
-    │       ├── index.ts           # Tool registry
-    │       ├── todo.ts            # Todo list (add, view, delete)
-    │       ├── timer.ts           # Timers (set, list, cancel)
-    │       ├── govee.ts           # Govee light control
-    │       ├── reasoning.ts       # Deep thinking tool
-    │       ├── mac-client.ts      # Mac daemon HTTP client
-    │       └── developer-session.ts # Developer session tools
     │
     ├── package.json
     └── tsconfig.json
@@ -203,6 +189,74 @@ voice-agent/
 │  - POST /sessions, GET /sessions/:id/output, etc.                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Session-Centric Architecture
+
+The system uses a **unified session model** where all agent interactions follow the same protocol:
+
+### Session Types
+
+| Type | Description | Parent | Protocol |
+|------|-------------|--------|----------|
+| `voice` | Root conversation (OpenAI Realtime API) | none | AI SDK via adapter |
+| `subagent` | Delegated agent (CLI, web_search) | voice or subagent | AI SDK native |
+| `terminal` | PTY process (tmux + Claude Code) | subagent | Binary PTY stream |
+
+### Unified Event Protocol
+
+All agents emit **AI SDK v5 Data Stream Protocol** events:
+
+```typescript
+// All events broadcast via WebSocket as stream_chunk
+type AISDKStreamEvent =
+  | { type: 'text-delta'; textDelta: string }
+  | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
+  | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
+  | { type: 'reasoning-start' } | { type: 'reasoning-delta'; text: string }
+  | { type: 'start-step' } | { type: 'finish-step'; usage: TokenUsage }
+  | { type: 'finish'; finishReason: string }
+  | { type: 'error'; error: string };
+```
+
+### Voice Adapter
+
+Voice sessions use an adapter to convert OpenAI Realtime API events → AI SDK format:
+
+```
+transcript     → text-delta
+toolStart      → tool-call
+toolEnd        → tool-result
+stateChange(thinking) → start-step
+stateChange(idle)     → finish
+```
+
+### Frontend Store
+
+Single unified Zustand store (`unified-sessions.ts`) manages all state:
+
+```typescript
+// Key selector hooks
+useFocusedSession()              // Current session
+useFocusPath()                   // Breadcrumb path from root
+useSessionActivities(sessionId)  // Activity blocks for session
+useVoiceTimeline()               // Voice transcripts + tools
+useConnectionState()             // { connected, clientId, isMaster }
+useVoiceState()                  // { voiceState, voiceProfile, currentTool }
+```
+
+### Direct Input (Chatable Subagents)
+
+Users can type directly to focused subagent sessions:
+
+```
+1. Frontend: focusSession(sessionId)
+2. Frontend: sendSessionInput(text)
+3. Backend: handleDirectInput(sessionId, text)
+4. Backend: Streams response via stream_chunk events
+5. Frontend: Accumulates events into messages
+```
+
+For complete documentation, see [`docs/SESSION_MANAGEMENT.md`](docs/SESSION_MANAGEMENT.md).
 
 ## Tools
 
@@ -473,18 +527,23 @@ The WebSocket server supports multiple browser clients with a Master/Replica pat
 
 | File | Purpose |
 |------|---------|
-| `pi-agent/src/api/websocket.ts` | Server-side client state, master assignment, audio filtering |
+| `pi-agent/src/api/websocket.ts` | Server-side client state, master assignment, message broadcasting |
 | `web/src/hooks/useWebSocket.ts` | Client-side singleton, `requestMaster()` function |
-| `web/src/stores/agent.ts` | `clientId`, `isMaster` state, `welcome`/`master_changed` handlers |
-| `web/src/components/ControlBar.tsx` | Master/Replica indicator, "Take Control" button |
+| `web/src/stores/unified-sessions.ts` | `clientId`, `isMaster` state, all session management |
+| `web/src/stores/message-handler.ts` | WebSocket event routing to unified store |
 
-### WebSocket Messages
+### WebSocket Messages (8 Core Types)
 
 | Message | Direction | Purpose |
 |---------|-----------|---------|
-| `welcome` | Server → Client | Sent on connect with `clientId` and `isMaster` |
-| `master_changed` | Server → All | Broadcast when master changes (includes new `masterId`) |
-| `request_master` | Client → Server | Request to become master (denied if agent busy) |
+| `welcome` | Server → Client | Client identity on connect (`clientId`, `isMaster`) |
+| `stream_chunk` | Server → Client | All agent events in AI SDK format |
+| `session_tree_update` | Server → Client | Session hierarchy changes |
+| `state_change` | Server → Client | Voice UI state (listening/thinking/speaking) |
+| `master_changed` | Server → All | Multi-client master coordination |
+| `session_started` | Server → Client | Voice session activated |
+| `session_ended` | Server → Client | Voice session deactivated |
+| `cli_session_deleted` | Server → Client | Terminal session cleanup |
 
 ## Environment Variables (Web)
 
@@ -752,6 +811,79 @@ const depthZ = -30 * cappedIndex;
 const depthOpacity = Math.max(0.3, 1 - cappedIndex * 0.12);
 const depthScale = Math.max(0.85, 1 - cappedIndex * 0.025);
 ```
+
+### shadcn/ui Dark Mode Requirement
+
+**Bug**: Text invisible in the UI - using shadcn/ui components that reference `text-foreground` but the text appears dark on a dark background.
+
+**Root Cause**: The CSS defines two sets of color variables:
+- `:root` contains light mode values (`--foreground: oklch(0.145 0 0)` = dark text)
+- `.dark` contains dark mode values (`--foreground: oklch(0.985 0 0)` = light text)
+
+The app was designed for dark mode but the `.dark` class was never applied.
+
+**Fix**: Add `class="dark"` to the HTML element:
+
+```html
+<!-- web/index.html -->
+<html lang="en" class="dark">
+```
+
+**Lesson**: When using shadcn/ui with a dark theme, you MUST apply the `dark` class to the HTML/body element. The CSS variables in `:root` are for light mode; dark mode variables are scoped under `.dark`.
+
+### AI SDK Voice Transcript Role Handling
+
+**Bug**: User and assistant voice transcripts were all concatenated into a single agent message block instead of being separate messages.
+
+**Root Cause**: The AI SDK adapter converted ALL transcripts to `text-delta` events regardless of role:
+
+```typescript
+// WRONG - ignores role
+case 'transcript': {
+  const { text } = payload; // role is ignored!
+  return { type: 'text-delta', textDelta: text };
+}
+```
+
+In the AI SDK protocol, `text-delta` is specifically for **streaming assistant responses**. The frontend accumulates consecutive `text-delta` events into the current assistant message. User messages need a different event type.
+
+**Fix**:
+1. Add custom `user-transcript` event type to the protocol:
+   ```typescript
+   // pi-agent/src/api/stream-types.ts
+   export type AISDKStreamEvent =
+     | { type: 'text-delta'; textDelta: string }
+     | { type: 'user-transcript'; text: string } // NEW
+     // ...
+   ```
+
+2. Update adapter to use correct event based on role:
+   ```typescript
+   // pi-agent/src/realtime/ai-sdk-adapter.ts
+   case 'transcript': {
+     const { text, role } = payload;
+     if (role === 'user') {
+       return { type: 'user-transcript', text };
+     }
+     return { type: 'text-delta', textDelta: text };
+   }
+   ```
+
+3. Frontend handles `user-transcript` by creating a new user message:
+   ```typescript
+   // web/src/stores/unified-sessions.ts
+   case 'user-transcript': {
+     messages.push({
+       id: generateId(),
+       role: 'user',
+       parts: [{ type: 'text', text: event.text }],
+       createdAt: Date.now(),
+     });
+     break;
+   }
+   ```
+
+**Lesson**: The AI SDK streaming protocol's `text-delta` is strictly for assistant responses. When adapting other protocols (like OpenAI Realtime's transcripts), you need to handle user/assistant roles differently - assistant uses `text-delta` for streaming, while user messages need a custom event that creates complete messages immediately.
 
 ### Future Improvement: WebRTC Transport
 

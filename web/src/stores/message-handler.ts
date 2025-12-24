@@ -2,50 +2,23 @@
 // Message Handler - Routes WebSocket events to unified sessions store
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// This handler provides backward compatibility by:
-// 1. Processing all existing event types (transcript, subagent_activity, etc.)
-// 2. Routing them to the unified sessions store
-// 3. Maintaining voice timeline for legacy ChatStage compatibility
+// Phase 5: Simplified Protocol
+// - Core events: welcome, stream_chunk, session_tree_update, state_change, master_changed
+// - Lifecycle: session_started, session_ended, cli_session_deleted, error
 //
-// Migration path:
-// - Old events (subagent_activity) → handleSubagentActivity
-// - New events (stream_chunk) → handleStreamChunk
-// - Voice events (transcript, tool_start) → voice timeline
+// stream_chunk handles ALL agent content (voice + subagent) in AI SDK format.
+// Voice sessions also populate voiceTimeline for AgentStage compatibility.
 
 import { useUnifiedSessionsStore, type TranscriptItem, type ToolItem } from './unified-sessions';
 import type { WSMessage } from '../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Types
+// Types (Phase 5: Simplified Protocol)
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface StateChangePayload {
   state: 'idle' | 'listening' | 'thinking' | 'speaking';
   profile: string | null;
-}
-
-interface TranscriptPayload {
-  id?: string;
-  text: string;
-  role: 'user' | 'assistant' | 'system';
-  final?: boolean;
-}
-
-interface ItemPendingPayload {
-  itemId: string;
-  role: 'user' | 'assistant' | 'system';
-}
-
-interface ItemCompletedPayload {
-  itemId: string;
-  text: string;
-  role: 'user' | 'assistant' | 'system';
-}
-
-interface ToolPayload {
-  name: string;
-  args?: Record<string, unknown>;
-  result?: string;
 }
 
 interface WelcomePayload {
@@ -57,17 +30,10 @@ interface MasterChangedPayload {
   masterId: string;
 }
 
-interface SubagentActivityPayload {
-  agent: string;
-  type: string;
-  payload: unknown;
-  orchestratorId?: string;
-}
-
 interface SessionTreeUpdatePayload {
   tree?: {
     id: string;
-    type: 'orchestrator' | 'terminal';
+    type: 'voice' | 'orchestrator' | 'terminal';
     status: string;
     goal: string;
     agent_name: string | null;
@@ -76,15 +42,6 @@ interface SessionTreeUpdatePayload {
     children: SessionTreeUpdatePayload['tree'][];
   };
   trees?: SessionTreeUpdatePayload['tree'][];
-}
-
-interface CliSessionCreatedPayload {
-  id: string;
-  goal: string;
-  mode: 'headless' | 'interactive';
-  projectPath: string;
-  command: string;
-  parentId?: string;
 }
 
 interface CliSessionDeletedPayload {
@@ -158,110 +115,8 @@ export function handleWebSocketMessage(msg: WSMessage): void {
       break;
     }
 
-    case 'transcript': {
-      const { id, text, role, final } = payload as TranscriptPayload;
-      const msgId = id || generateId();
-
-      // Update voice timeline
-      const { voiceTimeline } = store;
-      const existingIdx = voiceTimeline.findIndex(
-        (item) => item.type === 'transcript' && (item.id === msgId || (item.pending && item.role === role))
-      );
-
-      if (existingIdx >= 0 && text) {
-        store.updateVoiceTimelineItem(voiceTimeline[existingIdx].id, {
-          content: text,
-          pending: !final,
-        } as Partial<TranscriptItem>);
-      } else {
-        const newItem: TranscriptItem = {
-          id: msgId,
-          type: 'transcript',
-          role,
-          content: text || '',
-          timestamp,
-          pending: !final && !text,
-        };
-        store.addVoiceTimelineItem(newItem);
-      }
-      break;
-    }
-
-    case 'item_pending': {
-      const { itemId, role } = payload as ItemPendingPayload;
-      const newItem: TranscriptItem = {
-        id: itemId,
-        type: 'transcript',
-        role,
-        content: '',
-        timestamp,
-        pending: true,
-      };
-      store.addVoiceTimelineItem(newItem);
-      break;
-    }
-
-    case 'item_completed': {
-      const { itemId, text, role } = payload as ItemCompletedPayload;
-      const { voiceTimeline } = store;
-      const existingIdx = voiceTimeline.findIndex(
-        (item) => item.type === 'transcript' && item.id === itemId
-      );
-
-      if (existingIdx >= 0) {
-        store.updateVoiceTimelineItem(itemId, {
-          content: text,
-          pending: false,
-        } as Partial<TranscriptItem>);
-      } else {
-        const newItem: TranscriptItem = {
-          id: itemId,
-          type: 'transcript',
-          role,
-          content: text,
-          timestamp,
-          pending: false,
-        };
-        store.addVoiceTimelineItem(newItem);
-      }
-      break;
-    }
-
-    case 'tool_start': {
-      const { name, args } = payload as ToolPayload;
-      const toolItem: ToolItem = {
-        id: generateId(),
-        type: 'tool',
-        name,
-        args,
-        status: 'running',
-        timestamp,
-      };
-      store.addVoiceTimelineItem(toolItem);
-      store.setCurrentTool({ name, args });
-      break;
-    }
-
-    case 'tool_end': {
-      const { name, result } = payload as ToolPayload;
-      const { voiceTimeline } = store;
-
-      // Find the last running tool with matching name
-      const toolIdx = voiceTimeline
-        .map((item, idx) => ({ item, idx }))
-        .filter(({ item }) => item.type === 'tool' && (item as ToolItem).name === name && (item as ToolItem).status === 'running')
-        .pop()?.idx;
-
-      if (toolIdx !== undefined) {
-        store.updateVoiceTimelineItem(voiceTimeline[toolIdx].id, {
-          status: 'completed',
-          result,
-        } as Partial<ToolItem>);
-      }
-
-      store.setCurrentTool(null);
-      break;
-    }
+    // NOTE: transcript, item_pending, item_completed, tool_start, tool_end
+    // are now handled via stream_chunk for voice sessions (Phase 5 simplification)
 
     // ─────────────────────────────────────────────────────────────────────────
     // Session Tree Events (v2 Architecture)
@@ -273,40 +128,8 @@ export function handleWebSocketMessage(msg: WSMessage): void {
       break;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Subagent Activity Events (Legacy - will be replaced by stream_chunk)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    case 'subagent_activity': {
-      const { agent, type: eventType, payload: eventPayload, orchestratorId } = payload as SubagentActivityPayload;
-      store.handleSubagentActivity(agent, eventType, eventPayload, timestamp, orchestratorId);
-      break;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // CLI Session Events
-    // ─────────────────────────────────────────────────────────────────────────
-
-    case 'cli_session_created': {
-      const sessionData = payload as CliSessionCreatedPayload;
-      store.upsertSession({
-        id: sessionData.id,
-        type: 'subagent',
-        status: 'running',
-        parentId: sessionData.parentId ?? null,
-        goal: sessionData.goal,
-      });
-      break;
-    }
-
-    case 'cli_session_update': {
-      const sessionUpdate = payload as { id: string; status: string; goal: string };
-      store.upsertSession({
-        id: sessionUpdate.id,
-        status: sessionUpdate.status as 'running' | 'finished' | 'error' | 'cancelled',
-      });
-      break;
-    }
+    // NOTE: subagent_activity is replaced by stream_chunk (Phase 5)
+    // NOTE: cli_session_created/update are handled via session_tree_update
 
     case 'cli_session_deleted': {
       const deletePayload = payload as CliSessionDeletedPayload;
@@ -323,9 +146,109 @@ export function handleWebSocketMessage(msg: WSMessage): void {
     // ─────────────────────────────────────────────────────────────────────────
 
     case 'stream_chunk': {
-      // New AI SDK protocol - will be used after Phase 1 backend changes
+      // Unified AI SDK protocol for all agents (voice + subagent)
       const { sessionId, event } = payload as { sessionId: string; event: Parameters<typeof store.handleStreamChunk>[1] };
+
+      // Update session messages (works for all session types)
       store.handleStreamChunk(sessionId, event);
+
+      // For voice sessions, also populate voiceTimeline for AgentStage compatibility
+      // Detect voice session: it's the root of the current tree with type='voice'
+      const { sessionTree, voiceActive } = store;
+      const isVoiceSession =
+        voiceActive &&
+        sessionTree?.id === sessionId &&
+        sessionTree?.type === 'voice';
+
+      if (isVoiceSession) {
+        // Convert AI SDK events to voiceTimeline format
+        switch (event.type) {
+          case 'text-delta': {
+            // Add/update assistant transcript in voice timeline
+            const { voiceTimeline } = store;
+            const lastItem = voiceTimeline[voiceTimeline.length - 1];
+            const isAssistantTranscript =
+              lastItem?.type === 'transcript' &&
+              lastItem.role === 'assistant' &&
+              lastItem.pending;
+
+            if (isAssistantTranscript) {
+              store.updateVoiceTimelineItem(lastItem.id, {
+                content: lastItem.content + event.textDelta,
+              } as Partial<TranscriptItem>);
+            } else {
+              const newItem: TranscriptItem = {
+                id: generateId(),
+                type: 'transcript',
+                role: 'assistant',
+                content: event.textDelta,
+                timestamp,
+                pending: true,
+              };
+              store.addVoiceTimelineItem(newItem);
+            }
+            break;
+          }
+
+          case 'user-transcript': {
+            // User transcripts are always complete and create a new timeline item
+            const newItem: TranscriptItem = {
+              id: generateId(),
+              type: 'transcript',
+              role: 'user',
+              content: event.text,
+              timestamp,
+              pending: false,
+            };
+            store.addVoiceTimelineItem(newItem);
+            break;
+          }
+
+          case 'tool-call': {
+            const toolItem: ToolItem = {
+              id: event.toolCallId,
+              type: 'tool',
+              name: event.toolName,
+              args: event.input as Record<string, unknown>,
+              status: 'running',
+              timestamp,
+            };
+            store.addVoiceTimelineItem(toolItem);
+            store.setCurrentTool({ name: event.toolName, args: event.input as Record<string, unknown> });
+            break;
+          }
+
+          case 'tool-result': {
+            const { voiceTimeline } = store;
+            const toolIdx = voiceTimeline.findIndex(
+              (item) =>
+                item.type === 'tool' &&
+                (item as ToolItem).name === event.toolName &&
+                (item as ToolItem).status === 'running'
+            );
+            if (toolIdx >= 0) {
+              store.updateVoiceTimelineItem(voiceTimeline[toolIdx].id, {
+                status: 'completed',
+                result: event.output as string,
+              } as Partial<ToolItem>);
+            }
+            store.setCurrentTool(null);
+            break;
+          }
+
+          case 'finish': {
+            // Mark last pending transcript as complete
+            const { voiceTimeline } = store;
+            const lastItem = voiceTimeline[voiceTimeline.length - 1];
+            if (lastItem?.type === 'transcript' && lastItem.pending) {
+              store.updateVoiceTimelineItem(lastItem.id, {
+                pending: false,
+              } as Partial<TranscriptItem>);
+            }
+            break;
+          }
+        }
+      }
       break;
     }
 
@@ -341,22 +264,3 @@ export function handleWebSocketMessage(msg: WSMessage): void {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Compatibility Layer
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Create a message handler that also updates the legacy agent store.
- * Use this during migration to keep both stores in sync.
- */
-export function createDualModeHandler(
-  legacyHandler: (msg: WSMessage) => void
-): (msg: WSMessage) => void {
-  return (msg: WSMessage) => {
-    // Update unified store
-    handleWebSocketMessage(msg);
-
-    // Also update legacy store for components that haven't migrated yet
-    legacyHandler(msg);
-  };
-}

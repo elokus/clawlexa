@@ -23,6 +23,9 @@ export type AISDKStreamEvent =
   // Text streaming
   | { type: 'text-delta'; textDelta: string }
 
+  // User transcript (custom extension for voice sessions)
+  | { type: 'user-transcript'; text: string }
+
   // Tool calls
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
   | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }

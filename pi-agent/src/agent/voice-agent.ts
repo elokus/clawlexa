@@ -22,6 +22,7 @@ import { getDatabase, AgentRunsRepository, CliSessionsRepository } from '../db/i
 import type { VoiceProfile } from '../db/index.js';
 import type { IAudioTransport } from '../transport/types.js';
 import { wsBroadcast } from '../api/websocket.js';
+import { createVoiceAdapter, type VoiceAdapter } from '../realtime/ai-sdk-adapter.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
@@ -42,6 +43,7 @@ export class VoiceAgent {
   private transcriptBuffer: string[] = [];
   private transport: IAudioTransport | null = null;
   private currentSessionId: string | null = null; // Track current voice session ID for DB
+  private adapter: VoiceAdapter | null = null; // AI SDK adapter for unified stream_chunk events
 
   /**
    * Create a VoiceAgent.
@@ -163,6 +165,10 @@ export class VoiceAgent {
     const agent = createAgentFromProfile(profile, sessionId);
     this.session = new VoiceSession(agent, profile, sessionId);
 
+    // Create AI SDK adapter for unified stream_chunk events
+    // This replaces the legacy wsBroadcast.transcript/toolStart/toolEnd calls
+    this.adapter = createVoiceAdapter(sessionId);
+
     // Start transport AFTER session exists so audio can be buffered
     // This is critical for web mode where audio capture starts immediately
     if (this.transport && !this.transport.isActive()) {
@@ -173,6 +179,8 @@ export class VoiceAgent {
     // Wire up events
     this.session.on('stateChange', (state) => {
       this.state = state;
+      // stateChange still uses direct broadcast for UI state (listening/thinking/speaking)
+      // stream_chunk only handles message content, not UI state
       this.emit('stateChange', state, this.currentProfile?.name ?? null);
 
       // Stop transport when going idle
@@ -192,19 +200,24 @@ export class VoiceAgent {
     this.session.on('transcript', (text, role) => {
       // Collect transcripts for logging
       this.transcriptBuffer.push(`${role}: ${text}`);
-      this.emit('transcript', text, role);
+      // Emit stream_chunk via AI SDK adapter (unified protocol)
+      this.adapter?.transcript(text, role);
     });
 
     this.session.on('error', (error) => {
+      // Emit stream_chunk error via adapter
+      this.adapter?.error(error.message);
       this.emit('error', error);
     });
 
     this.session.on('toolStart', (name, args) => {
-      this.emit('toolStart', name, args);
+      // Emit stream_chunk tool-call via adapter
+      this.adapter?.toolStart(name, args);
     });
 
     this.session.on('toolEnd', (name, result) => {
-      this.emit('toolEnd', name, result);
+      // Emit stream_chunk tool-result via adapter
+      this.adapter?.toolEnd(name, result);
     });
 
     this.session.on('disconnected', () => {
@@ -275,6 +288,7 @@ export class VoiceAgent {
     }
 
     this.currentProfile = null;
+    this.adapter = null;
     this.state = 'idle';
     this.emit('stateChange', 'idle', null);
   }

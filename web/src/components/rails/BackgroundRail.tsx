@@ -5,10 +5,14 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useStageStore } from '../../stores/stage';
-import { useAgentStore } from '../../stores/agent';
-import { useSessionsStore } from '../../stores/sessions';
-import type { OverlayType, CliSession, SessionStatus } from '../../types';
+import {
+  useUnifiedSessionsStore,
+  useEvents,
+  useOverlayState,
+  useSessions,
+  type SessionState,
+} from '../../stores';
+import type { OverlayType, SessionStatus } from '../../types';
 
 // Persistent action icons
 const DOCK_ACTIONS: { id: OverlayType; icon: string; label: string }[] = [
@@ -73,7 +77,7 @@ function SessionButton({
   session,
   onClick,
 }: {
-  session: CliSession;
+  session: SessionState;
   onClick: () => void;
 }) {
   const [showTooltip, setShowTooltip] = useState(false);
@@ -118,8 +122,8 @@ function ThreadGroup({
   onSessionClick,
 }: {
   threadId: string;
-  sessions: CliSession[];
-  onSessionClick: (session: CliSession) => void;
+  sessions: SessionState[];
+  onSessionClick: (session: SessionState) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const activeCount = sessions.filter(
@@ -160,28 +164,29 @@ function ThreadGroup({
 }
 
 export function BackgroundRail() {
-  // Use new tree-based state
-  const backgroundTreeIds = useStageStore((s) => s.backgroundTreeIds);
-  const activeOverlay = useStageStore((s) => s.activeOverlay);
-  const setActiveOverlay = useStageStore((s) => s.setActiveOverlay);
-  const restoreTree = useStageStore((s) => s.restoreTree);
-  const focusSession = useStageStore((s) => s.focusSession);
-  const events = useAgentStore((s) => s.events);
+  // Use unified store for tree-based state
+  const backgroundTreeIds = useUnifiedSessionsStore((s) => s.backgroundTreeIds);
+  const restoreTree = useUnifiedSessionsStore((s) => s.restoreTree);
+  const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
+  const { activeOverlay, setActiveOverlay } = useOverlayState();
+  const events = useEvents();
 
-  const sessions = useSessionsStore((s) => s.sessions);
-  const hasFetched = useSessionsStore((s) => s.hasFetched);
-  const fetchSessions = useSessionsStore((s) => s.fetchSessions);
-  const getSessionsByThread = useSessionsStore((s) => s.getSessionsByThread);
+  // Get sessions from unified store (Map)
+  const sessionsMap = useSessions();
 
-  // Fetch sessions on mount if not already fetched
-  useEffect(() => {
-    if (!hasFetched) {
-      fetchSessions();
-    }
-  }, [hasFetched, fetchSessions]);
+  // Convert Map to array for length checks and iteration
+  const sessions = useMemo(() => Array.from(sessionsMap.values()), [sessionsMap]);
 
-  // Group sessions by thread
-  const sessionsByThread = useMemo(() => getSessionsByThread(), [sessions, getSessionsByThread]);
+  // Convert Map to array and group by parent_id as thread
+  const sessionsByThread = useMemo(() => {
+    const grouped = new Map<string, SessionState[]>();
+    sessionsMap.forEach((session) => {
+      const threadId = session.parentId || 'root';
+      const existing = grouped.get(threadId) || [];
+      grouped.set(threadId, [...existing, session]);
+    });
+    return grouped;
+  }, [sessionsMap]);
 
   // Sort threads by most recent session
   const sortedThreads = useMemo(() => {
@@ -189,7 +194,8 @@ export function BackgroundRail() {
     return entries.sort((a, b) => {
       const aLatest = a[1][a[1].length - 1];
       const bLatest = b[1][b[1].length - 1];
-      return new Date(bLatest.created_at).getTime() - new Date(aLatest.created_at).getTime();
+      // Sessions don't have created_at, use id as fallback (ids are time-based)
+      return bLatest.id.localeCompare(aLatest.id);
     });
   }, [sessionsByThread]);
 
@@ -201,7 +207,7 @@ export function BackgroundRail() {
     }
   };
 
-  const handleSessionClick = (session: CliSession) => {
+  const handleSessionClick = (session: SessionState) => {
     // Focus the session in the tree if it exists
     focusSession(session.id);
   };
@@ -673,7 +679,7 @@ export function BackgroundRail() {
             ))}
           </>
         ) : (
-          hasFetched && <span className="empty-sessions">No sessions</span>
+          <span className="empty-sessions">No sessions</span>
         )}
       </div>
     </div>

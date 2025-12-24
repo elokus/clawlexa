@@ -3,17 +3,30 @@
 // 3-column stage-based interface with shared element transitions
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { useEffect, useRef } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
-import { useConnectionState, useVoiceState } from './stores';
+import { useConnectionState, useVoiceState, useUnifiedSessionsStore } from './stores';
 import { useAudioSession } from './hooks/useAudioSession';
 import { StageOrchestrator } from './components/layout/StageOrchestrator';
 import { ControlBar } from './components/ControlBar';
 
 export function App() {
-  const { reconnect } = useWebSocket();
+  const { reconnect, sendFocusSession } = useWebSocket();
   const { connected } = useConnectionState();
   const { voiceState, voiceProfile } = useVoiceState();
   const audioSession = useAudioSession();
+
+  // Track focused session and sync to backend
+  const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
+  const prevFocusedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Only sync if focus actually changed and we're connected
+    if (connected && focusedSessionId !== prevFocusedRef.current) {
+      prevFocusedRef.current = focusedSessionId;
+      sendFocusSession(focusedSessionId);
+    }
+  }, [focusedSessionId, connected, sendFocusSession]);
 
   const stateConfig = {
     idle: { color: 'rgba(110, 110, 136, 0.8)', glow: 'transparent' },

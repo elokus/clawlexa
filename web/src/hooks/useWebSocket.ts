@@ -255,5 +255,21 @@ export function useWebSocket() {
     send('request_master', {});
   };
 
-  return { disconnect, send, sendBinary, getSocket, reconnect, requestMaster };
+  /**
+   * Notify backend which session the client is focused on.
+   * Used for routing text input to the correct subagent.
+   */
+  const sendFocusSession = (sessionId: string | null) => {
+    send('focus_session', { sessionId });
+  };
+
+  /**
+   * Send text input to the currently focused session.
+   * Backend routes to the appropriate subagent handler.
+   */
+  const sendSessionInput = (text: string) => {
+    send('session_input', { text });
+  };
+
+  return { disconnect, send, sendBinary, getSocket, reconnect, requestMaster, sendFocusSession, sendSessionInput };
 }

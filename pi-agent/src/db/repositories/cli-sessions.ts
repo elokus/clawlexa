@@ -253,8 +253,31 @@ export class CliSessionsRepository {
   /**
    * Find a running subagent by agent name.
    * Used to resume existing subagents instead of creating new ones.
+   *
+   * @param agentName - The agent name to search for
+   * @param parentId - Optional parent session ID to scope the search (e.g., voice session)
+   *                   If provided, only returns subagents that are children of this parent.
+   *                   If not provided, returns ANY running subagent with this name.
    */
-  findRunningSubagent(agentName: AgentName): Session | null {
+  findRunningSubagent(agentName: AgentName, parentId?: string): Session | null {
+    if (parentId) {
+      // Scoped search: only find subagents belonging to this parent
+      return (
+        (this.db
+          .prepare(
+            `SELECT * FROM cli_sessions
+             WHERE type = 'subagent'
+             AND agent_name = ?
+             AND parent_id = ?
+             AND status = 'running'
+             ORDER BY created_at DESC
+             LIMIT 1`
+          )
+          .get(agentName, parentId) as Session) ?? null
+      );
+    }
+
+    // Unscoped search: find any running subagent (legacy behavior)
     return (
       (this.db
         .prepare(

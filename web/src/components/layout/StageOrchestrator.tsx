@@ -1,10 +1,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // Stage Orchestrator - Main 3-column layout for Morphic Stage interface
 //
-// NEW ARCHITECTURE (v2):
-// - Renders based on focused session from session tree
-// - When no session tree: shows ChatStage (voice conversation)
-// - When focused session: shows appropriate stage based on session type
+// UNIFIED ARCHITECTURE (v3 - Phase 4):
+// - Uses AgentStage for both voice and subagent sessions
+// - TerminalStage only for PTY/terminal sessions
+// - Simpler routing: just check session type
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { AnimatePresence } from 'framer-motion';
@@ -15,9 +15,8 @@ import {
 } from '../../stores';
 import { BackgroundRail } from '../rails/BackgroundRail';
 import { ThreadRail } from '../rails/ThreadRail';
-import { ChatStage } from '../stages/ChatStage';
+import { AgentStage } from '../stages/AgentStage';
 import { TerminalStage } from '../stages/TerminalStage';
-import { SubagentStage } from '../stages/SubagentStage';
 import { GlassHUD } from '../overlays/GlassHUD';
 import { EventsOverlay } from '../overlays/EventsOverlay';
 import { ToolsOverlay } from '../overlays/ToolsOverlay';
@@ -40,29 +39,23 @@ const ROOT_STAGE: StageItem = {
 
 /**
  * Renders the appropriate stage based on focused session.
- * - terminal sessions → TerminalStage
- * - orchestrator sessions → SubagentStage (shows activity feed)
- * - active subagent (no session yet) → SubagentStage (early transition)
- * - no session → ChatStage (voice conversation)
+ * - terminal sessions → TerminalStage (PTY rendering)
+ * - all other sessions → AgentStage (unified for voice + subagent)
  */
 function ActiveStage({ session }: { session: SessionTreeNode | null }) {
   // Check for active subagent work (before session tree arrives)
   const subagentActivities = useSubagentActivities();
-  const subagentActive = useAgentStore((s) => s.subagentActive);
+  const subagentActive = useUnifiedSessionsStore((s) => s.subagentActive);
   // Check if we have a session tree (for distinguishing early transition vs navigation)
-  const hasSessionTree = useStageStore((s) => s.sessionTree !== null);
+  const hasSessionTree = useUnifiedSessionsStore((s) => s.sessionTree !== null);
 
-  // No session tree - check for subagent activity
+  // No focused session - check for early subagent transition or show voice
   if (!session) {
-    // IMPORTANT: Only show SubagentStage in "early transition" case when:
-    // 1. There are activities or subagent is active
-    // 2. We DON'T have a session tree yet (true early transition)
-    // If we have a session tree but focusedSessionId is null, user explicitly
-    // navigated back to voice - show ChatStage
+    // Early transition: show subagent activity before session tree arrives
     if ((subagentActivities.length > 0 || subagentActive) && !hasSessionTree) {
       const agentName = subagentActivities[0]?.agent || 'Agent';
       return (
-        <SubagentStage
+        <AgentStage
           stage={{
             id: `pending-${agentName}`,
             type: 'subagent',
@@ -74,14 +67,14 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
         />
       );
     }
-    // No subagent activity OR user navigated back to voice - show voice conversation
-    return <ChatStage stage={ROOT_STAGE} />;
+    // No subagent activity OR user navigated back to voice - show voice
+    return <AgentStage stage={ROOT_STAGE} />;
   }
 
   // Render based on session type
   switch (session.type) {
     case 'terminal':
-      // Terminal sessions get TerminalStage with session ID
+      // Terminal sessions get specialized TerminalStage for PTY
       return (
         <TerminalStage
           stage={{
@@ -95,10 +88,11 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
         />
       );
 
-    case 'orchestrator':
-      // Orchestrator sessions get SubagentStage showing activity
+    case 'subagent':
+    case 'orchestrator': // Legacy alias
+      // Subagent sessions use unified AgentStage
       return (
-        <SubagentStage
+        <AgentStage
           stage={{
             id: session.id,
             type: 'subagent',
@@ -110,9 +104,23 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
         />
       );
 
+    case 'voice':
+      // Voice sessions show the voice AgentStage with session context
+      return (
+        <AgentStage
+          stage={{
+            id: session.id,
+            type: 'chat',
+            title: session.goal || 'Voice',
+            status: 'active',
+            createdAt: new Date(session.created_at).getTime(),
+          }}
+        />
+      );
+
     default:
-      // Fallback to chat
-      return <ChatStage stage={ROOT_STAGE} />;
+      // Fallback to voice (root AgentStage)
+      return <AgentStage stage={ROOT_STAGE} />;
   }
 }
 

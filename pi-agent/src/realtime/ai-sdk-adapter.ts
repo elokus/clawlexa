@@ -79,8 +79,12 @@ function convertToAISDKEvent<T extends VoiceEventType>(
 ): AISDKStreamEvent | null {
   switch (eventType) {
     case 'transcript': {
-      const { text } = payload as VoiceEventPayloads['transcript'];
-      // AI SDK v5 uses 'text-delta' with 'textDelta' property
+      const { text, role } = payload as VoiceEventPayloads['transcript'];
+      // User messages use custom 'user-transcript' event
+      // Assistant messages use standard AI SDK 'text-delta'
+      if (role === 'user') {
+        return { type: 'user-transcript', text };
+      }
       return { type: 'text-delta', textDelta: text };
     }
 
