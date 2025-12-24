@@ -5,8 +5,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { useSessionsStore } from '../../stores/sessions';
-import { useStageStore } from '../../stores/stage';
+import { useUnifiedSessionsStore, useSessions, type SessionState } from '../../stores';
 import { getTerminalClient, releaseTerminalClient } from '../../lib/terminal-client';
 import type { TerminalClient, TerminalStatus } from '../../lib/terminal-client';
 import type { StageItem, SessionStatus } from '../../types';

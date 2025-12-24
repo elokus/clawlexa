@@ -13,16 +13,11 @@
 // - Voice events (transcript, tool_start) → voice timeline
 
 import { useUnifiedSessionsStore, type TranscriptItem, type ToolItem } from './unified-sessions';
+import type { WSMessage } from '../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════════════════
-
-interface WSMessage {
-  type: string;
-  payload: unknown;
-  timestamp: number;
-}
 
 interface StateChangePayload {
   state: 'idle' | 'listening' | 'thinking' | 'speaking';

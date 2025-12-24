@@ -9,8 +9,11 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useStageStore, useSessionPath, useFocusedSessionChildren } from '../../stores/stage';
-import { useAgentStore } from '../../stores/agent';
+import {
+  useUnifiedSessionsStore,
+  useSessionPath,
+  useFocusedSessionChildren,
+} from '../../stores';
 import type { SessionTreeNode } from '../../types';
 
 // Icons for session types

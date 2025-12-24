@@ -68,8 +68,8 @@ export type WSMessageType =
   | 'cli_session_created'   // New tmux session created
   | 'cli_session_output'    // Session output streaming
   | 'cli_session_deleted'   // Session deleted from database
-  // Unified subagent activity stream (replaces worker_activity and cli_agent_* events)
-  | 'subagent_activity'
+  // Unified stream protocol (AI SDK format) - replaces subagent_activity
+  | 'stream_chunk'          // All agent events in AI SDK format
   // Multi-client master/replica coordination
   | 'welcome'               // Sent on connect with clientId and isMaster
   | 'master_changed'        // Broadcast when master changes
@@ -420,29 +420,12 @@ export function onClientCommand(handler: (command: ClientCommand, ws: WebSocket)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Subagent Activity Types - Unified streaming events for all subagents
+// Stream Chunk Types - AI SDK format events for all agents
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type SubagentEventType =
-  | 'reasoning_start'   // Reasoning/thinking started
-  | 'reasoning_delta'   // Streaming reasoning chunk
-  | 'reasoning_end'     // Reasoning complete
-  | 'tool_call'         // Tool invocation with args
-  | 'tool_result'       // Tool execution result
-  | 'response'          // Final text response
-  | 'error'             // Error occurred
-  | 'complete';         // Agent finished
-
-export interface SubagentActivityPayload {
-  /** Agent name for UI display (e.g., "Marvin", "Jarvis") */
-  agent: string;
-  /** Event type */
-  type: SubagentEventType;
-  /** Event-specific payload */
-  payload: unknown;
-  /** Orchestrator session ID for per-session activity tracking */
-  orchestratorId?: string;
-}
+// Re-export types from stream-types.ts for convenience
+export type { AISDKStreamEvent, StreamChunkMessage } from './stream-types.js';
+import type { AISDKStreamEvent } from './stream-types.js';
 
 // Convenience broadcast functions
 export const wsBroadcast = {
@@ -496,9 +479,9 @@ export const wsBroadcast = {
   cliAllSessionsDeleted: () =>
     broadcast('cli_session_deleted', { all: true }),
 
-  // Unified subagent activity events (replaces workerActivity and cliAgent* events)
-  subagentActivity: (payload: SubagentActivityPayload) =>
-    broadcast('subagent_activity', payload),
+  // Unified stream chunk events (AI SDK format for all agents)
+  streamChunk: (sessionId: string, event: AISDKStreamEvent) =>
+    broadcast('stream_chunk', { sessionId, event }),
 
   // Session hierarchy tree update (for ThreadRail)
   sessionTreeUpdate: (rootId: string) => {

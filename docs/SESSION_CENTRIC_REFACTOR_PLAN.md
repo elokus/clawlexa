@@ -262,91 +262,64 @@ broadcast('stream_chunk', {
 
 ---
 
-## Phase 1: Unified Event Protocol
+## Phase 1: Unified Event Protocol ✅
 
-### 1.1 AI SDK Adapter for Voice
-**New File:** `pi-agent/src/realtime/ai-sdk-adapter.ts`
+### 1.1 AI SDK Adapter for Voice ✅
+**File:** `pi-agent/src/realtime/ai-sdk-adapter.ts`
 
-- [ ] Create adapter that converts Realtime API events → AI SDK format
-- [ ] Map `transcript` → `text-delta`
-- [ ] Map `tool_call` → `tool-call` with `input` property
-- [ ] Map `tool_result` → `tool-result` with `output` property
-- [ ] Emit `stream_chunk` messages with sessionId
+- [x] Create adapter that converts Realtime API events → AI SDK format
+- [x] Map `transcript` → `text-delta`
+- [x] Map `toolStart` → `tool-call` with `input` property
+- [x] Map `toolEnd` → `tool-result` with `output` property
+- [x] Emit `stream_chunk` messages with sessionId via `createVoiceAdapter()`
 
 ```typescript
-// Adapter pattern
-export function adaptRealtimeToAISDK(
-  sessionId: string,
-  realtimeEvent: RealtimeEvent
-): StreamChunkMessage | null {
-  switch (realtimeEvent.type) {
-    case 'transcript':
-      return {
-        type: 'stream_chunk',
-        sessionId,
-        event: { type: 'text-delta', textDelta: realtimeEvent.text }
-      };
-    case 'tool_use':
-      return {
-        type: 'stream_chunk',
-        sessionId,
-        event: {
-          type: 'tool-call',
-          toolName: realtimeEvent.name,
-          toolCallId: realtimeEvent.callId,
-          input: realtimeEvent.args
-        }
-      };
-    // ... etc
-  }
-}
+// Usage in VoiceSession:
+const adapter = createVoiceAdapter(sessionId);
+adapter.transcript(text, role);      // → text-delta
+adapter.toolStart(name, args);       // → tool-call
+adapter.toolEnd(name, result);       // → tool-result
+adapter.stateChange(state, profile); // → start-step/finish
 ```
 
-### 1.2 Subagents Use AI SDK Directly
+### 1.2 Subagents Use AI SDK Directly ✅
 **Files:** `pi-agent/src/subagents/cli/index.ts`, `web-search/index.ts`
 
-- [ ] Replace custom `runObservableAgent` with AI SDK `streamText`
-- [ ] Use `result.fullStream` to emit events
-- [ ] Emit `stream_chunk` with sessionId for each event
+- [x] Replace custom `runObservableAgent` with AI SDK `streamText`
+- [x] Use `result.fullStream` to emit events
+- [x] Emit `stream_chunk` with sessionId for each event
+- [x] Deleted legacy `pi-agent/src/lib/agent-runner.ts`
 
 ```typescript
-import { streamText, tool } from 'ai';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-
-const result = streamText({
-  model: openrouter.chat('x-ai/grok-code-fast-1'),
-  prompt,
-  tools,
-  maxSteps: 5,
-});
+// In CLI agent:
+const result = streamText({ model, system, prompt, tools, stopWhen: stepCountIs(3) });
 
 for await (const event of result.fullStream) {
-  broadcast('stream_chunk', { sessionId, event });
+  wsBroadcast.streamChunk(sessionId, event);
 }
 ```
 
-### 1.3 Shared Event Types
-**New File:** `pi-agent/src/api/stream-types.ts`
+### 1.3 Shared Event Types ✅
+**File:** `pi-agent/src/api/stream-types.ts`
 
-- [ ] Define `StreamChunkMessage` type
-- [ ] Define `AISDKStreamEvent` union type
-- [ ] Export for backend use
+- [x] Define `StreamChunkMessage` type
+- [x] Define `AISDKStreamEvent` union type (full AI SDK event coverage)
+- [x] Export for backend use
+- [x] Added `wsBroadcast.streamChunk()` helper in websocket.ts
+- [x] Verified against `ai@5.0.108` TypeScript types (not web docs which can be outdated)
 
 ```typescript
+// Verified from node_modules/ai/dist/index.d.ts
 export type AISDKStreamEvent =
-  | { type: 'text-delta'; textDelta: string }
+  | { type: 'text-delta'; textDelta: string }        // NOT 'text' - verified in TS types
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
   | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
-  | { type: 'reasoning-delta'; text: string }
-  | { type: 'finish'; finishReason: string };
-
-export interface StreamChunkMessage {
-  type: 'stream_chunk';
-  sessionId: string;
-  event: AISDKStreamEvent;
-  timestamp: number;
-}
+  | { type: 'reasoning-start' } | { type: 'reasoning-delta'; text: string } | { type: 'reasoning-end'; ... }
+  | { type: 'start' } | { type: 'start-step' } | { type: 'finish-step'; ... } | { type: 'finish'; ... }
+  | { type: 'error'; error: string };
 ```
+
+> **Lesson learned:** Always verify against the installed package's TypeScript types (`node_modules/ai/dist/index.d.ts`), not web documentation which may describe different API layers or be outdated.
 
 ---
 
@@ -452,11 +425,16 @@ export async function handleDeveloperRequest(
 - [ ] Migrate components to use unified store
 - [ ] Delete legacy stores after migration complete
 
-**Implementation Notes:**
-- Created `unified-sessions.ts` (~650 LoC) consolidating agent.ts + stage.ts + sessions.ts
-- Added `message-handler.ts` for WebSocket event routing
-- Created `stores/index.ts` for gradual migration exports
-- Supports both old events (`subagent_activity`) and new events (`stream_chunk`)
+**Implementation Notes (Completed 2025-12-24):**
+- Created `unified-sessions.ts` (921 LoC) consolidating agent.ts + stage.ts + sessions.ts
+- Store manages: connection, voice state, session tree, sessions by ID, activities, events
+- `handleStreamChunk()` accumulates AI SDK events into messages with parts
+- `handleSubagentActivity()` routes reasoning/tool/content/error blocks
+- Session tree logic ported from stage.ts (auto-focus, tree traversal)
+- `message-handler.ts` routes WebSocket events to unified store
+- `stores/index.ts` exports for gradual migration
+- `useWebSocket.ts` updated to use `createDualModeHandler()` for both stores
+- Added `stream_chunk` to `WSMessageType` in types/index.ts
 
 ```typescript
 // Key exports from unified-sessions.ts:
@@ -468,16 +446,24 @@ export interface SessionState {
   agentName?: string;
   goal?: string;
   profile?: string;
-  messages: Message[];      // AI SDK format
-  activities: ActivityBlock[]; // Legacy subagent_activity format
+  messages: Message[];      // AI SDK format with parts
   children: string[];       // Child session IDs
 }
 
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  parts: MessagePart[];     // text, tool-call, tool-result, reasoning
+  createdAt: number;
+}
+
 // Selector hooks for components:
-export function useFocusedSession(): SessionState | null;
-export function useFocusPath(): SessionState[];
-export function useFocusedSessionChildren(): SessionState[];
+export function useFocusedSession(): SessionTreeNode | null;
+export function useFocusPath(): SessionTreeNode[];
+export function useFocusedSessionChildren(): SessionTreeNode[];
 export function useSessionActivities(sessionId: string | null): ActivityBlock[];
+export function useAllActivities(): ActivityBlock[];
+export function useHasActiveSession(): boolean;
 export function useVoiceTimeline(): TimelineItem[];
 export function useConnectionState(): { connected, wsError, clientId, isMaster };
 export function useVoiceState(): { voiceState, voiceProfile, voiceActive, currentTool };
@@ -499,23 +485,235 @@ handleSubagentActivity(agent, type, payload, timestamp, orchestratorId) // Legac
 ```
 
 ### 3.3 Message Handler ✅
-**New File:** `web/src/stores/message-handler.ts`
+**File:** `web/src/stores/message-handler.ts`
 
 - [x] Routes all WebSocket events to unified store
 - [x] Maintains voice timeline for ChatStage compatibility
 - [x] Provides `createDualModeHandler()` for gradual migration
+- [x] `useWebSocket.ts` updated to use dual mode handler
 
-### 3.4 Delete Old Stores (Pending Migration)
+**Usage in useWebSocket.ts:**
+```typescript
+const legacyHandleMessage = useAgentStore((s) => s.handleMessage);
+const handleMessage = useMemo(
+  () => createDualModeHandler(legacyHandleMessage),
+  [legacyHandleMessage]
+);
+```
 
-- [ ] Delete `web/src/stores/agent.ts` (830 LoC)
-- [ ] Delete `web/src/stores/stage.ts` (540 LoC)
-- [ ] Delete old `web/src/stores/sessions.ts` (150 LoC)
-- [ ] Update all imports to use new unified store
+### 3.4 Delete Old Stores & Complete Migration ✅ EXPLORATION COMPLETE
 
-**Migration Strategy:**
-1. Components can import from `@/stores` (new) or `@/stores/agent` (legacy)
-2. Migrate one component at a time, verify functionality
-3. Once all components migrated, delete legacy stores
+> **Status (2025-12-24):** Legacy stores DELETED from git. Migration to unified store required.
+
+**Git Status:**
+```
+D web/src/stores/agent.ts     ← DELETED (staged)
+D web/src/stores/stage.ts     ← DELETED (staged)
+D web/src/stores/sessions.ts  ← DELETED (staged)
+M web/src/stores/index.ts     ← Modified (broken exports)
+```
+
+#### 3.4.1 Broken Files Requiring Immediate Fix
+
+**CRITICAL: These files import from deleted stores and will fail at runtime:**
+
+| File | Broken Imports | Priority |
+|------|----------------|----------|
+| `stores/index.ts` (lines 70-72) | Re-exports from deleted stores | **BLOCKER** |
+| `hooks/useWebSocket.ts` (line 6) | `useAgentStore` from `../stores/agent` | **BLOCKER** |
+
+#### 3.4.2 Component Migration Checklist
+
+All components below still reference deleted stores. Each needs migration to unified store:
+
+| Component | Imports From | Selectors Used | Migration Status |
+|-----------|--------------|----------------|------------------|
+| **StageOrchestrator.tsx** | `agent`, `stage` | `subagentActive`, `sessionTree` | ⚠️ Partial |
+| **ChatStage.tsx** | `agent` | `timeline`, `state` | ❌ Legacy |
+| **SubagentStage.tsx** | `agent`, `stage` | 8+ selectors | ⚠️ Heavy Legacy |
+| **TerminalStage.tsx** | `sessions`, `stage` | `sessions`, `backgroundStage` | ❌ Legacy |
+| **ThreadRail.tsx** | `agent`, `stage` | 6+ selectors | ⚠️ Partial |
+| **BackgroundRail.tsx** | ALL 3 stores | 7+ selectors | ❌ Heavy Legacy |
+| **ConversationStream.tsx** | `stage` | `focusSession`, `focusedSessionId` | ❌ Legacy |
+| **CommandPanel.tsx** | `agent`, `sessions` | Activities + CLI sessions | ❌ Legacy |
+| **GlassHUD.tsx** | `agent`, `stage` | `state`, `profile`, `timeline`, `activeStage` | ❌ Legacy |
+| **ToolsOverlay.tsx** | `stage` | `activeOverlay`, `setActiveOverlay` | ❌ Legacy |
+| **EventsOverlay.tsx** | `agent`, `stage` | `events`, `clearEvents`, overlay state | ❌ Legacy |
+| **e2e-simulation demo** | `agent`, `stage` | Multiple for testing | ❌ Legacy |
+
+#### 3.4.3 Legacy → Unified Mapping
+
+**From `useAgentStore` → `useUnifiedSessionsStore`:**
+
+| Legacy Selector/Action | Unified Equivalent | Notes |
+|------------------------|-------------------|-------|
+| `state` | `voiceState` | Renamed |
+| `profile` | `voiceProfile` | Renamed |
+| `timeline` | `voiceTimeline` | Renamed, use `useVoiceTimeline()` |
+| `currentTool` | `currentTool` | Same |
+| `connected` | `clientId !== null` | Derived |
+| `isMaster` | `isMaster` | Same |
+| `wsError` | `wsError` | Same |
+| `events` | `events` | Same |
+| `subagentActive` | `subagentActive` | Same |
+| `activeOrchestratorId` | `activeOrchestratorId` | Same |
+| `activitiesBySession` | `activitiesBySession` | Same |
+| `setConnected()` | **REMOVED** | Use `setClientIdentity()` |
+| `setWsError()` | `setWsError()` | Same |
+| `handleMessage()` | **REMOVED** | Use `handleWebSocketMessage()` from message-handler |
+| `clearTimeline()` | `clearVoiceTimeline()` | Renamed |
+| `clearSubagentActivities()` | `clearActivities()` | Renamed |
+| `getActivitiesForSession()` | `useSessionActivities()` | Now a selector hook |
+| `reset()` | `reset()` | Same |
+
+**From `useStageStore` → `useUnifiedSessionsStore`:**
+
+| Legacy Selector/Action | Unified Equivalent | Notes |
+|------------------------|-------------------|-------|
+| `sessionTree` | `sessionTree` | Same |
+| `allTrees` | `allTrees` | Same |
+| `focusedSessionId` | `focusedSessionId` | Same |
+| `backgroundTreeIds` | `backgroundTreeIds` | Same |
+| `voiceActive` | `voiceActive` | Same |
+| `activeOverlay` | `activeOverlay` | Same |
+| `activeStage` | **REMOVED** | Backend-driven, use `useFocusedSession()` |
+| `threadRail` | **REMOVED** | Use `useFocusPath()` |
+| `backgroundTasks` | **REMOVED** | Use `backgroundTreeIds` |
+| `focusSession()` | `focusSession()` | Same |
+| `minimizeTree()` | `minimizeTree()` | Same |
+| `restoreTree()` | `restoreTree()` | Same |
+| `setActiveOverlay()` | `setActiveOverlay()` | Same |
+| `pushStage()` | **REMOVED** | Backend controls via events |
+| `popStage()` | **REMOVED** | Backend controls via events |
+| `backgroundStage()` | `minimizeTree()` | Renamed |
+| `restoreStage()` | `restoreTree()` | Renamed |
+| `clearFocusedSession()` | `clearFocusedSession()` | Same |
+| `reset()` | `reset()` | Same |
+
+**From `useSessionsStore` → `useUnifiedSessionsStore`:**
+
+| Legacy Selector/Action | Unified Equivalent | Notes |
+|------------------------|-------------------|-------|
+| `sessions` | `sessions` (Map) | Changed to Map, not array |
+| `selectedSessionId` | `focusedSessionId` | Unified with focus |
+| `fetchSessions()` | **NOT MIGRATED** | Keep separate or implement |
+| `selectSession()` | `focusSession()` | Unified |
+
+#### 3.4.4 Unified Store Selector Hooks (Available)
+
+```typescript
+// Import from '@/stores' (unified-sessions.ts)
+useFocusedSession()              // SessionTreeNode | null
+useFocusPath()                   // SessionTreeNode[] (focus path from root)
+useFocusedSessionChildren()      // SessionTreeNode[] (children of focused)
+useSessionActivities(sessionId)  // ActivityBlock[] for specific session
+useAllActivities()               // ActivityBlock[] flattened + sorted
+useHasActiveSession()            // boolean
+useVoiceTimeline()               // TimelineItem[] (voice transcripts)
+useConnectionState()             // { connected, wsError, clientId, isMaster }
+useVoiceState()                  // { voiceState, voiceProfile, voiceActive, currentTool }
+```
+
+#### 3.4.5 Migration Steps
+
+**Step 1: Fix Blockers**
+- [ ] Remove lines 70-72 from `stores/index.ts` (broken re-exports)
+- [ ] Update `useWebSocket.ts` to use unified store + `handleWebSocketMessage`
+
+**Step 2: Migrate Components (Priority Order)**
+1. [ ] `ChatStage.tsx` - Simple, core component
+2. [ ] `StageOrchestrator.tsx` - Parent container
+3. [ ] `SubagentStage.tsx` - Complex, many dependencies
+4. [ ] `TerminalStage.tsx` - Needs session map access
+5. [ ] `ThreadRail.tsx` - Navigation hub
+6. [ ] `BackgroundRail.tsx` - Overlay + session management
+7. [ ] `ConversationStream.tsx` - Session focus
+8. [ ] Overlays (Tools, Events, GlassHUD)
+9. [ ] `CommandPanel.tsx` - Sessions tab
+10. [ ] E2E demo
+
+**Step 3: Verify & Clean Up**
+- [ ] Run TypeScript compilation
+- [ ] Test all stage transitions
+- [ ] Test multi-client master/replica flow
+- [ ] Remove any remaining legacy references
+
+#### 3.4.6 TypeScript Compilation Errors (as of 2025-12-24)
+
+After removing legacy stores and fixing blockers, these files need migration:
+
+```
+ERRORS BY FILE (12 files, ~100 errors total):
+─────────────────────────────────────────────
+
+1. CommandPanel.tsx (6 errors)
+   - Cannot find module '../stores/sessions'
+   - Cannot find module '../stores/agent'
+   - Parameter 's' has implicit 'any' type (4x)
+
+2. ConversationStream.tsx (3 errors)
+   - Cannot find module '../stores/stage'
+   - Parameter 's' has implicit 'any' type (2x)
+
+3. StageOrchestrator.tsx (4 errors)
+   - No exported member 'useSubagentActivities'
+   - Cannot find name 'useAgentStore'
+   - Cannot find name 'useStageStore'
+   - Parameter 's' has implicit 'any' type (2x)
+
+4. EventsOverlay.tsx (8 errors)
+   - Cannot find module '../../stores/agent'
+   - Cannot find module '../../stores/stage'
+   - Parameter 's' has implicit 'any' type (4x)
+   - Parameter 'event' has implicit 'any' type
+
+5. GlassHUD.tsx (10 errors)
+   - Cannot find module '../../stores/agent'
+   - Cannot find module '../../stores/stage'
+   - Parameter 's' has implicit 'any' type (4x)
+   - Parameter 'item', 'word', 'index' have implicit 'any' type
+
+6. ToolsOverlay.tsx (3 errors)
+   - Cannot find module '../../stores/stage'
+   - Parameter 's' has implicit 'any' type (2x)
+
+7. BackgroundRail.tsx (16 errors)
+   - Cannot find module '../../stores/stage'
+   - Cannot find module '../../stores/agent'
+   - Cannot find module '../../stores/sessions'
+   - Parameter 's' has implicit 'any' type (11x)
+   - Type 'unknown' errors (4x)
+
+8. ThreadRail.tsx (12 errors)
+   - No exported member 'useSessionPath'
+   - Cannot find name 'useStageStore' (4x)
+   - Cannot find name 'useAgentStore' (2x)
+   - Parameter 's' has implicit 'any' type (6x)
+
+9. ChatStage.tsx (4 errors)
+   - Cannot find name 'useAgentStore' (2x)
+   - Parameter 's' has implicit 'any' type (2x)
+
+10. SubagentStage.tsx (14 errors)
+    - Cannot find name 'useAgentStore' (4x)
+    - Cannot find name 'useStageStore' (3x)
+    - Parameter 's' has implicit 'any' type (7x)
+
+11. TerminalStage.tsx (7 errors)
+    - No exported member 'useSessions'
+    - Cannot find name 'useSessionsStore'
+    - Cannot find name 'useStageStore'
+    - Parameter 's' has implicit 'any' type (3x)
+    - Element has 'any' type error
+
+12. e2e-simulation/component.tsx (1 error)
+    - Cannot find module '../../../stores/agent'
+```
+
+**Missing Exports to Add to unified-sessions.ts:**
+- [ ] `useSubagentActivities` → Already exists as selector, check export
+- [ ] `useSessionPath` → Alias for `useFocusPath`
+- [ ] `useSessions` → New selector for sessions Map
 
 ---
 
@@ -802,7 +1000,7 @@ export async function handleDirectInput(
 
 ## Implementation Order
 
-1. **Phase 1: Unified Protocol** - AI SDK adapter for voice, subagents use AI SDK directly
+1. **Phase 1: Unified Protocol** ✅ - AI SDK adapter for voice, subagents use AI SDK directly
 2. **Phase 2: Database** ✅ - Schema migration, voice persistence
 3. **Phase 3: Frontend Store** - One sessions.ts, delete old stores
 4. **Phase 4: Frontend Components** - AgentStage with AI Elements

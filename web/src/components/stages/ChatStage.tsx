@@ -5,7 +5,7 @@
 
 import { motion } from 'framer-motion';
 import { ConversationStream } from '../ConversationStream';
-import { useAgentStore } from '../../stores/agent';
+import { useVoiceTimeline, useVoiceState } from '../../stores';
 import type { StageItem } from '../../types';
 
 interface ChatStageProps {

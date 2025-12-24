@@ -5,8 +5,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { motion } from 'framer-motion';
-import { useAgentStore } from '../../stores/agent';
-import { useStageStore, useFocusedSessionChildren } from '../../stores/stage';
+import {
+  useUnifiedSessionsStore,
+  useFocusedSessionChildren,
+  type ActivityBlock,
+  type ReasoningBlock,
+  type ToolBlock,
+} from '../../stores';
 import { ActivityFeed } from '../ActivityFeed';
 import type { StageItem } from '../../types';
 

@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef } from 'react';
-import { useAgentStore } from '../stores/agent';
+import { useUnifiedSessionsStore, handleWebSocketMessage } from '../stores';
 import type { WSMessage } from '../types';
 
 // Determine WebSocket URL based on environment
@@ -44,10 +44,11 @@ export function useWebSocket() {
   const isCleaningUpRef = useRef(false);
   const isConnectingRef = useRef(false);
 
-  // Get stable references from store
-  const setConnected = useAgentStore((s) => s.setConnected);
-  const setWsError = useAgentStore((s) => s.setWsError);
-  const handleMessage = useAgentStore((s) => s.handleMessage);
+  // Get stable references from unified store
+  const setWsError = useUnifiedSessionsStore((s) => s.setWsError);
+
+  // Use unified message handler directly (legacy stores deleted)
+  const handleMessage = handleWebSocketMessage;
 
   useEffect(() => {
     // Skip WebSocket connection in demo mode
@@ -73,7 +74,7 @@ export function useWebSocket() {
       if (globalWs?.readyState === WebSocket.OPEN) {
         console.log('[WS] Reusing existing connection');
         wsRef.current = globalWs;
-        setConnected(true);
+        // Connection state is tracked via clientId from 'welcome' message
         return;
       }
 
@@ -109,7 +110,7 @@ export function useWebSocket() {
           isConnectingRef.current = false;
           globalWs = ws; // Store in global singleton
           wsRef.current = ws; // Ensure local ref is also set
-          setConnected(true);
+          // Connection state tracked via 'welcome' message which sets clientId
           setWsError(null);
           reconnectAttemptsRef.current = 0;
         };
@@ -141,7 +142,8 @@ export function useWebSocket() {
         ws.onclose = (event) => {
           console.log(`[WS] Disconnected (code: ${event.code}, reason: ${event.reason || 'none'}, wasClean: ${event.wasClean})`);
           isConnectingRef.current = false;
-          setConnected(false);
+          // Reset connection state - clientId null means disconnected
+          useUnifiedSessionsStore.getState().setClientIdentity(null, false);
           wsRef.current = null;
           globalWs = null;
 
@@ -194,7 +196,8 @@ export function useWebSocket() {
           console.log('[WS] Closing socket (no remount after 500ms)');
           socketToClose.close();
           globalWs = null;
-          setConnected(false);
+          // Reset connection state
+          useUnifiedSessionsStore.getState().setClientIdentity(null, false);
         }
       }, 500); // Increased delay for better StrictMode handling
     };
@@ -232,7 +235,8 @@ export function useWebSocket() {
       wsRef.current.close();
       wsRef.current = null;
     }
-    setConnected(false);
+    // Reset connection state
+    useUnifiedSessionsStore.getState().setClientIdentity(null, false);
   };
 
   const reconnect = () => {

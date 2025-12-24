@@ -77,6 +77,8 @@ export type WSMessageType =
   | 'subagent_activity'
   // Session tree updates (v2 architecture)
   | 'session_tree_update'
+  // AI SDK stream protocol
+  | 'stream_chunk'
   // Multi-client master/replica coordination
   | 'welcome'
   | 'master_changed'

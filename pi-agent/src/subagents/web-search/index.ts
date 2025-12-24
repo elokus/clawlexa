@@ -7,17 +7,30 @@
  * 3. Model automatically performs web search and returns grounded result
  * 4. Realtime model SPEAKS the result to the user
  *
- * Uses the Observable Agent Runner pattern for real-time WebSocket events.
+ * Note: This is a simple tool called from voice, not a session-based subagent.
+ * Stream events are emitted for observability if a voiceSessionId is available.
  */
 
 import { tool } from '@openai/agents/realtime';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { streamText } from 'ai';
 import { z } from 'zod';
-import { runObservableAgent } from '../../lib/agent-runner.js';
 import { loadAgentConfig } from '../loader.js';
+import { wsBroadcast } from '../../api/websocket.js';
 
 // OpenRouter provider - uses OPEN_ROUTER_API_KEY from environment
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
+
+// Track current voice session for event emission (set by voice-agent before tool call)
+let currentVoiceSessionId: string | undefined;
+
+/**
+ * Set the current voice session ID for stream event emission.
+ * Called by VoiceSession before tool execution.
+ */
+export function setVoiceSessionId(sessionId: string | undefined): void {
+  currentVoiceSessionId = sessionId;
+}
 
 export const webSearchTool = tool({
   name: 'web_search',
@@ -41,7 +54,7 @@ export const webSearchTool = tool({
     console.log(`[WebSearch] Searching with grok:online for: ${query}`);
 
     try {
-      // Load config and prompt from disk (enables future dynamic updates)
+      // Load config and prompt from disk
       const { config, prompt: systemPrompt } = await loadAgentConfig(import.meta.dirname);
 
       // Create OpenRouter provider with model from config
@@ -50,21 +63,65 @@ export const webSearchTool = tool({
       });
       const model = openrouter.chat(config.model);
 
-      // Use runObservableAgent for unified WebSocket streaming
-      // The :online suffix automatically enables web search via OpenRouter
-      const text = await runObservableAgent({
-        name: config.name,
+      // Use streamText directly (no tools for web search)
+      const result = streamText({
         model,
         system: systemPrompt,
         prompt: query,
-        tools: {}, // No sub-tools for web search (model has built-in web access)
-        maxSteps: config.maxSteps ?? 1,
       });
 
-      console.log(`[WebSearch] Result: ${text.substring(0, 100)}...`);
+      let fullText = '';
+
+      // Process stream and emit events if we have a session ID
+      for await (const event of result.fullStream) {
+        switch (event.type) {
+          case 'text-delta': {
+            // AI SDK v5 uses 'text-delta' with 'textDelta' property
+            const textDelta = (event as { textDelta?: string }).textDelta ?? '';
+            fullText += textDelta;
+
+            // Emit stream event if we have a voice session
+            if (currentVoiceSessionId) {
+              wsBroadcast.streamChunk(currentVoiceSessionId, {
+                type: 'text-delta',
+                textDelta,
+              });
+            }
+            break;
+          }
+
+          case 'finish':
+            if (currentVoiceSessionId) {
+              wsBroadcast.streamChunk(currentVoiceSessionId, {
+                type: 'finish',
+                finishReason: event.finishReason ?? 'stop',
+              });
+            }
+            break;
+
+          case 'error': {
+            const errorEvent = event as { error?: unknown };
+            const errorMsg = String(errorEvent.error);
+            console.error('[WebSearch] Stream error:', errorMsg);
+            if (currentVoiceSessionId) {
+              wsBroadcast.streamChunk(currentVoiceSessionId, {
+                type: 'error',
+                error: errorMsg,
+              });
+            }
+            break;
+          }
+
+          default:
+            // Ignore other events
+            break;
+        }
+      }
+
+      console.log(`[WebSearch] Result: ${fullText.substring(0, 100)}...`);
 
       // This string is returned to Realtime, which will speak it
-      return text || 'Keine Ergebnisse gefunden.';
+      return fullText || 'Keine Ergebnisse gefunden.';
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[WebSearch] Error: ${message}`);

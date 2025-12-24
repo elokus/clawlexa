@@ -35,6 +35,13 @@ export {
   useConnectionState,
   useVoiceState,
 
+  // Legacy compatibility selectors (for migration)
+  useSessionPath,        // Alias for useFocusPath
+  useSubagentActivities, // Alias for useAllActivities
+  useSessions,           // Get sessions Map
+  useEvents,             // Get events array
+  useOverlayState,       // Get overlay state
+
   // Types
   type SessionState,
   type SessionType,
@@ -45,7 +52,7 @@ export {
   type MessageRole,
   type ActivityBlock,
   type ReasoningBlock,
-  type ToolActivityBlock,
+  type ToolBlock,
   type ContentBlock,
   type ErrorBlock,
   type AISDKStreamEvent,
@@ -63,10 +70,13 @@ export {
 export { handleWebSocketMessage, createDualModeHandler } from './message-handler';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Legacy Stores (deprecated - use unified store instead)
+// Legacy Stores - DELETED (2025-12-24)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Re-export for backward compatibility during migration
-export { useAgentStore, useSubagentActivities } from './agent';
-export { useStageStore, useFocusedSession as useLegacyFocusedSession, useSessionPath, useFocusedSessionChildren as useLegacyFocusedSessionChildren, useHasActiveTree } from './stage';
-export { useSessionsStore } from './sessions';
+//
+// The following stores have been deleted as part of Phase 3.4 migration:
+//   - agent.ts → Use useUnifiedSessionsStore + useVoiceState, useVoiceTimeline
+//   - stage.ts → Use useUnifiedSessionsStore + useFocusedSession, useFocusPath
+//   - sessions.ts → Use useUnifiedSessionsStore.sessions Map
+//
+// See docs/SESSION_CENTRIC_REFACTOR_PLAN.md section 3.4.3 for migration mapping
+//

@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AudioController } from '../lib/audio';
-import { useAgentStore } from '../stores/agent';
+import { useConnectionState, useVoiceState } from '../stores';
 import { useWebSocket } from './useWebSocket';
 
 export type ProfileId = 'jarvis' | 'marvin';
@@ -47,14 +47,14 @@ export function useAudioSession(): AudioSessionState {
   const prevStateRef = useRef<string | null>(null);
   // Track state in ref for use in audio callback (avoids stale closure)
   const stateRef = useRef<string>('idle');
-  const state = useAgentStore((s) => s.state);
-  const connected = useAgentStore((s) => s.connected);
-  const isMaster = useAgentStore((s) => s.isMaster);
+
+  const { voiceState } = useVoiceState();
+  const { connected, isMaster } = useConnectionState();
 
   // Keep stateRef in sync with state
   useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    stateRef.current = voiceState;
+  }, [voiceState]);
 
   // Use shared WebSocket connection
   const { send, sendBinary, requestMaster } = useWebSocket();
@@ -184,12 +184,12 @@ export function useAudioSession(): AudioSessionState {
   // Auto-stop recording when agent state TRANSITIONS to idle (not on initial idle)
   useEffect(() => {
     const prevState = prevStateRef.current;
-    prevStateRef.current = state;
+    prevStateRef.current = voiceState;
 
     // Only stop if we transitioned FROM a non-idle state TO idle
     // This prevents stopping immediately when starting (state is already idle)
     if (
-      state === 'idle' &&
+      voiceState === 'idle' &&
       prevState !== null &&
       prevState !== 'idle' &&
       isRecording &&
@@ -201,7 +201,7 @@ export function useAudioSession(): AudioSessionState {
       }
       setIsRecording(false);
     }
-  }, [state, isRecording, connected]);
+  }, [voiceState, isRecording, connected]);
 
   return {
     activeProfile,

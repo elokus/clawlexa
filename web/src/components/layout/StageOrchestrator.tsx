@@ -8,8 +8,11 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { AnimatePresence } from 'framer-motion';
-import { useFocusedSession, useStageStore } from '../../stores/stage';
-import { useAgentStore, useSubagentActivities } from '../../stores/agent';
+import {
+  useFocusedSession,
+  useUnifiedSessionsStore,
+  useSubagentActivities,
+} from '../../stores';
 import { BackgroundRail } from '../rails/BackgroundRail';
 import { ThreadRail } from '../rails/ThreadRail';
 import { ChatStage } from '../stages/ChatStage';
