@@ -63,6 +63,20 @@ interface CliSessionDeletedPayload {
 const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Helper Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Find timeline item index by OpenAI itemId.
+ * Used for correlating transcripts with their placeholders.
+ */
+function findTimelineItemByItemId(timeline: TranscriptItem[], itemId: string): number {
+  return timeline.findIndex(
+    (item) => item.type === 'transcript' && item.itemId === itemId
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Message Handler
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -177,9 +191,56 @@ export function handleWebSocketMessage(msg: WSMessage): void {
       if (isVoiceSession) {
         // Convert AI SDK events to voiceTimeline format
         switch (event.type) {
+          case 'user-placeholder': {
+            // Create placeholder for user message (reserves position before transcript arrives)
+            const newItem: TranscriptItem = {
+              id: generateId(),
+              type: 'transcript',
+              role: 'user',
+              content: '',
+              timestamp,
+              pending: true,
+              itemId: event.itemId,
+            };
+            store.addVoiceTimelineItem(newItem);
+            break;
+          }
+
+          case 'assistant-placeholder': {
+            // Create placeholder for assistant message (reserves position before transcript arrives)
+            const newItem: TranscriptItem = {
+              id: generateId(),
+              type: 'transcript',
+              role: 'assistant',
+              content: '',
+              timestamp,
+              pending: true,
+              itemId: event.itemId,
+            };
+            store.addVoiceTimelineItem(newItem);
+            break;
+          }
+
           case 'text-delta': {
             // Add/update assistant transcript in voice timeline
             const { voiceTimeline } = store;
+
+            // Try to find existing placeholder by itemId first
+            if (event.itemId) {
+              const transcriptItems = voiceTimeline.filter(
+                (item): item is TranscriptItem => item.type === 'transcript'
+              );
+              const idx = findTimelineItemByItemId(transcriptItems, event.itemId);
+              if (idx >= 0) {
+                const item = transcriptItems[idx];
+                store.updateVoiceTimelineItem(item.id, {
+                  content: item.content + event.textDelta,
+                } as Partial<TranscriptItem>);
+                break;
+              }
+            }
+
+            // Fallback: find last pending assistant message
             const lastItem = voiceTimeline[voiceTimeline.length - 1];
             const isAssistantTranscript =
               lastItem?.type === 'transcript' &&
@@ -188,7 +249,8 @@ export function handleWebSocketMessage(msg: WSMessage): void {
 
             if (isAssistantTranscript) {
               store.updateVoiceTimelineItem(lastItem.id, {
-                content: lastItem.content + event.textDelta,
+                content: (lastItem as TranscriptItem).content + event.textDelta,
+                ...(event.itemId && { itemId: event.itemId }),
               } as Partial<TranscriptItem>);
             } else {
               const newItem: TranscriptItem = {
@@ -198,6 +260,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 content: event.textDelta,
                 timestamp,
                 pending: true,
+                itemId: event.itemId,
               };
               store.addVoiceTimelineItem(newItem);
             }
@@ -205,7 +268,24 @@ export function handleWebSocketMessage(msg: WSMessage): void {
           }
 
           case 'user-transcript': {
-            // User transcripts are always complete and create a new timeline item
+            // Try to find and fill placeholder by itemId
+            if (event.itemId) {
+              const { voiceTimeline } = store;
+              const transcriptItems = voiceTimeline.filter(
+                (item): item is TranscriptItem => item.type === 'transcript'
+              );
+              const idx = findTimelineItemByItemId(transcriptItems, event.itemId);
+              if (idx >= 0) {
+                const item = transcriptItems[idx];
+                store.updateVoiceTimelineItem(item.id, {
+                  content: event.text,
+                  pending: false,
+                } as Partial<TranscriptItem>);
+                break;
+              }
+            }
+
+            // Fallback: create new timeline item
             const newItem: TranscriptItem = {
               id: generateId(),
               type: 'transcript',
@@ -213,6 +293,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               content: event.text,
               timestamp,
               pending: false,
+              itemId: event.itemId,
             };
             store.addVoiceTimelineItem(newItem);
             break;

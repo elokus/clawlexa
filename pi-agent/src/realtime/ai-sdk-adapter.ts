@@ -34,7 +34,7 @@ export type VoiceEventType =
  */
 export interface VoiceEventPayloads {
   stateChange: { state: 'idle' | 'listening' | 'thinking' | 'speaking'; profile: string | null };
-  transcript: { text: string; role: 'user' | 'assistant' };
+  transcript: { text: string; role: 'user' | 'assistant'; itemId?: string };
   toolStart: { name: string; args: Record<string, unknown>; callId?: string };
   toolEnd: { name: string; result: string; callId?: string };
   error: { message: string };
@@ -82,13 +82,13 @@ function convertToAISDKEvent<T extends VoiceEventType>(
 ): AISDKStreamEvent | null {
   switch (eventType) {
     case 'transcript': {
-      const { text, role } = payload as VoiceEventPayloads['transcript'];
+      const { text, role, itemId } = payload as VoiceEventPayloads['transcript'];
       // User messages use custom 'user-transcript' event
       // Assistant messages use standard AI SDK 'text-delta'
       if (role === 'user') {
-        return { type: 'user-transcript', text };
+        return { type: 'user-transcript', text, itemId };
       }
-      return { type: 'text-delta', textDelta: text };
+      return { type: 'text-delta', textDelta: text, itemId };
     }
 
     case 'toolStart': {
@@ -159,10 +159,26 @@ export function createVoiceAdapter(sessionId: string) {
 
   return {
     /**
+     * Emit a user placeholder event (reserves position before transcript arrives).
+     */
+    userPlaceholder(itemId: string): void {
+      const chunk = createStreamChunk(sessionId, { type: 'user-placeholder', itemId });
+      broadcastStreamChunk(chunk);
+    },
+
+    /**
+     * Emit an assistant placeholder event (reserves position before transcript arrives).
+     */
+    assistantPlaceholder(itemId: string, previousItemId?: string): void {
+      const chunk = createStreamChunk(sessionId, { type: 'assistant-placeholder', itemId, previousItemId });
+      broadcastStreamChunk(chunk);
+    },
+
+    /**
      * Emit a transcript event (user or assistant speech).
      */
-    transcript(text: string, role: 'user' | 'assistant'): void {
-      adaptVoiceEvent(sessionId, 'transcript', { text, role });
+    transcript(text: string, role: 'user' | 'assistant', itemId?: string): void {
+      adaptVoiceEvent(sessionId, 'transcript', { text, role, itemId });
     },
 
     /**

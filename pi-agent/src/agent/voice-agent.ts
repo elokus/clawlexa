@@ -201,21 +201,31 @@ export class VoiceAgent {
       this.emit('audio', audio);
     });
 
-    this.session.on('transcript', (text, role) => {
+    // Wire up placeholder events for message ordering
+    // These are emitted when conversation.item.added arrives, before transcripts
+    this.session.on('userItemCreated', (itemId) => {
+      this.adapter?.userPlaceholder(itemId);
+    });
+
+    this.session.on('assistantItemCreated', (itemId, previousItemId) => {
+      this.adapter?.assistantPlaceholder(itemId, previousItemId);
+    });
+
+    this.session.on('transcript', (text, role, itemId) => {
       // Collect transcripts for logging
       this.transcriptBuffer.push(`${role}: ${text}`);
       // Emit stream_chunk via AI SDK adapter (unified protocol)
       // Only emit for user messages - assistant messages are streamed via transcriptDelta
       if (role === 'user') {
-        this.adapter?.transcript(text, role);
+        this.adapter?.transcript(text, role, itemId);
       }
     });
 
-    this.session.on('transcriptDelta', (delta, role) => {
+    this.session.on('transcriptDelta', (delta, role, itemId) => {
       // Stream assistant transcript deltas in real-time
       // User transcripts don't have deltas (they arrive complete)
       if (role === 'assistant') {
-        this.adapter?.transcript(delta, role);
+        this.adapter?.transcript(delta, role, itemId);
       }
     });
 

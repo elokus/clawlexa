@@ -17,6 +17,7 @@ export interface TranscriptItem extends BaseTimelineItem {
   role: MessageRole;
   content: string;
   pending?: boolean;
+  itemId?: string; // OpenAI item correlation for message ordering
 }
 
 export interface ToolItem extends BaseTimelineItem {

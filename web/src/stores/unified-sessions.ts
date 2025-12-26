@@ -72,8 +72,11 @@ export interface SessionState {
 
 /** AI SDK stream event types */
 export type AISDKStreamEvent =
-  | { type: 'text-delta'; textDelta: string }
-  | { type: 'user-transcript'; text: string } // Custom extension for voice user messages
+  | { type: 'text-delta'; textDelta: string; itemId?: string }
+  | { type: 'user-transcript'; text: string; itemId?: string } // Custom extension for voice user messages
+  // Placeholders for message ordering (custom extension for voice sessions)
+  | { type: 'user-placeholder'; itemId: string }
+  | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string }
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
   | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
   | { type: 'reasoning-start' }

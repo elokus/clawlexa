@@ -21,10 +21,15 @@
  */
 export type AISDKStreamEvent =
   // Text streaming
-  | { type: 'text-delta'; textDelta: string }
+  | { type: 'text-delta'; textDelta: string; itemId?: string }
 
   // User transcript (custom extension for voice sessions)
-  | { type: 'user-transcript'; text: string }
+  | { type: 'user-transcript'; text: string; itemId?: string }
+
+  // Placeholders for message ordering (custom extension for voice sessions)
+  // These reserve position in the timeline before transcripts arrive
+  | { type: 'user-placeholder'; itemId: string }
+  | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string }
 
   // Tool calls
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
