@@ -23,7 +23,6 @@ import {
   useUnifiedSessionsStore,
   useVoiceTimeline,
   useVoiceState,
-  useSessionActivities,
   useFocusedSessionChildren,
   type Message as StoreMessage,
   type MessagePart,
@@ -31,7 +30,6 @@ import {
   type TimelineItem,
   type TranscriptItem,
   type ToolItem,
-  type ActivityBlock,
 } from '@/stores';
 import type { StageItem, SessionTreeNode } from '@/types';
 
@@ -110,65 +108,6 @@ function sessionToMessages(session: SessionState | undefined): DisplayMessage[] 
     parts: msg.parts,
     timestamp: msg.createdAt,
   }));
-}
-
-/** Convert activities to display messages for orchestrator sessions */
-function activitiesToMessages(activities: ActivityBlock[]): DisplayMessage[] {
-  const messages: DisplayMessage[] = [];
-
-  for (const activity of activities) {
-    if (activity.type === 'reasoning') {
-      if (activity.content.trim()) {
-        messages.push({
-          id: activity.id,
-          role: 'assistant',
-          parts: [{ type: 'reasoning', text: activity.content }],
-          timestamp: activity.timestamp,
-          pending: !activity.isComplete,
-        });
-      }
-    } else if (activity.type === 'tool') {
-      const parts: MessagePart[] = [
-        {
-          type: 'tool-call',
-          toolName: activity.toolName,
-          toolCallId: activity.toolCallId,
-          args: activity.args || {},
-        },
-      ];
-      if (activity.result) {
-        parts.push({
-          type: 'tool-result',
-          toolName: activity.toolName,
-          toolCallId: activity.toolCallId,
-          result: activity.result,
-        });
-      }
-      messages.push({
-        id: activity.id,
-        role: 'assistant',
-        parts,
-        timestamp: activity.timestamp,
-        pending: !activity.isComplete,
-      });
-    } else if (activity.type === 'content') {
-      messages.push({
-        id: activity.id,
-        role: 'assistant',
-        parts: [{ type: 'text', text: activity.text }],
-        timestamp: activity.timestamp,
-      });
-    } else if (activity.type === 'error') {
-      messages.push({
-        id: activity.id,
-        role: 'assistant',
-        parts: [{ type: 'text', text: `Error: ${activity.message}` }],
-        timestamp: activity.timestamp,
-      });
-    }
-  }
-
-  return messages;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -476,8 +415,6 @@ export function AgentStage({ stage }: AgentStageProps) {
   const timeline = useVoiceTimeline();
   const { voiceState, voiceProfile } = useVoiceState();
   const session = useUnifiedSessionsStore((s) => sessionId ? s.sessions.get(sessionId) : undefined);
-  const activities = useSessionActivities(sessionId);
-  const subagentActive = useUnifiedSessionsStore((s) => s.subagentActive);
   const clearFocusedSession = useUnifiedSessionsStore((s) => s.clearFocusedSession);
   const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
   const focusedChildren = useFocusedSessionChildren();
@@ -509,12 +446,10 @@ export function AgentStage({ stage }: AgentStageProps) {
     if (isVoiceSession) {
       return timelineToMessages(timeline);
     }
-    // For orchestrator sessions, prefer activities over messages
-    if (activities.length > 0) {
-      return activitiesToMessages(activities);
-    }
+    // For subagent sessions, use session messages from handleStreamChunk()
+    // Note: The old activities system is deprecated - all content now comes via stream_chunk
     return sessionToMessages(session);
-  }, [isVoiceSession, timeline, activities, session]);
+  }, [isVoiceSession, timeline, session]);
 
   // Determine status
   const status = useMemo(() => {
@@ -528,16 +463,12 @@ export function AgentStage({ stage }: AgentStageProps) {
       return stateLabels[voiceState] || stateLabels.idle;
     }
 
-    // Subagent/orchestrator status
-    const isActive = subagentActive || activities.some(
-      (block) =>
-        (block.type === 'reasoning' && !block.isComplete) ||
-        (block.type === 'tool' && !block.isComplete)
-    );
+    // Subagent/orchestrator status - check session status
+    const isActive = session?.status === 'running';
     return isActive
       ? { label: 'PROCESSING', color: 'var(--color-violet)', pulse: true }
       : { label: 'COMPLETE', color: 'var(--color-emerald)', pulse: false };
-  }, [isVoiceSession, voiceState, subagentActive, activities]);
+  }, [isVoiceSession, voiceState, session?.status]);
 
   // Determine title and subtitle
   const title = isVoiceSession ? 'Realtime Agent' : (stage.data?.agentName || stage.title);

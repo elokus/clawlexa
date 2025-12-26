@@ -13,7 +13,7 @@
 
 import { tool } from '@openai/agents/realtime';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { streamText } from 'ai';
+import { streamText, readUIMessageStream } from 'ai';
 import { z } from 'zod';
 import { loadAgentConfig } from '../loader.js';
 import { wsBroadcast } from '../../api/websocket.js';
@@ -70,55 +70,44 @@ export const webSearchTool = tool({
         prompt: query,
       });
 
-      let fullText = '';
+      // Use UIMessageStream for proper streaming (works around OpenRouter fullStream bug)
+      let prevText = '';
+      let updateCount = 0;
 
-      // Process stream and emit events if we have a session ID
-      for await (const event of result.fullStream) {
-        switch (event.type) {
-          case 'text-delta': {
-            // AI SDK v5 uses 'text-delta' with 'textDelta' property
-            const textDelta = (event as { textDelta?: string }).textDelta ?? '';
-            fullText += textDelta;
+      for await (const uiMessage of readUIMessageStream({
+        stream: result.toUIMessageStream(),
+      })) {
+        updateCount++;
 
-            // Emit stream event if we have a voice session
-            if (currentVoiceSessionId) {
-              wsBroadcast.streamChunk(currentVoiceSessionId, {
-                type: 'text-delta',
-                textDelta,
-              });
+        // Process text parts
+        for (const part of uiMessage.parts) {
+          if (part.type === 'text') {
+            const textPart = part as { text: string };
+            if (textPart.text.length > prevText.length) {
+              const delta = textPart.text.slice(prevText.length);
+              // Emit stream event if we have a voice session
+              if (currentVoiceSessionId) {
+                wsBroadcast.streamChunk(currentVoiceSessionId, {
+                  type: 'text-delta',
+                  textDelta: delta,
+                });
+              }
+              prevText = textPart.text;
             }
-            break;
           }
-
-          case 'finish':
-            if (currentVoiceSessionId) {
-              wsBroadcast.streamChunk(currentVoiceSessionId, {
-                type: 'finish',
-                finishReason: event.finishReason ?? 'stop',
-              });
-            }
-            break;
-
-          case 'error': {
-            const errorEvent = event as { error?: unknown };
-            const errorMsg = String(errorEvent.error);
-            console.error('[WebSearch] Stream error:', errorMsg);
-            if (currentVoiceSessionId) {
-              wsBroadcast.streamChunk(currentVoiceSessionId, {
-                type: 'error',
-                error: errorMsg,
-              });
-            }
-            break;
-          }
-
-          default:
-            // Ignore other events
-            break;
         }
       }
 
-      console.log(`[WebSearch] Result: ${fullText.substring(0, 100)}...`);
+      // Emit finish event
+      if (currentVoiceSessionId) {
+        wsBroadcast.streamChunk(currentVoiceSessionId, {
+          type: 'finish',
+          finishReason: 'stop',
+        });
+      }
+
+      const fullText = prevText;
+      console.log(`[WebSearch] Result (${updateCount} updates): ${fullText.substring(0, 100)}...`);
 
       // This string is returned to Realtime, which will speak it
       return fullText || 'Keine Ergebnisse gefunden.';

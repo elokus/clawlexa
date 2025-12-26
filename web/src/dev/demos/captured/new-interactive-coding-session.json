@@ -1,0 +1,1210 @@
+{
+  "id": "new-interactive-coding-session",
+  "name": "New interactive coding session",
+  "description": "Captured real conversation",
+  "capturedAt": "2025-12-26T03:29:34.739Z",
+  "events": [
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "idle",
+        "profile": null
+      },
+      "timestamp": 1766719729051,
+      "delay": 0
+    },
+    {
+      "type": "session_tree_update",
+      "payload": {
+        "rootId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "tree": {
+          "id": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+          "type": "voice",
+          "status": "running",
+          "goal": "Voice conversation (Marvin)",
+          "profile": "marvin",
+          "agent_name": null,
+          "tool_call_id": null,
+          "created_at": "2025-12-26T03:28:49.052Z",
+          "children": []
+        }
+      },
+      "timestamp": 1766719729053,
+      "delay": 2
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "listening",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719730106,
+      "delay": 1053
+    },
+    {
+      "type": "session_started",
+      "payload": {
+        "profile": "marvin"
+      },
+      "timestamp": 1766719730110,
+      "delay": 4
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "thinking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719730320,
+      "delay": 210
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "speaking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719731115,
+      "delay": 795
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "listening",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719731329,
+      "delay": 214
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "Was kann ich für dich coden?"
+        }
+      },
+      "timestamp": 1766719731345,
+      "delay": 16
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "thinking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719738863,
+      "delay": 7518
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "speaking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719739224,
+      "delay": 361
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "event": {
+          "type": "user-transcript",
+          "text": "Kannst du bitte eine interaktive Coding Session im Projekt Kirion starten?"
+        }
+      },
+      "timestamp": 1766719739358,
+      "delay": 134
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "listening",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719740091,
+      "delay": 733
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "thinking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719740240,
+      "delay": 149
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "event": {
+          "type": "tool-call",
+          "toolName": "developer_session",
+          "toolCallId": "voice-tool-3",
+          "input": {
+            "request": "Start eine interaktive Coding-Session im Projekt kireon."
+          }
+        }
+      },
+      "timestamp": 1766719740241,
+      "delay": 1
+    },
+    {
+      "type": "session_tree_update",
+      "payload": {
+        "rootId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "tree": {
+          "id": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+          "type": "voice",
+          "status": "running",
+          "goal": "Voice conversation (Marvin)",
+          "profile": "marvin",
+          "agent_name": null,
+          "tool_call_id": null,
+          "created_at": "2025-12-26T03:28:49.052Z",
+          "children": [
+            {
+              "id": "55f0e300",
+              "type": "subagent",
+              "status": "running",
+              "goal": "Start eine interaktive Coding-Session im Projekt kireon.",
+              "profile": null,
+              "agent_name": "cli",
+              "tool_call_id": null,
+              "created_at": "2025-12-26T03:29:00.250Z",
+              "children": []
+            }
+          ]
+        }
+      },
+      "timestamp": 1766719740250,
+      "delay": 9
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "start"
+        }
+      },
+      "timestamp": 1766719740250,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "start-step"
+        }
+      },
+      "timestamp": 1766719741782,
+      "delay": 1532
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "The"
+        }
+      },
+      "timestamp": 1766719741782,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " user's"
+        }
+      },
+      "timestamp": 1766719741783,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " request"
+        }
+      },
+      "timestamp": 1766719741784,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " is"
+        }
+      },
+      "timestamp": 1766719741784,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": ":"
+        }
+      },
+      "timestamp": 1766719741784,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " \""
+        }
+      },
+      "timestamp": 1766719741784,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "Start"
+        }
+      },
+      "timestamp": 1766719741785,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " eine"
+        }
+      },
+      "timestamp": 1766719741785,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " inter"
+        }
+      },
+      "timestamp": 1766719741785,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "akt"
+        }
+      },
+      "timestamp": 1766719741787,
+      "delay": 2
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "ive"
+        }
+      },
+      "timestamp": 1766719741800,
+      "delay": 13
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " Coding"
+        }
+      },
+      "timestamp": 1766719741801,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "-S"
+        }
+      },
+      "timestamp": 1766719741801,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "ession"
+        }
+      },
+      "timestamp": 1766719741802,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " im"
+        }
+      },
+      "timestamp": 1766719741802,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " Projekt"
+        }
+      },
+      "timestamp": 1766719741802,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " k"
+        }
+      },
+      "timestamp": 1766719741803,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "ire"
+        }
+      },
+      "timestamp": 1766719741803,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "on"
+        }
+      },
+      "timestamp": 1766719741852,
+      "delay": 49
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": ".\""
+        }
+      },
+      "timestamp": 1766719741853,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " Which"
+        }
+      },
+      "timestamp": 1766719741858,
+      "delay": 5
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " translates"
+        }
+      },
+      "timestamp": 1766719741895,
+      "delay": 37
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " to"
+        }
+      },
+      "timestamp": 1766719741896,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " \""
+        }
+      },
+      "timestamp": 1766719741896,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "Start"
+        }
+      },
+      "timestamp": 1766719741896,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " an"
+        }
+      },
+      "timestamp": 1766719741898,
+      "delay": 2
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " interactive"
+        }
+      },
+      "timestamp": 1766719741898,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " coding"
+        }
+      },
+      "timestamp": 1766719741898,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " session"
+        }
+      },
+      "timestamp": 1766719741899,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " in"
+        }
+      },
+      "timestamp": 1766719741927,
+      "delay": 28
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " the"
+        }
+      },
+      "timestamp": 1766719741927,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " k"
+        }
+      },
+      "timestamp": 1766719741928,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "ire"
+        }
+      },
+      "timestamp": 1766719741949,
+      "delay": 21
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "on"
+        }
+      },
+      "timestamp": 1766719741950,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": " project"
+        }
+      },
+      "timestamp": 1766719741950,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": ".\"\n"
+        }
+      },
+      "timestamp": 1766719741950,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "\n\n## Translating User Request  \n- The user's input is in German: \"Start eine interaktive Coding-Session im Projekt kireon."
+        }
+      },
+      "timestamp": 1766719743213,
+      "delay": 1263
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "\"  \n- This translates to \"Start an interactive coding session in the kireon project."
+        }
+      },
+      "timestamp": 1766719744032,
+      "delay": 819
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "\"  \n\n## Identifying Project Context  \n- The project name \"kireon\" is mentioned, suggesting it's a specific coding environment or initiative."
+        }
+      },
+      "timestamp": 1766719744871,
+      "delay": 839
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "  \n- Further details on \"kireon\" are needed to proceed with setting up the session."
+        }
+      },
+      "timestamp": 1766719745525,
+      "delay": 654
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "\n\n## Examining Project Structure  \n- The \"kireon\" project is a monorepo with directories for backend, frontend, and infrastructure."
+        }
+      },
+      "timestamp": 1766719747103,
+      "delay": 1578
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "  \n- Since the user didn't specify, the backend repo is preferred for general interactive sessions."
+        }
+      },
+      "timestamp": 1766719747413,
+      "delay": 310
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "  \n\n## Determining Session Purpose  \n- The user requested an interactive coding session without a specific task, suggesting it’s for new features or complex implementations."
+        }
+      },
+      "timestamp": 1766719748768,
+      "delay": 1355
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "  \n- The session likely requires an initial prompt, but the user's exact request must be used without elaboration."
+        }
+      },
+      "timestamp": 1766719748886,
+      "delay": 118
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "reasoning-delta",
+          "text": "[REDACTED]"
+        }
+      },
+      "timestamp": 1766719749901,
+      "delay": 1015
+    },
+    {
+      "type": "session_tree_update",
+      "payload": {
+        "rootId": "55f0e300",
+        "tree": {
+          "id": "55f0e300",
+          "type": "subagent",
+          "status": "running",
+          "goal": "Start eine interaktive Coding-Session im Projekt kireon.",
+          "profile": null,
+          "agent_name": "cli",
+          "tool_call_id": null,
+          "created_at": "2025-12-26T03:29:00.250Z",
+          "children": [
+            {
+              "id": "9320a036",
+              "type": "terminal",
+              "status": "running",
+              "goal": "Start eine interaktive Coding-Session im Projekt kireon.",
+              "profile": null,
+              "agent_name": null,
+              "tool_call_id": null,
+              "created_at": "2025-12-26T03:29:09.902Z",
+              "children": []
+            }
+          ]
+        }
+      },
+      "timestamp": 1766719749903,
+      "delay": 2
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "tool-call",
+          "toolName": "start_interactive_session",
+          "toolCallId": "call_39208580",
+          "input": {
+            "project_path": "~/Code/Work/kireon/kireon-backend",
+            "initial_prompt": "Start eine interaktive Coding-Session im Projekt kireon."
+          }
+        }
+      },
+      "timestamp": 1766719749904,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "Ich"
+        }
+      },
+      "timestamp": 1766719749907,
+      "delay": 3
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " star"
+        }
+      },
+      "timestamp": 1766719749926,
+      "delay": 19
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "te"
+        }
+      },
+      "timestamp": 1766719749927,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " eine"
+        }
+      },
+      "timestamp": 1766719749928,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " inter"
+        }
+      },
+      "timestamp": 1766719749928,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "akt"
+        }
+      },
+      "timestamp": 1766719749961,
+      "delay": 33
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "ive"
+        }
+      },
+      "timestamp": 1766719749961,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " Session"
+        }
+      },
+      "timestamp": 1766719749962,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " im"
+        }
+      },
+      "timestamp": 1766719749962,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " k"
+        }
+      },
+      "timestamp": 1766719749962,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "ire"
+        }
+      },
+      "timestamp": 1766719749963,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "on"
+        }
+      },
+      "timestamp": 1766719749963,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " Backend"
+        }
+      },
+      "timestamp": 1766719749963,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "."
+        }
+      },
+      "timestamp": 1766719749989,
+      "delay": 26
+    },
+    {
+      "type": "session_tree_update",
+      "payload": {
+        "rootId": "55f0e300",
+        "tree": {
+          "id": "55f0e300",
+          "type": "subagent",
+          "status": "running",
+          "goal": "Start eine interaktive Coding-Session im Projekt kireon.",
+          "profile": null,
+          "agent_name": "cli",
+          "tool_call_id": null,
+          "created_at": "2025-12-26T03:29:00.250Z",
+          "children": [
+            {
+              "id": "9320a036",
+              "type": "terminal",
+              "status": "running",
+              "goal": "Start eine interaktive Coding-Session im Projekt kireon.",
+              "profile": null,
+              "agent_name": null,
+              "tool_call_id": null,
+              "created_at": "2025-12-26T03:29:09.902Z",
+              "children": []
+            }
+          ]
+        }
+      },
+      "timestamp": 1766719750157,
+      "delay": 168
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "tool-result",
+          "toolName": "start_interactive_session",
+          "toolCallId": "call_39208580",
+          "output": "Interaktive Session gestartet in ~/Code/Work/kireon/kireon-backend. Claude arbeitet jetzt an der Aufgabe."
+        }
+      },
+      "timestamp": 1766719750157,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "start-step"
+        }
+      },
+      "timestamp": 1766719750821,
+      "delay": 664
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "ackend"
+        }
+      },
+      "timestamp": 1766719751879,
+      "delay": 1058
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "."
+        }
+      },
+      "timestamp": 1766719751880,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " Session"
+        }
+      },
+      "timestamp": 1766719751880,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": " lä"
+        }
+      },
+      "timestamp": 1766719751900,
+      "delay": 20
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "uft"
+        }
+      },
+      "timestamp": 1766719751934,
+      "delay": 34
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "."
+        }
+      },
+      "timestamp": 1766719751934,
+      "delay": 0
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "55f0e300",
+        "event": {
+          "type": "finish",
+          "finishReason": "stop"
+        }
+      },
+      "timestamp": 1766719751945,
+      "delay": 11
+    },
+    {
+      "type": "session_tree_update",
+      "payload": {
+        "rootId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "tree": {
+          "id": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+          "type": "voice",
+          "status": "running",
+          "goal": "Voice conversation (Marvin)",
+          "profile": "marvin",
+          "agent_name": null,
+          "tool_call_id": null,
+          "created_at": "2025-12-26T03:28:49.052Z",
+          "children": [
+            {
+              "id": "55f0e300",
+              "type": "subagent",
+              "status": "running",
+              "goal": "Start eine interaktive Coding-Session im Projekt kireon.",
+              "profile": null,
+              "agent_name": "cli",
+              "tool_call_id": null,
+              "created_at": "2025-12-26T03:29:00.250Z",
+              "children": [
+                {
+                  "id": "9320a036",
+                  "type": "terminal",
+                  "status": "running",
+                  "goal": "Start eine interaktive Coding-Session im Projekt kireon.",
+                  "profile": null,
+                  "agent_name": null,
+                  "tool_call_id": null,
+                  "created_at": "2025-12-26T03:29:09.902Z",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "timestamp": 1766719751946,
+      "delay": 1
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "event": {
+          "type": "tool-result",
+          "toolName": "developer_session",
+          "toolCallId": "voice-tool-3",
+          "output": "Ich starte eine interaktive Coding-Session im kireon Backend. Session läuft."
+        }
+      },
+      "timestamp": 1766719751946,
+      "delay": 0
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "speaking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719752463,
+      "delay": 517
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "listening",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719753010,
+      "delay": 547
+    },
+    {
+      "type": "stream_chunk",
+      "payload": {
+        "sessionId": "b7bc0c26-d847-493f-8859-3ef85094c8ad",
+        "event": {
+          "type": "text-delta",
+          "textDelta": "Die interaktive Coding-Session im Projekt kireon wurde gestartet, sie läuft jetzt."
+        }
+      },
+      "timestamp": 1766719753014,
+      "delay": 4
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "thinking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719761031,
+      "delay": 8017
+    },
+    {
+      "type": "state_change",
+      "payload": {
+        "state": "speaking",
+        "profile": "Marvin"
+      },
+      "timestamp": 1766719761753,
+      "delay": 722
+    }
+  ]
+}

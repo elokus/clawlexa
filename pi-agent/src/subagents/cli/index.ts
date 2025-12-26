@@ -15,7 +15,7 @@
  */
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { streamText, stepCountIs } from 'ai';
+import { streamText, stepCountIs, readUIMessageStream } from 'ai';
 import type { RealtimeItem } from '@openai/agents/realtime';
 import { wsBroadcast } from '../../api/websocket.js';
 import { loadAgentConfig } from '../loader.js';
@@ -189,11 +189,6 @@ Analyze this request and take appropriate action. Remember:
   console.log(userMessage);
   console.log('----------------------------------------');
 
-  // Track state for streaming
-  let reasoningStartTime = 0;
-  let reasoningBuffer = '';
-  let fullText = '';
-
   try {
     // Emit start event
     wsBroadcast.streamChunk(sessionId, { type: 'start' });
@@ -207,143 +202,137 @@ Analyze this request and take appropriate action. Remember:
       stopWhen: stepCountIs(config.maxSteps ?? 3),
     });
 
-    // Process the full event stream and emit as stream_chunk
-    for await (const event of result.fullStream) {
-      switch (event.type) {
-        case 'start':
-          console.log(`[CliAgent] Stream started`);
-          break;
+    // Use UIMessageStream for proper streaming (works around OpenRouter fullStream bug)
+    // Track state to emit deltas between updates
+    let prevText = '';
+    let prevReasoning = '';
+    let prevStepCount = 0;
+    const emittedToolCalls = new Set<string>();
+    const emittedToolResults = new Set<string>();
+    let updateCount = 0;
 
-        case 'start-step':
-          console.log(`[CliAgent] New step started`);
-          wsBroadcast.streamChunk(sessionId, { type: 'start-step' });
-          break;
+    console.log(`[CliAgent] Starting UIMessageStream processing...`);
 
-        case 'reasoning-start':
-          reasoningBuffer = '';
-          reasoningStartTime = Date.now();
-          wsBroadcast.streamChunk(sessionId, { type: 'reasoning-start' });
-          break;
+    for await (const uiMessage of readUIMessageStream({
+      stream: result.toUIMessageStream(),
+    })) {
+      updateCount++;
 
-        case 'reasoning-delta': {
-          const text = (event as { text?: string }).text ?? '';
-          reasoningBuffer += text;
-          wsBroadcast.streamChunk(sessionId, { type: 'reasoning-delta', text });
-          break;
-        }
-
-        case 'reasoning-end': {
-          const durationMs = Date.now() - reasoningStartTime;
-          wsBroadcast.streamChunk(sessionId, {
-            type: 'reasoning-end',
-            text: reasoningBuffer,
-            durationMs,
-          });
-          break;
-        }
-
-        case 'tool-call': {
-          const toolEvent = event as {
-            toolName: string;
-            toolCallId: string;
-            input?: unknown;
-            args?: unknown;
-          };
-          const input = toolEvent.input ?? toolEvent.args;
-
-          console.log(`[CliAgent] Tool called: ${toolEvent.toolName}`);
-
-          // Track tool calls that create terminal sessions
-          if (SESSION_CREATING_TOOLS.includes(toolEvent.toolName) && currentOrchestratorId) {
-            setPendingToolCall(currentOrchestratorId, toolEvent.toolCallId);
+      // Process each part and emit events for changes
+      for (const part of uiMessage.parts) {
+        switch (part.type) {
+          case 'step-start': {
+            // Count step-starts to detect new steps
+            const stepStarts = uiMessage.parts.filter((p) => p.type === 'step-start').length;
+            if (stepStarts > prevStepCount) {
+              console.log(`[CliAgent] New step started (step ${stepStarts})`);
+              wsBroadcast.streamChunk(sessionId, { type: 'start-step' });
+              prevStepCount = stepStarts;
+            }
+            break;
           }
 
-          wsBroadcast.streamChunk(sessionId, {
-            type: 'tool-call',
-            toolName: toolEvent.toolName,
-            toolCallId: toolEvent.toolCallId,
-            input,
-          });
-          break;
+          case 'reasoning': {
+            // Emit reasoning deltas
+            const reasoningPart = part as { reasoning?: string; text?: string };
+            const currentReasoning = reasoningPart.text ?? reasoningPart.reasoning ?? '';
+            if (currentReasoning.length > prevReasoning.length) {
+              const delta = currentReasoning.slice(prevReasoning.length);
+              wsBroadcast.streamChunk(sessionId, { type: 'reasoning-delta', text: delta });
+              prevReasoning = currentReasoning;
+            }
+            break;
+          }
+
+          case 'text': {
+            // Emit text deltas (this is the main fix - streaming text!)
+            const textPart = part as { text: string };
+            if (textPart.text.length > prevText.length) {
+              const delta = textPart.text.slice(prevText.length);
+              wsBroadcast.streamChunk(sessionId, { type: 'text-delta', textDelta: delta });
+              prevText = textPart.text;
+            }
+            break;
+          }
+
+          default: {
+            // Handle tool invocation parts (type is "tool-{toolName}")
+            if (part.type.startsWith('tool-')) {
+              const toolPart = part as {
+                type: string;
+                toolCallId: string;
+                state: string;
+                input?: unknown;
+                output?: unknown;
+              };
+              const toolName = part.type.replace('tool-', '');
+
+              // Emit tool-call when we first see input-available
+              if (
+                toolPart.state === 'input-available' &&
+                !emittedToolCalls.has(toolPart.toolCallId)
+              ) {
+                console.log(`[CliAgent] Tool called: ${toolName}`);
+
+                // Track tool calls that create terminal sessions
+                if (SESSION_CREATING_TOOLS.includes(toolName) && currentOrchestratorId) {
+                  setPendingToolCall(currentOrchestratorId, toolPart.toolCallId);
+                }
+
+                wsBroadcast.streamChunk(sessionId, {
+                  type: 'tool-call',
+                  toolName,
+                  toolCallId: toolPart.toolCallId,
+                  input: toolPart.input,
+                });
+                emittedToolCalls.add(toolPart.toolCallId);
+              }
+
+              // Emit tool-result when we see output-available
+              if (
+                toolPart.state === 'output-available' &&
+                !emittedToolResults.has(toolPart.toolCallId)
+              ) {
+                const outputStr =
+                  typeof toolPart.output === 'string'
+                    ? toolPart.output
+                    : JSON.stringify(toolPart.output);
+
+                console.log(`[CliAgent] Tool result: ${toolName}`);
+                wsBroadcast.streamChunk(sessionId, {
+                  type: 'tool-result',
+                  toolName,
+                  toolCallId: toolPart.toolCallId,
+                  output: outputStr,
+                });
+                emittedToolResults.add(toolPart.toolCallId);
+              }
+            }
+            break;
+          }
         }
-
-        case 'tool-result': {
-          const resultEvent = event as {
-            toolName: string;
-            toolCallId: string;
-            output?: unknown;
-            result?: unknown;
-          };
-          const output = resultEvent.output ?? resultEvent.result;
-
-          console.log(`[CliAgent] Tool result: ${resultEvent.toolName}`);
-          wsBroadcast.streamChunk(sessionId, {
-            type: 'tool-result',
-            toolName: resultEvent.toolName,
-            toolCallId: resultEvent.toolCallId,
-            output: typeof output === 'string' ? output : JSON.stringify(output),
-          });
-          break;
-        }
-
-        case 'text-delta': {
-          // AI SDK v5 uses 'text-delta' with 'textDelta' property
-          const textDelta = (event as { textDelta?: string }).textDelta ?? '';
-          fullText += textDelta;
-          wsBroadcast.streamChunk(sessionId, { type: 'text-delta', textDelta });
-          break;
-        }
-
-        case 'finish-step': {
-          const stepEvent = event as {
-            finishReason?: string;
-            usage?: {
-              inputTokens?: number;
-              outputTokens?: number;
-              totalTokens?: number;
-              reasoningTokens?: number;
-            };
-          };
-          console.log(`[CliAgent] Step finished: ${stepEvent.finishReason}`);
-          wsBroadcast.streamChunk(sessionId, {
-            type: 'finish-step',
-            finishReason: stepEvent.finishReason,
-            usage: stepEvent.usage,
-          });
-          break;
-        }
-
-        case 'finish':
-          console.log(`[CliAgent] Stream finished: ${event.finishReason}`);
-          wsBroadcast.streamChunk(sessionId, {
-            type: 'finish',
-            finishReason: event.finishReason ?? 'stop',
-          });
-          break;
-
-        case 'error': {
-          const errorEvent = event as { error?: unknown };
-          const errorMsg = String(errorEvent.error);
-          console.error(`[CliAgent] Error:`, errorMsg);
-          wsBroadcast.streamChunk(sessionId, { type: 'error', error: errorMsg });
-          break;
-        }
-
-        default:
-          // Ignore other events (text-start, text-end, tool-input-start, etc.)
-          break;
       }
     }
 
-    console.log('[CliAgent] Agent response:');
-    console.log('----------------------------------------');
-    console.log(fullText);
+    // Get the final text
+    const fullText = prevText;
+
+    console.log('[CliAgent] Stream processing complete:');
+    console.log(`[CliAgent] Total updates: ${updateCount}`);
+    console.log(`[CliAgent] Final text length: ${fullText.length}`);
+    console.log(`[CliAgent] Final text: ${fullText || '(empty)'}`);
     console.log('========================================\n');
+
+    // Emit finish event
+    wsBroadcast.streamChunk(sessionId, { type: 'finish', finishReason: 'stop' });
+
+    // Determine final response
+    let finalResponse = fullText;
 
     // Save conversation to history
     sessionsRepo.appendToHistory(subagent.id, [
       { role: 'user', content: request },
-      { role: 'assistant', content: fullText || 'No response' },
+      { role: 'assistant', content: finalResponse || 'No response' },
     ]);
 
     // Check if subagent should finish (no running children)
@@ -357,7 +346,7 @@ Analyze this request and take appropriate action. Remember:
     // Broadcast tree update - use voice session as root if available
     wsBroadcast.sessionTreeUpdate(voiceSessionId ?? subagent.id);
 
-    return fullText || 'Keine Antwort erhalten.';
+    return finalResponse || 'Keine Antwort erhalten.';
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[CliAgent] Error:', errorMsg);
