@@ -12,6 +12,7 @@ import {
   useFocusedSession,
   useUnifiedSessionsStore,
   useSubagentActivities,
+  useActiveView,
 } from '../../stores';
 import { BackgroundRail } from '../rails/BackgroundRail';
 import { ThreadRail } from '../rails/ThreadRail';
@@ -20,6 +21,7 @@ import { TerminalStage } from '../stages/TerminalStage';
 import { GlassHUD } from '../overlays/GlassHUD';
 import { EventsOverlay } from '../overlays/EventsOverlay';
 import { ToolsOverlay } from '../overlays/ToolsOverlay';
+import { PromptsView } from '../prompts/PromptsView';
 import type { SessionTreeNode, StageItem } from '../../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -127,6 +129,7 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
 export function StageOrchestrator() {
   // Use the new tree-based focused session
   const focusedSession = useFocusedSession();
+  const activeView = useActiveView();
 
   // Check for pending subagent (for key generation)
   const subagentActivities = useSubagentActivities();
@@ -136,6 +139,8 @@ export function StageOrchestrator() {
 
   // Generate unique key for AnimatePresence transitions
   const stageKey = focusedSession?.id ?? (pendingAgentName ? `pending-${pendingAgentName}` : 'root');
+
+  const isPromptsView = activeView === 'prompts';
 
   return (
     <div className="stage-orchestrator-wrapper stage-perspective">
@@ -162,6 +167,10 @@ export function StageOrchestrator() {
           overflow: hidden;
           position: relative;
           z-index: 1;
+        }
+
+        .stage-orchestrator.prompts-view {
+          grid-template-columns: ${DOCK_WIDTH}px 1fr;
         }
 
         /* Left Dock - Slim icon bar */
@@ -226,11 +235,17 @@ export function StageOrchestrator() {
           .stage-orchestrator {
             grid-template-columns: 60px 1fr 280px;
           }
+          .stage-orchestrator.prompts-view {
+            grid-template-columns: 60px 1fr;
+          }
         }
 
         @media (max-width: 1024px) {
           .stage-orchestrator {
             grid-template-columns: 60px 1fr 60px;
+          }
+          .stage-orchestrator.prompts-view {
+            grid-template-columns: 60px 1fr;
           }
         }
 
@@ -249,29 +264,40 @@ export function StageOrchestrator() {
       {/* Ambient Grid Background */}
       <div className="ambient-grid" />
 
-      {/* Main 3-column asymmetric layout */}
-      <div className="stage-orchestrator">
+      {/* Main layout - 3-column for sessions, 2-column for prompts */}
+      <div className={`stage-orchestrator ${isPromptsView ? 'prompts-view' : ''}`}>
         {/* Left Dock - Slim icon bar */}
         <div className="orchestrator-dock">
           <BackgroundRail />
         </div>
 
-        {/* Center Stage - Active View */}
-        <div className="orchestrator-stage">
-          <div className="stage-container">
-            <AnimatePresence mode="wait">
-              <ActiveStage key={stageKey} session={focusedSession} />
-            </AnimatePresence>
-
-            {/* Glass HUD - shows when viewing terminal and agent is speaking */}
-            <GlassHUD />
+        {isPromptsView ? (
+          /* Prompts View - Full width */
+          <div className="orchestrator-stage">
+            <div className="stage-container">
+              <PromptsView />
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Center Stage - Active View */}
+            <div className="orchestrator-stage">
+              <div className="stage-container">
+                <AnimatePresence mode="wait">
+                  <ActiveStage key={stageKey} session={focusedSession} />
+                </AnimatePresence>
 
-        {/* Right Rail - Wide context panel */}
-        <div className="orchestrator-rail">
-          <ThreadRail />
-        </div>
+                {/* Glass HUD - shows when viewing terminal and agent is speaking */}
+                <GlassHUD />
+              </div>
+            </div>
+
+            {/* Right Rail - Wide context panel */}
+            <div className="orchestrator-rail">
+              <ThreadRail />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Overlays */}

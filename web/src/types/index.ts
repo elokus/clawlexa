@@ -60,12 +60,13 @@ export interface AgentProfile {
 // WebSocket Message Types (Phase 5: Simplified Protocol)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Core types (5):
-// - welcome            : Client identity on connect
+// Core types (6):
+// - welcome            : Client identity + service state on connect
 // - stream_chunk       : All agent message events (AI SDK format)
 // - session_tree_update: Session hierarchy changes
 // - state_change       : Voice UI state (listening/thinking/speaking)
 // - master_changed     : Multi-client coordination
+// - service_state_changed: Service active/dormant + audio mode
 //
 // Lifecycle types (3):
 // - session_started/ended: Voice session lifecycle
@@ -79,6 +80,7 @@ export type WSMessageType =
   | 'session_tree_update'   // Session hierarchy for ThreadRail
   | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
   | 'master_changed'        // Multi-client master coordination
+  | 'service_state_changed' // Service active/dormant + audio mode
   // Lifecycle events
   | 'session_started'       // Voice session activated
   | 'session_ended'         // Voice session deactivated
@@ -98,6 +100,13 @@ export interface WSMessage {
 export interface WelcomePayload {
   clientId: string;
   isMaster: boolean;
+  serviceActive: boolean;
+  audioMode: 'web' | 'local';
+}
+
+export interface ServiceStateChangedPayload {
+  active: boolean;
+  mode: 'web' | 'local';
 }
 
 export interface MasterChangedPayload {

@@ -60,6 +60,20 @@ voice-agent/
 │   ├── SESSION_CENTRIC_REFACTOR_PLAN.md  # Refactoring plan (complete)
 │   └── COMPONENT_DEV.md           # Dev environment guide
 │
+├── prompts/               # Centralized prompt management
+│   ├── jarvis/                    # Voice profile prompts
+│   │   ├── config.json
+│   │   └── v1.md
+│   ├── marvin/
+│   │   ├── config.json
+│   │   └── v1.md
+│   ├── cli-orchestrator/          # Subagent prompts
+│   │   ├── config.json
+│   │   └── v1.md
+│   └── web-search/
+│       ├── config.json
+│       └── v1.md
+│
 ├── web/                   # Web Dashboard (React + Vite)
 │   ├── src/
 │   │   ├── main.tsx          # Entry point with routing
@@ -70,9 +84,13 @@ voice-agent/
 │   │   │   │   └── TerminalStage.tsx # PTY terminal renderer
 │   │   │   ├── rails/            # Navigation rails
 │   │   │   │   ├── ThreadRail.tsx    # Session tree navigation
-│   │   │   │   └── BackgroundRail.tsx # Minimized sessions
+│   │   │   │   └── BackgroundRail.tsx # Minimized sessions + prompts toggle
 │   │   │   ├── layout/           # Layout components
-│   │   │   │   └── StageOrchestrator.tsx # Stage routing
+│   │   │   │   └── StageOrchestrator.tsx # Stage routing + view switching
+│   │   │   ├── prompts/          # Prompt management UI
+│   │   │   │   ├── PromptsView.tsx   # Main 2-panel layout
+│   │   │   │   ├── PromptsSidebar.tsx # Prompt list by type
+│   │   │   │   └── PromptEditor.tsx  # Markdown editor + version control
 │   │   │   ├── ai-elements/      # AI SDK UI components
 │   │   │   │   ├── conversation.tsx
 │   │   │   │   ├── message.tsx
@@ -87,7 +105,8 @@ voice-agent/
 │   │   ├── styles/
 │   │   │   └── index.css         # Tailwind + dark theme
 │   │   ├── lib/
-│   │   │   └── utils.ts          # Utility functions
+│   │   │   ├── utils.ts          # Utility functions
+│   │   │   └── prompts-api.ts    # Prompts REST API client
 │   │   └── types/
 │   │       ├── index.ts          # TypeScript types
 │   │       └── stage.ts          # Stage-specific types
@@ -111,7 +130,11 @@ voice-agent/
     │   ├── api/               # HTTP + WebSocket API
     │   │   ├── websocket.ts       # WebSocket server (8 message types)
     │   │   ├── stream-types.ts    # AI SDK event type definitions
-    │   │   └── webhooks.ts        # Mac daemon webhook receiver
+    │   │   └── webhooks.ts        # Mac daemon webhook receiver + prompts API
+    │   │
+    │   ├── prompts/           # Centralized prompts service
+    │   │   ├── index.ts           # CRUD operations (list, get, create, setActive)
+    │   │   └── interpolate.ts     # Variable interpolation ({{date}}, {{agent_name}})
     │   │
     │   ├── subagents/         # Modular subagents (config + prompts)
     │   │   ├── loader.ts          # Load config.json + PROMPT.md
@@ -242,6 +265,7 @@ useSessionActivities(sessionId)  // Activity blocks for session
 useVoiceTimeline()               // Voice transcripts + tools
 useConnectionState()             // { connected, clientId, isMaster }
 useVoiceState()                  // { voiceState, voiceProfile, currentTool }
+useServiceState()                // { serviceActive, audioMode }
 ```
 
 ### Direct Input (Chatable Subagents)
@@ -257,6 +281,137 @@ Users can type directly to focused subagent sessions:
 ```
 
 For complete documentation, see [`docs/SESSION_MANAGEMENT.md`](docs/SESSION_MANAGEMENT.md).
+
+## Service State Management (Soft Power)
+
+The agent backend implements a "Soft Power" control plane for toggling between DORMANT and RUNNING states via the web dashboard.
+
+### Service States
+
+| State | Description |
+|-------|-------------|
+| **DORMANT** | Service is off. No audio capture, no wakeword detection, no agent sessions allowed. |
+| **RUNNING** | Service is active. Audio/wakeword enabled based on audio mode. |
+
+### Audio Modes
+
+| Mode | Description |
+|------|-------------|
+| **WEB** | Browser handles audio I/O via WebSocket. Wakeword disabled. |
+| **LOCAL** | Device handles audio via hardware (PipeWire). Wakeword enabled when agent idle. |
+
+### WebSocket Commands
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `start_service` | - | Transition from DORMANT → RUNNING |
+| `stop_service` | - | Transition from RUNNING → DORMANT |
+| `set_audio_mode` | `{ mode: 'web' \| 'local' }` | Switch audio input source |
+
+### WebSocket Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `welcome` | `{ clientId, isMaster, serviceActive, audioMode }` | Initial state on connect |
+| `service_state_changed` | `{ active: boolean, mode: 'web' \| 'local' }` | State change broadcast |
+
+### Frontend Integration
+
+```typescript
+// Zustand store state
+serviceActive: boolean;
+audioMode: 'web' | 'local';
+
+// Selector hook
+useServiceState()  // { serviceActive, audioMode }
+
+// Control hook (useAudioSession)
+toggleService()           // Toggle service on/off
+setAudioMode(mode)        // Switch between 'web' and 'local'
+```
+
+### UI Controls (ControlBar)
+
+- **Power Button**: Red (off) / Emerald (on) - toggles service
+- **Mode Toggle**: WEB / DEVICE segmented control
+- **Mic Button**: Disabled when service inactive
+- **Profile Pills**: Disabled when service inactive
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `pi-agent/src/index.ts` | Service State Machine, `updateServiceState()` |
+| `pi-agent/src/api/websocket.ts` | `setServiceState()`, welcome message |
+| `pi-agent/src/agent/voice-agent.ts` | `setTransport()` for hot-swapping |
+| `web/src/stores/unified-sessions.ts` | `serviceActive`, `audioMode`, `setServiceState()` |
+| `web/src/hooks/useAudioSession.ts` | `toggleService()`, `setAudioMode()` |
+| `web/src/components/ControlBar.tsx` | Power button, mode toggle UI |
+
+## Prompt Management System
+
+Centralized prompt management for all agents with version control and a web-based editor.
+
+### Directory Structure
+
+```
+./prompts/
+├── jarvis/              # Voice profile
+│   ├── config.json      # {"name": "Jarvis", "type": "voice", "activeVersion": "v1"}
+│   └── v1.md            # Active prompt version
+├── marvin/              # Voice profile
+│   ├── config.json
+│   └── v1.md
+├── cli-orchestrator/    # Subagent
+│   ├── config.json
+│   └── v1.md
+└── web-search/          # Subagent
+    ├── config.json
+    └── v1.md
+```
+
+### REST API Endpoints
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/prompts` | List all prompts |
+| GET | `/api/prompts/:id` | Get config + active version content |
+| GET | `/api/prompts/:id/versions` | List versions |
+| GET | `/api/prompts/:id/versions/:version` | Get specific version |
+| POST | `/api/prompts/:id` | Create new version |
+| PUT | `/api/prompts/:id/active` | Set active version |
+
+### Variable Interpolation
+
+Prompts support `{{variable}}` syntax for dynamic values:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{{agent_name}}` | Profile/config name | "Jarvis" |
+| `{{date}}` | Current date (ISO) | "2025-01-15" |
+| `{{datetime}}` | Current datetime | "2025-01-15T14:30:00" |
+| `{{weekday}}` | Current weekday | "Wednesday" |
+| `{{session_id}}` | Current session ID | "sess_abc123" |
+
+### Web UI
+
+Access via the "=" button in the left dock:
+
+- **Sidebar**: Lists prompts grouped by type (Voice / Subagent)
+- **Editor**: Version dropdown, Save as New, Set Active buttons
+- **Store State**: `activeView`, `selectedPromptId`, `promptContent`, `promptDirty`
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `prompts/*/config.json` | Prompt metadata + active version |
+| `prompts/*/v*.md` | Prompt versions |
+| `pi-agent/src/prompts/index.ts` | CRUD service |
+| `pi-agent/src/prompts/interpolate.ts` | Variable replacement |
+| `pi-agent/src/api/webhooks.ts` | REST endpoints |
+| `web/src/lib/prompts-api.ts` | Frontend API client |
+| `web/src/components/prompts/` | PromptsView, PromptsSidebar, PromptEditor |
 
 ## Tools
 
@@ -532,15 +687,16 @@ The WebSocket server supports multiple browser clients with a Master/Replica pat
 | `web/src/stores/unified-sessions.ts` | `clientId`, `isMaster` state, all session management |
 | `web/src/stores/message-handler.ts` | WebSocket event routing to unified store |
 
-### WebSocket Messages (8 Core Types)
+### WebSocket Messages (9 Core Types)
 
 | Message | Direction | Purpose |
 |---------|-----------|---------|
-| `welcome` | Server → Client | Client identity on connect (`clientId`, `isMaster`) |
+| `welcome` | Server → Client | Client identity + service state on connect |
 | `stream_chunk` | Server → Client | All agent events in AI SDK format |
 | `session_tree_update` | Server → Client | Session hierarchy changes |
 | `state_change` | Server → Client | Voice UI state (listening/thinking/speaking) |
 | `master_changed` | Server → All | Multi-client master coordination |
+| `service_state_changed` | Server → All | Service active/dormant + audio mode |
 | `session_started` | Server → Client | Voice session activated |
 | `session_ended` | Server → Client | Voice session deactivated |
 | `cli_session_deleted` | Server → Client | Terminal session cleanup |

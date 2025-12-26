@@ -1,0 +1,10 @@
+{
+  "name": "Web Search",
+  "description": "Search agent with web access for real-time information",
+  "type": "subagent",
+  "activeVersion": "v1",
+  "metadata": {
+    "model": "x-ai/grok-4.1-fast:online",
+    "maxSteps": 2
+  }
+}

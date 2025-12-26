@@ -24,6 +24,13 @@ interface StateChangePayload {
 interface WelcomePayload {
   clientId: string;
   isMaster: boolean;
+  serviceActive: boolean;
+  audioMode: 'web' | 'local';
+}
+
+interface ServiceStateChangedPayload {
+  active: boolean;
+  mode: 'web' | 'local';
 }
 
 interface MasterChangedPayload {
@@ -77,9 +84,16 @@ export function handleWebSocketMessage(msg: WSMessage): void {
     // ─────────────────────────────────────────────────────────────────────────
 
     case 'welcome': {
-      const { clientId, isMaster } = payload as WelcomePayload;
-      console.log(`[WS] Welcome: clientId=${clientId.slice(0, 8)}, isMaster=${isMaster}`);
-      store.setClientIdentity(clientId, isMaster);
+      const { clientId, isMaster, serviceActive, audioMode } = payload as WelcomePayload;
+      console.log(`[WS] Welcome: clientId=${clientId.slice(0, 8)}, isMaster=${isMaster}, serviceActive=${serviceActive}, audioMode=${audioMode}`);
+      store.setClientIdentity(clientId, isMaster, serviceActive, audioMode);
+      break;
+    }
+
+    case 'service_state_changed': {
+      const { active, mode } = payload as ServiceStateChangedPayload;
+      console.log(`[WS] Service state changed: active=${active}, mode=${mode}`);
+      store.setServiceState(active, mode);
       break;
     }
 

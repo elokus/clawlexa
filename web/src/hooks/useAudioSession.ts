@@ -11,10 +11,12 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AudioController } from '../lib/audio';
-import { useConnectionState, useVoiceState } from '../stores';
+import { useConnectionState, useVoiceState, useServiceState } from '../stores';
 import { useWebSocket } from './useWebSocket';
 
 export type ProfileId = 'jarvis' | 'marvin';
+
+export type AudioMode = 'web' | 'local';
 
 export interface AudioSessionState {
   /** Currently selected profile */
@@ -35,6 +37,14 @@ export interface AudioSessionState {
   isMaster: boolean;
   /** Request to become the master client */
   requestMaster: () => void;
+  /** Whether the backend service is active (soft power) */
+  serviceActive: boolean;
+  /** Current audio mode (web/local) */
+  audioMode: AudioMode;
+  /** Toggle service on/off */
+  toggleService: () => void;
+  /** Set audio mode */
+  setAudioMode: (mode: AudioMode) => void;
 }
 
 export function useAudioSession(): AudioSessionState {
@@ -50,6 +60,7 @@ export function useAudioSession(): AudioSessionState {
 
   const { voiceState } = useVoiceState();
   const { connected, isMaster } = useConnectionState();
+  const { serviceActive, audioMode } = useServiceState();
 
   // Keep stateRef in sync with state
   useEffect(() => {
@@ -106,9 +117,33 @@ export function useAudioSession(): AudioSessionState {
     }
   }, [connected, isRecording]);
 
+  // Toggle service on/off (soft power)
+  const toggleService = useCallback(() => {
+    if (serviceActive) {
+      console.log('[AudioSession] Stopping service');
+      send('client_command', { command: 'stop_service' });
+    } else {
+      console.log('[AudioSession] Starting service');
+      send('client_command', { command: 'start_service' });
+    }
+  }, [serviceActive, send]);
+
+  // Set audio mode (web/local)
+  const setAudioModeCmd = useCallback((mode: AudioMode) => {
+    console.log('[AudioSession] Setting audio mode:', mode);
+    send('client_command', { command: 'set_audio_mode', mode });
+  }, [send]);
+
   // Toggle session on/off
   const toggleSession = useCallback(async () => {
-    console.log('[AudioSession] toggleSession called, isRecording:', isRecording, 'isMaster:', isMaster);
+    console.log('[AudioSession] toggleSession called, isRecording:', isRecording, 'isMaster:', isMaster, 'serviceActive:', serviceActive);
+
+    // Check if service is active
+    if (!serviceActive && !isRecording) {
+      console.log('[AudioSession] Service is not active, cannot start recording');
+      setError('Service is not active');
+      return;
+    }
 
     if (isRecording) {
       // Stop recording
@@ -170,7 +205,7 @@ export function useAudioSession(): AudioSessionState {
         setIsInitializing(false);
       }
     }
-  }, [isRecording, activeProfile, send, sendBinary, isMaster]);
+  }, [isRecording, activeProfile, send, sendBinary, isMaster, serviceActive]);
 
   // Stop session immediately
   const stopSession = useCallback(() => {
@@ -213,5 +248,9 @@ export function useAudioSession(): AudioSessionState {
     error,
     isMaster,
     requestMaster,
+    serviceActive,
+    audioMode,
+    toggleService,
+    setAudioMode: setAudioModeCmd,
   };
 }

@@ -10,11 +10,14 @@ import {
   useEvents,
   useOverlayState,
   useSessions,
+  useActiveView,
   type SessionState,
 } from '../../stores';
+
+type ActiveView = 'sessions' | 'prompts';
 import type { OverlayType, SessionStatus } from '../../types';
 
-// Persistent action icons
+// Persistent action icons (overlay toggles)
 const DOCK_ACTIONS: { id: OverlayType; icon: string; label: string }[] = [
   { id: 'events', icon: '⚡', label: 'Events' },
   { id: 'tools', icon: '◇', label: 'Tools' },
@@ -168,8 +171,10 @@ export function BackgroundRail() {
   const backgroundTreeIds = useUnifiedSessionsStore((s) => s.backgroundTreeIds);
   const restoreTree = useUnifiedSessionsStore((s) => s.restoreTree);
   const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
+  const setActiveView = useUnifiedSessionsStore((s) => s.setActiveView);
   const { activeOverlay, setActiveOverlay } = useOverlayState();
   const events = useEvents();
+  const activeView = useActiveView();
 
   // Get sessions from unified store (Map)
   const sessionsMap = useSessions();
@@ -624,6 +629,13 @@ export function BackgroundRail() {
             onClick={() => handleOverlayToggle(action.id)}
           />
         ))}
+        {/* Prompts Toggle */}
+        <DockButton
+          icon="="
+          label="Prompts"
+          active={activeView === 'prompts'}
+          onClick={() => setActiveView(activeView === 'prompts' ? 'sessions' : 'prompts')}
+        />
       </div>
 
       {/* Divider if there are background trees */}

@@ -20,6 +20,17 @@ import {
 import { handleDemoRequest } from '../demo/index.js';
 import { eventRecorder } from './event-recorder.js';
 import { wsBroadcast } from './websocket.js';
+import {
+  listPrompts,
+  getPromptInfo,
+  getPromptVersion,
+  listVersions,
+  createPromptVersion,
+  setActiveVersion,
+  createPrompt,
+  getActivePromptRaw,
+  type PromptConfig,
+} from '../prompts/index.js';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
 
@@ -88,7 +99,7 @@ function resolvePendingCompletion(payload: WebhookPayload): void {
  */
 function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
@@ -316,6 +327,172 @@ async function handleWebhook(
     eventRecorder.clear();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'cleared' }));
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Prompts API
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/prompts - List all prompts
+  if (req.method === 'GET' && req.url === '/api/prompts') {
+    try {
+      const prompts = await listPrompts();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(prompts));
+    } catch (error) {
+      console.error('[API] Error fetching prompts:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch prompts' }));
+    }
+    return;
+  }
+
+  // GET /api/prompts/:id - Get prompt config + active version content
+  const promptMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'GET' && promptMatch) {
+    try {
+      const promptId = promptMatch[1]!;
+      const info = await getPromptInfo(promptId);
+      if (!info) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Prompt not found' }));
+        return;
+      }
+      const content = await getActivePromptRaw(promptId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...info, content }));
+    } catch (error) {
+      console.error('[API] Error fetching prompt:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch prompt' }));
+    }
+    return;
+  }
+
+  // GET /api/prompts/:id/versions - List all versions
+  const promptVersionsMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)\/versions$/);
+  if (req.method === 'GET' && promptVersionsMatch) {
+    try {
+      const promptId = promptVersionsMatch[1]!;
+      const versions = await listVersions(promptId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(versions));
+    } catch (error) {
+      console.error('[API] Error fetching versions:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch versions' }));
+    }
+    return;
+  }
+
+  // GET /api/prompts/:id/versions/:version - Get specific version content
+  const promptVersionMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)\/versions\/(v\d+)$/);
+  if (req.method === 'GET' && promptVersionMatch) {
+    try {
+      const promptId = promptVersionMatch[1]!;
+      const version = promptVersionMatch[2]!;
+      const versionData = await getPromptVersion(promptId, version);
+      if (!versionData) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Version not found' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(versionData));
+    } catch (error) {
+      console.error('[API] Error fetching version:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch version' }));
+    }
+    return;
+  }
+
+  // POST /api/prompts/:id - Create new version
+  const createVersionMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'POST' && createVersionMatch) {
+    const promptId = createVersionMatch[1]!;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { content } = JSON.parse(body) as { content: string };
+        if (!content) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Content is required' }));
+          return;
+        }
+        const version = await createPromptVersion(promptId, content);
+        console.log(`[API] Created prompt version ${version} for ${promptId}`);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ version, promptId }));
+      } catch (error) {
+        console.error('[API] Error creating version:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to create version' }));
+      }
+    });
+    return;
+  }
+
+  // PUT /api/prompts/:id/active - Set active version
+  const setActiveMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)\/active$/);
+  if (req.method === 'PUT' && setActiveMatch) {
+    const promptId = setActiveMatch[1]!;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { version } = JSON.parse(body) as { version: string };
+        if (!version) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Version is required' }));
+          return;
+        }
+        await setActiveVersion(promptId, version);
+        console.log(`[API] Set active version for ${promptId} to ${version}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, promptId, activeVersion: version }));
+      } catch (error) {
+        console.error('[API] Error setting active version:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to set active version' }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/prompts - Create new prompt
+  if (req.method === 'POST' && req.url === '/api/prompts') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { id, name, description, type, content, metadata } = JSON.parse(body) as {
+          id: string;
+          name: string;
+          description: string;
+          type: 'voice' | 'subagent';
+          content: string;
+          metadata?: PromptConfig['metadata'];
+        };
+
+        if (!id || !name || !type || !content) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'id, name, type, and content are required' }));
+          return;
+        }
+
+        await createPrompt(id, { name, description: description || '', type, metadata }, content);
+        console.log(`[API] Created new prompt: ${id}`);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, id }));
+      } catch (error) {
+        console.error('[API] Error creating prompt:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to create prompt' }));
+      }
+    });
     return;
   }
 

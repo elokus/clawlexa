@@ -42,6 +42,14 @@ export interface SessionTreeNode {
 }
 
 /**
+ * Flattened tree node with depth for consistent rail display
+ */
+export interface FlattenedTreeNode {
+  node: SessionTreeNode;
+  depth: number;
+}
+
+/**
  * Payload for session_tree_update WebSocket event
  */
 export interface SessionTreeUpdatePayload {

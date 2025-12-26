@@ -66,3 +66,11 @@ export interface CliSessionOutputPayload {
   sessionId: string;
   output: string;
 }
+
+/**
+ * Payload for service state changed events.
+ */
+export interface ServiceStateChangedPayload {
+  active: boolean;
+  mode: 'web' | 'local';
+}

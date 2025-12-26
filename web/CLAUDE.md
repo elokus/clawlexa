@@ -102,6 +102,8 @@ useHasActiveSession()            // boolean
 useVoiceTimeline()               // TimelineItem[] (voice transcripts)
 useConnectionState()             // { connected, wsError, clientId, isMaster }
 useVoiceState()                  // { voiceState, voiceProfile, voiceActive, currentTool }
+useActiveView()                  // 'sessions' | 'prompts'
+usePromptsState()                // { prompts, selectedPromptId, promptContent, ... }
 ```
 
 ## WebSocket Messages (8 Core Types)
@@ -150,6 +152,18 @@ Vercel AI SDK UI components for streaming message display:
 | `Conversation` | Message list container |
 | `Message` | Individual message with parts |
 | `Loader` | Loading/streaming states |
+
+### Prompts (`components/prompts/`)
+
+Prompt management UI for editing agent prompts:
+
+| Component | File | Description |
+|-----------|------|-------------|
+| `PromptsView` | `PromptsView.tsx` | Main 2-panel layout (sidebar + editor) |
+| `PromptsSidebar` | `PromptsSidebar.tsx` | Prompt list grouped by type |
+| `PromptEditor` | `PromptEditor.tsx` | Version dropdown, save, set active, textarea |
+
+Access via "=" button in BackgroundRail. Uses `activeView` state to toggle between sessions and prompts views.
 
 ## Stores (`stores/`)
 
@@ -237,6 +251,10 @@ web/src/
 │   │   ├── conversation.tsx
 │   │   ├── message.tsx
 │   │   └── loader.tsx
+│   ├── prompts/                   # Prompt management UI
+│   │   ├── PromptsView.tsx        # Main 2-panel layout
+│   │   ├── PromptsSidebar.tsx     # Prompt list by type
+│   │   └── PromptEditor.tsx       # Editor with version control
 │   ├── ui/                        # shadcn/ui components
 │   └── overlays/                  # Modal overlays
 ├── hooks/
@@ -250,7 +268,8 @@ web/src/
 │   ├── index.ts                   # Main types
 │   └── stage.ts                   # Stage-specific types
 ├── lib/
-│   └── utils.ts                   # Utility functions (cn, etc.)
+│   ├── utils.ts                   # Utility functions (cn, etc.)
+│   └── prompts-api.ts             # Prompts REST API client
 ├── dev/                           # Component dev environment
 │   ├── DevPage.tsx
 │   ├── registry.ts

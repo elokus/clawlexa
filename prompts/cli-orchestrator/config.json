@@ -1,0 +1,10 @@
+{
+  "name": "CLI Orchestrator",
+  "description": "Manages coding sessions on Mac via Claude Code CLI",
+  "type": "subagent",
+  "activeVersion": "v1",
+  "metadata": {
+    "model": "x-ai/grok-code-fast-1",
+    "maxSteps": 3
+  }
+}

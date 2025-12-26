@@ -3,7 +3,7 @@
  *
  * Each profile defines:
  * - Wake word trigger
- * - Instructions (system prompt)
+ * - Instructions (system prompt) - loaded from centralized prompts directory
  * - Voice setting
  * - Available tools
  * - Greeting trigger message
@@ -11,6 +11,7 @@
 
 import { RealtimeAgent } from '@openai/agents/realtime';
 import { type ToolName, getToolsForSession } from '../tools/index.js';
+import { getActivePrompt, type InterpolationContext } from '../prompts/index.js';
 
 export interface AgentProfile {
   /** Display name of the assistant */
@@ -353,6 +354,91 @@ export const profiles: Record<string, AgentProfile> = {
   marvin: MARVIN_PROFILE,
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Dynamic Prompt Loading from Centralized Prompts Directory
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Mapping from profile names to prompt IDs in the prompts directory.
+ */
+const PROFILE_PROMPT_MAPPING: Record<string, string> = {
+  jarvis: 'jarvis',
+  marvin: 'marvin',
+};
+
+/**
+ * Cache for loaded profile prompts.
+ * Key: profile name (lowercase), Value: prompt content
+ */
+const cachedInstructions = new Map<string, string>();
+
+/**
+ * Load prompts for all voice profiles from the centralized prompts directory.
+ *
+ * Call this at startup to pre-cache prompts, or prompts will be loaded
+ * on-demand when getProfileInstructions is called.
+ */
+export async function loadProfilePrompts(): Promise<void> {
+  const profileNames = Object.keys(PROFILE_PROMPT_MAPPING);
+
+  await Promise.all(
+    profileNames.map(async (profileName) => {
+      const promptId = PROFILE_PROMPT_MAPPING[profileName]!;
+      const prompt = await getActivePrompt(promptId, { agent_name: profileName });
+      if (prompt) {
+        cachedInstructions.set(profileName, prompt);
+        console.log(`[Profiles] Loaded prompt for ${profileName} from prompts/${promptId}`);
+      }
+    })
+  );
+}
+
+/**
+ * Reload prompts for all profiles (e.g., after editing in the UI).
+ */
+export async function reloadProfilePrompts(): Promise<void> {
+  cachedInstructions.clear();
+  await loadProfilePrompts();
+}
+
+/**
+ * Get instructions for a profile, loading from prompts directory if available.
+ *
+ * Falls back to inline instructions if not found in prompts directory.
+ *
+ * @param profileName - Profile name (e.g., "jarvis", "marvin")
+ * @param context - Optional interpolation context
+ * @returns The profile instructions
+ */
+export async function getProfileInstructions(
+  profileName: string,
+  context: InterpolationContext = {}
+): Promise<string> {
+  const normalizedName = profileName.toLowerCase();
+
+  // Check cache first
+  if (cachedInstructions.has(normalizedName)) {
+    return cachedInstructions.get(normalizedName)!;
+  }
+
+  // Try to load from prompts directory
+  const promptId = PROFILE_PROMPT_MAPPING[normalizedName];
+  if (promptId) {
+    const prompt = await getActivePrompt(promptId, {
+      agent_name: profileName,
+      ...context,
+    });
+    if (prompt) {
+      cachedInstructions.set(normalizedName, prompt);
+      return prompt;
+    }
+  }
+
+  // Fallback to inline instructions
+  const profile = profiles[normalizedName];
+  return profile?.instructions ?? '';
+}
+
 /**
  * Create a RealtimeAgent from a profile.
  * @param profile - The agent profile configuration
@@ -364,6 +450,35 @@ export function createAgentFromProfile(profile: AgentProfile, sessionId: string)
   return new RealtimeAgent({
     name: profile.name,
     instructions: profile.instructions,
+    tools,
+  });
+}
+
+/**
+ * Create a RealtimeAgent from a profile with dynamic prompt loading.
+ *
+ * This async version loads prompts from the centralized prompts directory.
+ *
+ * @param profile - The agent profile configuration
+ * @param sessionId - The voice session ID for parent-child tracking
+ * @param context - Optional interpolation context for prompt variables
+ */
+export async function createAgentFromProfileAsync(
+  profile: AgentProfile,
+  sessionId: string,
+  context: InterpolationContext = {}
+): Promise<RealtimeAgent> {
+  const tools = getToolsForSession(profile.tools, sessionId);
+
+  // Get dynamic instructions (from prompts dir or fallback to inline)
+  const instructions = await getProfileInstructions(profile.name, {
+    session_id: sessionId,
+    ...context,
+  });
+
+  return new RealtimeAgent({
+    name: profile.name,
+    instructions,
     tools,
   });
 }

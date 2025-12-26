@@ -312,6 +312,10 @@ export function App() {
             isMaster={audioSession.isMaster}
             onRequestMaster={audioSession.requestMaster}
             agentState={voiceState}
+            serviceActive={audioSession.serviceActive}
+            audioMode={audioSession.audioMode}
+            onToggleService={audioSession.toggleService}
+            onSetAudioMode={audioSession.setAudioMode}
           />
         </div>
       </div>

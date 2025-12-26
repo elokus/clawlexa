@@ -334,6 +334,28 @@ export class VoiceAgent {
   }
 
   /**
+   * Hot-swap the audio transport.
+   * Used for switching between local (device) and web (browser) audio sources.
+   */
+  setTransport(transport: IAudioTransport): void {
+    // Stop and detach old transport
+    if (this.transport) {
+      this.transport.removeAllListeners();
+      this.transport.stop();
+    }
+
+    // Set and wire new transport
+    this.transport = transport;
+    this.setupTransport();
+
+    // If agent is active, start the new transport immediately
+    if (this.isActive()) {
+      console.log('[VoiceAgent] Hot-swapping transport while active, starting new transport');
+      this.transport.start();
+    }
+  }
+
+  /**
    * Get the current voice session ID.
    * Used by subagents to establish parent-child relationships.
    */

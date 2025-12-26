@@ -1,282 +1,228 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Thread Rail - 3D stacked cards with glowing SVG connector to center stage
-// Obsidian Glass / Minority Report aesthetic
+// Thread Rail - Mission Control Tree View
 //
-// NEW ARCHITECTURE (v2):
-// - Uses session tree path from backend (root → ... → focused)
-// - Root at TOP, deepest ancestor at BOTTOM (closest to focused session)
-// - Click to focus any session in the path
+// ARCHITECTURE:
+// - Root session is most prominent (largest)
+// - Children cascade with diminishing size
+// - Visual connection lines show parent-child relationships
+// - Click any card to focus that session
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   useUnifiedSessionsStore,
-  useSessionPath,
-  useFocusedSessionChildren,
+  useFlattenedSessionTree,
 } from '../../stores';
 import type { SessionTreeNode } from '../../types';
 
 // API base URL
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-// Icons for session types
+// Icons for session types - using simpler, cleaner icons
 const SESSION_ICONS: Record<string, string> = {
-  orchestrator: '◇', // Diamond for orchestrators (CLI, web search, etc.)
-  terminal: '▣', // Square for terminal sessions
+  orchestrator: '◆',
+  terminal: '▣',
 };
 
-// Agent-specific icons (override generic orchestrator icon)
+// Agent-specific icons
 const AGENT_ICONS: Record<string, string> = {
-  cli: '⌘', // Command key for CLI agent
-  web_search: '◎', // Target for search
-  deep_thinking: '◈', // Diamond with dot for thinking
+  cli: '⌘',
+  web_search: '⊕',
+  deep_thinking: '◈',
 };
 
 // Session type display names
 const SESSION_TYPE_LABELS: Record<string, string> = {
-  orchestrator: 'agent',
-  terminal: 'terminal',
+  orchestrator: 'AGENT',
+  terminal: 'TERMINAL',
 };
 
-function ThreadCard({
-  session,
+// Depth-based styling configuration
+const DEPTH_CONFIG = {
+  0: { width: '100%', iconSize: 36, titleSize: 14, labelSize: 10, padding: 14, opacity: 1 },
+  1: { width: '94%', iconSize: 30, titleSize: 13, labelSize: 9, padding: 12, opacity: 0.95 },
+  2: { width: '88%', iconSize: 26, titleSize: 12, labelSize: 9, padding: 10, opacity: 0.9 },
+  3: { width: '82%', iconSize: 24, titleSize: 11, labelSize: 8, padding: 10, opacity: 0.85 },
+} as const;
+
+function getDepthConfig(depth: number) {
+  const maxDepth = 3;
+  const d = Math.min(depth, maxDepth) as keyof typeof DEPTH_CONFIG;
+  return DEPTH_CONFIG[d];
+}
+
+function TreeCard({
+  node,
+  depth,
   index,
   isFocused,
+  isLast,
   onClick,
 }: {
-  session: SessionTreeNode;
+  node: SessionTreeNode;
+  depth: number;
   index: number;
   isFocused: boolean;
+  isLast: boolean;
   onClick: () => void;
 }) {
+  const config = getDepthConfig(depth);
+
   // Get icon - prefer agent-specific, fallback to type-based
-  const icon = session.agent_name
-    ? AGENT_ICONS[session.agent_name] || SESSION_ICONS[session.type]
-    : SESSION_ICONS[session.type] || '◆';
+  const icon = node.agent_name
+    ? AGENT_ICONS[node.agent_name] || SESSION_ICONS[node.type]
+    : SESSION_ICONS[node.type] || '◆';
 
   // Get display label
-  const typeLabel = session.agent_name || SESSION_TYPE_LABELS[session.type] || session.type;
+  const typeLabel = node.agent_name?.toUpperCase() || SESSION_TYPE_LABELS[node.type] || node.type.toUpperCase();
 
   // Truncate goal for display
-  const displayTitle = session.goal.length > 30
-    ? session.goal.substring(0, 30) + '...'
-    : session.goal;
-
-  // Depth effects - use opacity/scale only, no translateZ (causes click issues)
-  const cappedIndex = Math.min(index, 5);
-  const depthOpacity = Math.max(0.4, 1 - cappedIndex * 0.1);
-  const depthScale = Math.max(0.9, 1 - cappedIndex * 0.02);
+  const maxLen = 32 - depth * 4;
+  const displayTitle = node.goal.length > maxLen
+    ? node.goal.substring(0, maxLen) + '…'
+    : node.goal;
 
   return (
-    <motion.button
-      className={`thread-card ${isFocused ? 'is-active' : ''}`}
-      data-type={session.type}
-      onClick={onClick}
-      initial={{ opacity: 0, x: 20 }}
-      animate={{
-        opacity: depthOpacity,
-        x: 0,
-        scale: depthScale,
-      }}
-      exit={{ opacity: 0, x: 20, scale: 0.95 }}
-      transition={{
-        duration: 0.3,
-        delay: index * 0.04,
-        ease: [0.4, 0, 0.2, 1],
-      }}
-      whileHover={{
-        x: -4,
-        scale: 1,
-        opacity: 1,
-        transition: { duration: 0.15 },
+    <div
+      className="tree-node-wrapper"
+      style={{
+        paddingLeft: depth > 0 ? 20 : 0,
+        opacity: config.opacity,
       }}
     >
-      <div className="thread-card-inner">
-        <div className="thread-icon">{icon}</div>
-        <div className="thread-info">
-          <div className="thread-title">{displayTitle}</div>
-          <div className="thread-type">{typeLabel}</div>
+      {/* Connection line for nested items */}
+      {depth > 0 && (
+        <div className="tree-connector">
+          <div className="tree-line-vertical" style={{ height: isLast ? '24px' : '100%' }} />
+          <div className="tree-line-horizontal" />
         </div>
-        <span className="thread-arrow">←</span>
-      </div>
+      )}
 
-      {/* Active card glow indicator */}
-      {isFocused && <div className="thread-card-glow" />}
-    </motion.button>
+      <motion.button
+        className={`thread-card ${isFocused ? 'is-active' : ''}`}
+        data-type={node.type}
+        data-depth={depth}
+        onClick={onClick}
+        style={{
+          width: config.width,
+          '--icon-size': `${config.iconSize}px`,
+          '--title-size': `${config.titleSize}px`,
+          '--label-size': `${config.labelSize}px`,
+          '--card-padding': `${config.padding}px`,
+        } as React.CSSProperties}
+        initial={{ opacity: 0, x: 16 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 16, scale: 0.98 }}
+        transition={{
+          duration: 0.25,
+          delay: index * 0.05,
+          ease: [0.25, 0.1, 0.25, 1],
+        }}
+        whileHover={{ x: -3 }}
+        whileTap={{ scale: 0.98 }}
+      >
+        <div className="thread-card-inner">
+          <div className="thread-icon">{icon}</div>
+          <div className="thread-info">
+            <div className="thread-title">{displayTitle}</div>
+            <div className="thread-meta">
+              <span className="thread-type">{typeLabel}</span>
+              {isFocused && <span className="thread-status">ACTIVE</span>}
+            </div>
+          </div>
+          <div className="thread-indicator">
+            {isFocused ? (
+              <span className="thread-status-dot" />
+            ) : (
+              <span className="thread-chevron">‹</span>
+            )}
+          </div>
+        </div>
+      </motion.button>
+    </div>
   );
 }
 
-// Virtual Voice Session card - shown when voice is active and there are child sessions
+// Voice Session card - Root of the tree, most prominent
 function VoiceCard({
   profile,
   index,
   isFocused,
+  hasChildren,
   onClick,
 }: {
   profile: string | null;
   index: number;
   isFocused: boolean;
+  hasChildren: boolean;
   onClick: () => void;
 }) {
   const displayName = profile || 'Voice';
-  const cappedIndex = Math.min(index, 5);
-  const depthOpacity = Math.max(0.4, 1 - cappedIndex * 0.1);
-  const depthScale = Math.max(0.9, 1 - cappedIndex * 0.02);
+  const config = getDepthConfig(0);
 
   return (
-    <motion.button
-      className={`thread-card ${isFocused ? 'is-active' : ''}`}
-      data-type="voice"
-      onClick={onClick}
-      initial={{ opacity: 0, x: 20 }}
-      animate={{
-        opacity: depthOpacity,
-        x: 0,
-        scale: depthScale,
-      }}
-      exit={{ opacity: 0, x: 20, scale: 0.95 }}
-      transition={{
-        duration: 0.3,
-        delay: index * 0.04,
-        ease: [0.4, 0, 0.2, 1],
-      }}
-      whileHover={{
-        x: -4,
-        scale: 1,
-        opacity: 1,
-        transition: { duration: 0.15 },
-      }}
-    >
-      <div className="thread-card-inner">
-        <div className="thread-icon voice-icon">◎</div>
-        <div className="thread-info">
-          <div className="thread-title">{displayName}</div>
-          <div className="thread-type">voice session</div>
+    <div className="tree-node-wrapper tree-root">
+      <motion.button
+        className={`thread-card thread-card-root ${isFocused ? 'is-active' : ''}`}
+        data-type="voice"
+        onClick={onClick}
+        style={{
+          '--icon-size': `${config.iconSize}px`,
+          '--title-size': `${config.titleSize}px`,
+          '--label-size': `${config.labelSize}px`,
+          '--card-padding': `${config.padding}px`,
+        } as React.CSSProperties}
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -10 }}
+        transition={{
+          duration: 0.3,
+          delay: index * 0.05,
+          ease: [0.25, 0.1, 0.25, 1],
+        }}
+        whileHover={{ scale: 1.01 }}
+        whileTap={{ scale: 0.99 }}
+      >
+        <div className="thread-card-inner">
+          <div className="thread-icon voice-icon">◉</div>
+          <div className="thread-info">
+            <div className="thread-title">{displayName}</div>
+            <div className="thread-meta">
+              <span className="thread-type">VOICE SESSION</span>
+              {isFocused && <span className="thread-status">ACTIVE</span>}
+            </div>
+          </div>
+          <div className="thread-indicator">
+            {isFocused ? (
+              <span className="thread-status-dot" />
+            ) : (
+              <span className="thread-chevron">‹</span>
+            )}
+          </div>
         </div>
-        {isFocused ? (
-          <span className="thread-status-dot" />
-        ) : (
-          <span className="thread-arrow">←</span>
-        )}
-      </div>
-      {isFocused && <div className="thread-card-glow" />}
-    </motion.button>
-  );
-}
+      </motion.button>
 
-// Child session card - shown below focused session to indicate drill-down targets
-function ChildCard({
-  session,
-  index,
-  onClick,
-}: {
-  session: SessionTreeNode;
-  index: number;
-  onClick: () => void;
-}) {
-  // Get icon - prefer agent-specific, fallback to type-based
-  const icon = session.agent_name
-    ? AGENT_ICONS[session.agent_name] || SESSION_ICONS[session.type]
-    : SESSION_ICONS[session.type] || '◆';
-
-  // Get display label
-  const typeLabel = session.agent_name || SESSION_TYPE_LABELS[session.type] || session.type;
-
-  // Truncate goal for display
-  const displayTitle = session.goal.length > 25
-    ? session.goal.substring(0, 25) + '...'
-    : session.goal;
-
-  // Staggered animation delay
-  const staggerDelay = index * 0.05;
-
-  return (
-    <motion.button
-      className="thread-card child-card"
-      data-type={session.type}
-      onClick={onClick}
-      initial={{ opacity: 0, x: 30, scale: 0.95 }}
-      animate={{
-        opacity: 0.85,
-        x: 0,
-        scale: 0.97,
-      }}
-      exit={{ opacity: 0, x: 30, scale: 0.9 }}
-      transition={{
-        duration: 0.25,
-        delay: staggerDelay,
-        ease: [0.4, 0, 0.2, 1],
-      }}
-      whileHover={{
-        x: -4,
-        scale: 1,
-        opacity: 1,
-        transition: { duration: 0.15 },
-      }}
-    >
-      <div className="thread-card-inner child-inner">
-        <div className="child-indent">↳</div>
-        <div className="thread-icon">{icon}</div>
-        <div className="thread-info">
-          <div className="thread-title">{displayTitle}</div>
-          <div className="thread-type">{typeLabel}</div>
-        </div>
-        <span className="thread-arrow">←</span>
-      </div>
-    </motion.button>
-  );
-}
-
-// SVG Connector from active thread card to center stage
-function StageConnector({ hasItems }: { hasItems: boolean }) {
-  if (!hasItems) return null;
-
-  return (
-    <svg className="connector-svg" viewBox="0 0 40 200" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="connector-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="var(--color-cyan)" stopOpacity="0.6" />
-          <stop offset="50%" stopColor="var(--color-cyan)" stopOpacity="0.9" />
-          <stop offset="100%" stopColor="var(--color-cyan)" stopOpacity="0.4" />
-        </linearGradient>
-        <filter id="connector-glow">
-          <feGaussianBlur stdDeviation="2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-
-      {/* Main connector path - bezier curve from rail to stage */}
-      <path
-        className="connector-path connector-path-active"
-        d="M 38,60 C 20,60 10,100 2,100"
-        filter="url(#connector-glow)"
-      />
-
-      {/* Data flow particles */}
-      <circle className="connector-particle" r="2" fill="var(--color-cyan)">
-        <animateMotion dur="1.5s" repeatCount="indefinite" path="M 38,60 C 20,60 10,100 2,100" />
-      </circle>
-    </svg>
+      {/* Trunk line connecting to children */}
+      {hasChildren && (
+        <div className="tree-trunk" />
+      )}
+    </div>
   );
 }
 
 export function ThreadRail() {
   const [isClearing, setIsClearing] = useState(false);
 
-  // Use new tree-based path instead of legacy threadRail
-  const rawSessionPath = useSessionPath();
-  const focusedChildren = useFocusedSessionChildren();
+  // Get flattened tree (memoized in the hook to avoid infinite loops)
+  const flattenedTree = useFlattenedSessionTree();
+
   // Use unified store for all state
   const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
   const sessionTree = useUnifiedSessionsStore((s) => s.sessionTree);
   const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
   const voiceActive = useUnifiedSessionsStore((s) => s.voiceActive);
   const profile = useUnifiedSessionsStore((s) => s.voiceProfile);
-  const subagentActive = useUnifiedSessionsStore((s) => s.subagentActive);
 
   // Clear all agent sessions from database
   const handleClearSessions = async () => {
@@ -300,29 +246,29 @@ export function ThreadRail() {
   // Get voice session ID from tree root (if it's a voice session)
   const voiceSessionId = sessionTree?.type === 'voice' ? sessionTree.id : null;
 
-  // Show voice card when voice is active AND there's either a session tree or subagent work
-  const showVoiceRoot = voiceActive && (rawSessionPath.length > 0 || subagentActive);
+  // Filter out voice sessions when showing separate VoiceCard
+  const showVoiceCard = voiceActive && flattenedTree.length > 0;
+  const displayTree = showVoiceCard
+    ? flattenedTree.filter((item) => item.node.type !== 'voice')
+    : flattenedTree;
 
-  // Filter out voice sessions from sessionPath when VoiceCard is shown
-  // (VoiceCard already represents the voice session with nicer styling)
-  const sessionPath = showVoiceRoot
-    ? rawSessionPath.filter((s) => s.type !== 'voice')
-    : rawSessionPath;
+  // Adjust depths when voice card is shown (since voice is removed from tree)
+  const adjustedTree = showVoiceCard
+    ? displayTree.map((item) => ({ ...item, depth: Math.max(0, item.depth - 1) }))
+    : displayTree;
 
   // Voice is "focused" when the voice session is focused OR no session is focused
   const isVoiceFocused = focusedSessionId === null || focusedSessionId === voiceSessionId;
 
-  // Total items including virtual voice card and children
-  const totalItems = (showVoiceRoot ? 1 : 0) + sessionPath.length + focusedChildren.length;
+  // Total items including virtual voice card
+  const totalItems = (showVoiceCard ? 1 : 0) + adjustedTree.length;
 
-  const handleCardClick = (session: SessionTreeNode) => {
-    console.log('[ThreadRail] Card clicked:', session.id, session.type, session.goal);
-    // Focus the clicked session (no popping!)
-    focusSession(session.id);
+  const handleCardClick = (node: SessionTreeNode) => {
+    console.log('[ThreadRail] Card clicked:', node.id, node.type, node.goal);
+    focusSession(node.id);
   };
 
   const handleVoiceClick = () => {
-    // Focus on the actual voice session if it exists in the tree
     if (voiceSessionId) {
       console.log('[ThreadRail] Voice card clicked - focusing voice session:', voiceSessionId);
       focusSession(voiceSessionId);
@@ -334,62 +280,82 @@ export function ThreadRail() {
   return (
     <div className="thread-rail">
       <style>{`
+        /* ═══════════════════════════════════════════════════════════════════
+           THREAD RAIL - Mission Control Tree View
+           ═══════════════════════════════════════════════════════════════════ */
+
         .thread-rail {
           display: flex;
           flex-direction: column;
           height: 100%;
-          padding: 16px 12px;
+          padding: 16px;
           overflow: hidden;
           position: relative;
         }
 
+        /* ═══════════════════════════════════════════════════════════════════
+           HEADER - Fixed visibility issues
+           ═══════════════════════════════════════════════════════════════════ */
+
         .thread-header {
           display: flex;
           align-items: center;
-          gap: 8px;
+          justify-content: space-between;
+          gap: 12px;
           margin-bottom: 20px;
-          padding: 0 4px;
+          padding: 0 2px;
+          flex-shrink: 0;
+        }
+
+        .thread-header-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
         }
 
         .thread-label {
           font-family: var(--font-display);
-          font-size: 10px;
-          letter-spacing: 0.2em;
-          color: var(--color-text-ghost);
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.15em;
+          color: var(--color-text-dim);
           text-transform: uppercase;
         }
 
         .thread-count {
           font-family: var(--font-mono);
           font-size: 10px;
+          font-weight: 600;
           color: var(--color-cyan);
-          padding: 2px 8px;
-          background: rgba(56, 189, 248, 0.08);
-          border: 1px solid rgba(56, 189, 248, 0.15);
+          padding: 3px 8px;
+          background: rgba(56, 189, 248, 0.1);
+          border: 1px solid rgba(56, 189, 248, 0.2);
           border-radius: 4px;
+          min-width: 24px;
+          text-align: center;
         }
 
         .thread-clear-btn {
-          margin-left: auto;
-          width: 24px;
-          height: 24px;
+          width: 26px;
+          height: 26px;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: rgba(244, 63, 94, 0.08);
-          border: 1px solid rgba(244, 63, 94, 0.2);
+          background: rgba(244, 63, 94, 0.06);
+          border: 1px solid rgba(244, 63, 94, 0.15);
           border-radius: 6px;
           color: var(--color-rose);
-          font-size: 12px;
+          font-size: 11px;
           cursor: pointer;
-          opacity: 0.6;
+          opacity: 0.7;
           transition: all 0.2s ease;
         }
 
         .thread-clear-btn:hover:not(:disabled) {
           opacity: 1;
-          background: rgba(244, 63, 94, 0.15);
-          border-color: rgba(244, 63, 94, 0.4);
+          background: rgba(244, 63, 94, 0.12);
+          border-color: rgba(244, 63, 94, 0.35);
+          transform: scale(1.05);
         }
 
         .thread-clear-btn:disabled {
@@ -397,128 +363,262 @@ export function ThreadRail() {
           cursor: not-allowed;
         }
 
-        .thread-stack-container {
-          position: relative;
+        /* ═══════════════════════════════════════════════════════════════════
+           TREE CONTAINER
+           ═══════════════════════════════════════════════════════════════════ */
+
+        .thread-tree-container {
           flex: 1;
-          overflow: visible;
+          overflow-y: auto;
+          overflow-x: hidden;
+          padding-right: 4px;
         }
 
-        .thread-stack {
+        .thread-tree {
           display: flex;
           flex-direction: column;
-          gap: 10px;
+          gap: 2px;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
-           THREAD CARD - 3D Glass Card
+           TREE NODE WRAPPER - Handles indentation and connectors
+           ═══════════════════════════════════════════════════════════════════ */
+
+        .tree-node-wrapper {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .tree-root {
+          margin-bottom: 4px;
+        }
+
+        /* Trunk line from voice root to children */
+        .tree-trunk {
+          position: absolute;
+          left: 26px;
+          top: 100%;
+          width: 2px;
+          height: 12px;
+          background: linear-gradient(
+            to bottom,
+            rgba(52, 211, 153, 0.4) 0%,
+            rgba(52, 211, 153, 0.15) 100%
+          );
+          border-radius: 1px;
+        }
+
+        /* Connection lines for nested items */
+        .tree-connector {
+          position: absolute;
+          left: 6px;
+          top: 0;
+          bottom: 0;
+          width: 20px;
+          pointer-events: none;
+        }
+
+        .tree-line-vertical {
+          position: absolute;
+          left: 0;
+          top: -8px;
+          width: 2px;
+          background: linear-gradient(
+            to bottom,
+            rgba(56, 189, 248, 0.25) 0%,
+            rgba(56, 189, 248, 0.1) 100%
+          );
+          border-radius: 1px;
+        }
+
+        .tree-line-horizontal {
+          position: absolute;
+          left: 0;
+          top: 24px;
+          width: 14px;
+          height: 2px;
+          background: rgba(56, 189, 248, 0.2);
+          border-radius: 1px;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
+           THREAD CARD - Depth-aware sizing
            ═══════════════════════════════════════════════════════════════════ */
 
         .thread-card {
           position: relative;
-          width: 100%;
           padding: 0;
           background: transparent;
           border: none;
           cursor: pointer;
           text-align: left;
-          /* Use flat transform-style for reliable click handling */
-          transform-style: flat;
-          /* Ensure clicks register despite 3D parent context */
-          pointer-events: auto;
-          z-index: 1;
+          margin-left: auto;
+        }
+
+        .thread-card-root {
+          width: 100%;
         }
 
         .thread-card-inner {
           display: flex;
           align-items: center;
-          gap: 10px;
-          padding: 14px 16px;
+          gap: 12px;
+          padding: var(--card-padding, 14px);
           background: linear-gradient(
-            135deg,
-            rgba(10, 10, 15, 0.85) 0%,
-            rgba(8, 8, 12, 0.9) 100%
+            145deg,
+            rgba(12, 12, 18, 0.9) 0%,
+            rgba(8, 8, 14, 0.95) 100%
           );
-          backdrop-filter: blur(12px);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 12px;
-          transition: all 0.25s var(--ease-out);
+          backdrop-filter: blur(16px);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 10px;
+          transition: all 0.2s ease;
         }
 
         .thread-card:hover .thread-card-inner {
-          border-color: rgba(56, 189, 248, 0.25);
+          border-color: rgba(56, 189, 248, 0.2);
           background: linear-gradient(
-            135deg,
-            rgba(12, 12, 18, 0.9) 0%,
-            rgba(10, 10, 15, 0.95) 100%
+            145deg,
+            rgba(14, 14, 22, 0.95) 0%,
+            rgba(10, 10, 16, 0.98) 100%
           );
         }
 
         .thread-card.is-active .thread-card-inner {
           border-color: rgba(56, 189, 248, 0.35);
           box-shadow:
-            0 0 20px rgba(56, 189, 248, 0.1),
-            0 4px 16px rgba(0, 0, 0, 0.3);
+            0 0 0 1px rgba(56, 189, 248, 0.1) inset,
+            0 4px 20px rgba(0, 0, 0, 0.3),
+            0 0 30px rgba(56, 189, 248, 0.08);
         }
 
-        /* Active card glow */
-        .thread-card-glow {
-          position: absolute;
-          inset: -2px;
-          background: radial-gradient(
-            ellipse at right center,
-            rgba(56, 189, 248, 0.15) 0%,
-            transparent 60%
+        /* Root card special styling */
+        .thread-card-root .thread-card-inner {
+          border-color: rgba(52, 211, 153, 0.15);
+          background: linear-gradient(
+            145deg,
+            rgba(10, 18, 14, 0.9) 0%,
+            rgba(8, 12, 10, 0.95) 100%
           );
-          border-radius: 14px;
-          pointer-events: none;
-          z-index: -1;
         }
+
+        .thread-card-root:hover .thread-card-inner {
+          border-color: rgba(52, 211, 153, 0.3);
+        }
+
+        .thread-card-root.is-active .thread-card-inner {
+          border-color: rgba(52, 211, 153, 0.4);
+          box-shadow:
+            0 0 0 1px rgba(52, 211, 153, 0.1) inset,
+            0 4px 20px rgba(0, 0, 0, 0.3),
+            0 0 30px rgba(52, 211, 153, 0.1);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
+           ICON - Type-specific colors
+           ═══════════════════════════════════════════════════════════════════ */
 
         .thread-icon {
-          width: 32px;
-          height: 32px;
+          width: var(--icon-size, 32px);
+          height: var(--icon-size, 32px);
           display: flex;
           align-items: center;
           justify-content: center;
-          background: rgba(52, 211, 153, 0.08);
-          border: 1px solid rgba(52, 211, 153, 0.15);
+          background: rgba(139, 92, 246, 0.1);
+          border: 1px solid rgba(139, 92, 246, 0.2);
           border-radius: 8px;
           font-family: var(--font-mono);
-          font-size: 14px;
-          color: var(--color-emerald);
+          font-size: calc(var(--icon-size, 32px) * 0.45);
+          color: var(--color-violet);
           flex-shrink: 0;
           transition: all 0.2s ease;
         }
 
+        .voice-icon {
+          background: rgba(52, 211, 153, 0.12) !important;
+          border-color: rgba(52, 211, 153, 0.25) !important;
+          color: var(--color-emerald) !important;
+        }
+
         .thread-card[data-type="terminal"] .thread-icon {
-          background: rgba(56, 189, 248, 0.08);
-          border-color: rgba(56, 189, 248, 0.15);
+          background: rgba(56, 189, 248, 0.1);
+          border-color: rgba(56, 189, 248, 0.2);
           color: var(--color-cyan);
         }
 
         .thread-card[data-type="orchestrator"] .thread-icon {
-          background: rgba(139, 92, 246, 0.08);
-          border-color: rgba(139, 92, 246, 0.15);
+          background: rgba(139, 92, 246, 0.1);
+          border-color: rgba(139, 92, 246, 0.2);
           color: var(--color-violet);
         }
 
-        /* Voice session card styling */
-        .thread-card[data-type="voice"] .thread-icon {
-          background: rgba(52, 211, 153, 0.12);
-          border-color: rgba(52, 211, 153, 0.25);
+        .thread-card.is-active .thread-icon {
+          box-shadow: 0 0 16px currentColor;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
+           INFO SECTION
+           ═══════════════════════════════════════════════════════════════════ */
+
+        .thread-info {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .thread-title {
+          font-family: var(--font-ui);
+          font-size: var(--title-size, 13px);
+          font-weight: 500;
+          color: var(--color-text-normal);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          line-height: 1.2;
+        }
+
+        .thread-card.is-active .thread-title {
+          color: var(--color-text-bright);
+        }
+
+        .thread-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .thread-type {
+          font-family: var(--font-mono);
+          font-size: var(--label-size, 9px);
+          font-weight: 500;
+          color: var(--color-text-dim);
+          letter-spacing: 0.08em;
+        }
+
+        .thread-status {
+          font-family: var(--font-mono);
+          font-size: 8px;
+          font-weight: 600;
           color: var(--color-emerald);
+          letter-spacing: 0.1em;
+          padding: 2px 6px;
+          background: rgba(52, 211, 153, 0.1);
+          border-radius: 3px;
         }
 
-        .thread-card[data-type="voice"] .thread-card-inner {
-          border-color: rgba(52, 211, 153, 0.25);
-        }
+        /* ═══════════════════════════════════════════════════════════════════
+           INDICATOR (right side)
+           ═══════════════════════════════════════════════════════════════════ */
 
-        .thread-card[data-type="voice"] .thread-card-glow {
-          background: radial-gradient(
-            ellipse at right center,
-            rgba(52, 211, 153, 0.15) 0%,
-            transparent 60%
-          );
+        .thread-indicator {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 20px;
+          flex-shrink: 0;
         }
 
         .thread-status-dot {
@@ -526,140 +626,35 @@ export function ThreadRail() {
           height: 8px;
           border-radius: 50%;
           background: var(--color-emerald);
-          animation: status-pulse 1.5s ease-in-out infinite;
+          box-shadow: 0 0 8px var(--color-emerald);
+          animation: status-pulse 2s ease-in-out infinite;
         }
 
         @keyframes status-pulse {
-          0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--color-emerald); }
-          50% { opacity: 0.5; box-shadow: 0 0 4px var(--color-emerald); }
+          0%, 100% {
+            opacity: 1;
+            box-shadow: 0 0 8px var(--color-emerald);
+            transform: scale(1);
+          }
+          50% {
+            opacity: 0.6;
+            box-shadow: 0 0 12px var(--color-emerald);
+            transform: scale(1.1);
+          }
         }
 
-        .thread-card.is-active .thread-icon {
-          box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           CHILD CARDS - Drill-down targets below focused session
-           ═══════════════════════════════════════════════════════════════════ */
-
-        .children-divider {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 16px 4px;
-          margin-top: 4px;
-        }
-
-        .children-label {
-          font-family: var(--font-mono);
-          font-size: 9px;
-          letter-spacing: 0.15em;
-          text-transform: uppercase;
+        .thread-chevron {
+          font-size: 16px;
+          font-weight: 300;
           color: var(--color-text-ghost);
+          transition: all 0.2s ease;
           opacity: 0.6;
         }
 
-        .thread-card.child-card {
-          margin-left: 12px;
-        }
-
-        .thread-card.child-card .thread-card-inner {
-          padding: 10px 14px;
-          background: linear-gradient(
-            135deg,
-            rgba(8, 8, 12, 0.75) 0%,
-            rgba(6, 6, 10, 0.8) 100%
-          );
-          border-color: rgba(56, 189, 248, 0.12);
-        }
-
-        .thread-card.child-card:hover .thread-card-inner {
-          border-color: rgba(56, 189, 248, 0.3);
-        }
-
-        .child-inner {
-          gap: 8px;
-        }
-
-        .child-indent {
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-ghost);
-          opacity: 0.4;
-        }
-
-        .thread-card.child-card .thread-icon {
-          width: 28px;
-          height: 28px;
-          font-size: 12px;
-        }
-
-        .thread-card.child-card .thread-title {
-          font-size: 12px;
-        }
-
-        .thread-card.child-card .thread-type {
-          font-size: 8px;
-        }
-
-        .thread-info {
-          flex: 1;
-          min-width: 0;
-        }
-
-        .thread-title {
-          font-family: var(--font-ui);
-          font-size: 13px;
-          font-weight: 500;
-          color: var(--color-text-normal);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .thread-card.is-active .thread-title {
-          color: var(--color-text-bright);
-        }
-
-        .thread-type {
-          font-family: var(--font-mono);
-          font-size: 9px;
-          color: var(--color-text-ghost);
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          margin-top: 3px;
-        }
-
-        .thread-arrow {
-          font-size: 14px;
-          color: var(--color-text-ghost);
-          transition: all 0.2s ease;
-          opacity: 0.5;
-        }
-
-        .thread-card:hover .thread-arrow {
-          transform: translateX(-4px);
+        .thread-card:hover .thread-chevron {
+          transform: translateX(-3px);
           color: var(--color-cyan);
           opacity: 1;
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           SVG CONNECTOR
-           ═══════════════════════════════════════════════════════════════════ */
-
-        .connector-svg {
-          position: absolute;
-          top: 20px;
-          left: -32px;
-          width: 40px;
-          height: 120px;
-          pointer-events: none;
-          z-index: 10;
-          overflow: visible;
-        }
-
-        .connector-particle {
-          opacity: 0.8;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
@@ -673,22 +668,37 @@ export function ThreadRail() {
           justify-content: center;
           flex: 1;
           text-align: center;
-          padding: 24px 16px;
+          padding: 32px 20px;
         }
 
         .thread-empty-icon {
-          font-size: 28px;
+          width: 48px;
+          height: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 20px;
           color: var(--color-text-ghost);
-          opacity: 0.25;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px dashed rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
           margin-bottom: 16px;
+          opacity: 0.5;
+        }
+
+        .thread-empty-title {
+          font-family: var(--font-ui);
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--color-text-dim);
+          margin-bottom: 8px;
         }
 
         .thread-empty-text {
           font-family: var(--font-mono);
           font-size: 11px;
           color: var(--color-text-ghost);
-          line-height: 1.8;
-          opacity: 0.7;
+          line-height: 1.6;
         }
 
         /* ═══════════════════════════════════════════════════════════════════
@@ -697,99 +707,98 @@ export function ThreadRail() {
 
         @media (max-width: 1024px) {
           .thread-rail {
-            padding: 12px 8px;
+            padding: 12px;
           }
 
           .thread-header {
-            display: none;
+            margin-bottom: 16px;
+          }
+
+          .thread-label {
+            font-size: 10px;
           }
 
           .thread-card-inner {
-            padding: 10px;
-            justify-content: center;
+            padding: 10px !important;
           }
 
-          .thread-info,
-          .thread-arrow {
+          .thread-info {
             display: none;
           }
 
           .thread-icon {
-            width: 36px;
-            height: 36px;
+            width: 32px !important;
+            height: 32px !important;
           }
 
-          .connector-svg {
+          .thread-chevron {
             display: none;
           }
         }
       `}</style>
 
+      {/* Header with proper layout */}
       <div className="thread-header">
-        <span className="thread-label">Thread</span>
-        {totalItems > 0 && (
-          <span className="thread-count">{totalItems}</span>
-        )}
+        <div className="thread-header-left">
+          <span className="thread-label">Thread</span>
+          {totalItems > 0 && (
+            <span className="thread-count">{totalItems}</span>
+          )}
+        </div>
         <button
           className="thread-clear-btn"
           onClick={handleClearSessions}
           disabled={isClearing}
-          title="Clear all session logs"
+          title="Clear all sessions"
         >
-          {isClearing ? '...' : '✕'}
+          {isClearing ? '…' : '×'}
         </button>
       </div>
 
       {totalItems === 0 ? (
         <div className="thread-empty">
           <div className="thread-empty-icon">◇</div>
+          <div className="thread-empty-title">No Active Sessions</div>
           <div className="thread-empty-text">
-            No active sessions.<br />
-            Start a task to see<br />
-            the session tree here.
+            Start a voice conversation<br />
+            to see the session tree
           </div>
         </div>
       ) : (
-        <div className="thread-stack-container">
-          {/* SVG Connector to center stage */}
-          <StageConnector hasItems={totalItems > 0} />
-
-          <div className="thread-stack">
-            <AnimatePresence>
-              {/* Virtual Voice Session card at root when voice is active */}
-              {showVoiceRoot && (
+        <div className="thread-tree-container">
+          <div className="thread-tree">
+            <AnimatePresence mode="popLayout">
+              {/* Voice Session card at root - most prominent */}
+              {showVoiceCard && (
                 <VoiceCard
                   key="voice-root"
                   profile={profile}
                   index={0}
                   isFocused={isVoiceFocused}
+                  hasChildren={adjustedTree.length > 0}
                   onClick={handleVoiceClick}
                 />
               )}
-              {/* Session tree path - offset index if voice card is shown */}
-              {sessionPath.map((session, index) => (
-                <ThreadCard
-                  key={session.id}
-                  session={session}
-                  index={showVoiceRoot ? index + 1 : index}
-                  isFocused={session.id === focusedSessionId}
-                  onClick={() => handleCardClick(session)}
-                />
-              ))}
-              {/* Children of focused session - clickable to drill down */}
-              {focusedChildren.length > 0 && (
-                <div className="children-divider">
-                  <span className="children-label">children</span>
-                </div>
-              )}
-              {focusedChildren.map((child, index) => (
-                <ChildCard
-                  key={child.id}
-                  session={child}
-                  index={index}
-                  onClick={() => handleCardClick(child)}
-                />
-              ))}
+
+              {/* Flattened session tree with proper hierarchy */}
+              {adjustedTree.map((item, index) => {
+                // Check if this is the last item at its depth level
+                const isLast = !adjustedTree.slice(index + 1).some(
+                  (next) => next.depth <= item.depth
+                );
+
+                return (
+                  <TreeCard
+                    key={item.node.id}
+                    node={item.node}
+                    depth={item.depth + (showVoiceCard ? 1 : 0)}
+                    index={showVoiceCard ? index + 1 : index}
+                    isFocused={item.node.id === focusedSessionId}
+                    isLast={isLast}
+                    onClick={() => handleCardClick(item.node)}
+                  />
+                );
+              })}
             </AnimatePresence>
           </div>
         </div>

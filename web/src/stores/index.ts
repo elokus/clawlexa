@@ -28,12 +28,16 @@ export {
   useFocusedSession,
   useFocusPath,
   useFocusedSessionChildren,
+  useFlattenedSessionTree,
   useSessionActivities,
   useAllActivities,
   useHasActiveSession,
   useVoiceTimeline,
   useConnectionState,
   useVoiceState,
+  useServiceState,
+  useActiveView,
+  usePromptsState,
 
   // Legacy compatibility selectors (for migration)
   useSessionPath,        // Alias for useFocusPath
@@ -60,6 +64,7 @@ export {
   type TranscriptItem,
   type ToolItem,
   type SessionTreeNode,
+  type FlattenedTreeNode,
   type OverlayType,
 } from './unified-sessions';
 

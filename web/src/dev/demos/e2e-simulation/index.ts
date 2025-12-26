@@ -11,6 +11,7 @@ import { E2ESimulationDemo } from './component';
 // Import captured scenario
 import marvinCLISession from '../captured/marvin-cli-session-headless.json';
 import marvine2einteractivecoding from '../captured/e2e-interactive-coding-session.json';
+import newsession from '../captured/new-interactive-coding-session.json';
 
 // Convert captured scenario format to StreamScenario
 function convertCapturedScenario(
@@ -49,5 +50,6 @@ registerDemo({
   scenarios: [
     convertCapturedScenario(marvinCLISession),
     convertCapturedScenario(marvine2einteractivecoding),
+    convertCapturedScenario(newsession),
   ],
 });

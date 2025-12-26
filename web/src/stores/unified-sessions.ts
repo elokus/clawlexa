@@ -10,6 +10,7 @@
 //
 // See: docs/SESSION_CENTRIC_REFACTOR_PLAN.md
 
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/shallow';
 import type {
@@ -25,6 +26,8 @@ import type {
   OverlayType,
 } from '../types';
 import type { TimelineItem, TranscriptItem, ToolItem } from '../types/timeline';
+import type { PromptInfo } from '../lib/prompts-api';
+import * as promptsApi from '../lib/prompts-api';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -99,6 +102,12 @@ interface UnifiedSessionsStore {
   wsError: string | null;
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Service State (Soft Power)
+  // ─────────────────────────────────────────────────────────────────────────
+  serviceActive: boolean;
+  audioMode: 'web' | 'local';
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Voice State (for ChatStage compatibility)
   // ─────────────────────────────────────────────────────────────────────────
   voiceState: AgentState;
@@ -139,11 +148,33 @@ interface UnifiedSessionsStore {
   activeOverlay: OverlayType;
 
   // ─────────────────────────────────────────────────────────────────────────
+  // View State (Prompts vs Sessions)
+  // ─────────────────────────────────────────────────────────────────────────
+  activeView: 'sessions' | 'prompts';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Prompts State
+  // ─────────────────────────────────────────────────────────────────────────
+  prompts: PromptInfo[];
+  selectedPromptId: string | null;
+  selectedVersion: string | null;
+  promptContent: string;
+  promptVersions: string[];
+  promptsLoading: boolean;
+  promptsError: string | null;
+  promptDirty: boolean;
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Connection Actions
   // ─────────────────────────────────────────────────────────────────────────
-  setClientIdentity: (clientId: string | null, isMaster: boolean) => void;
+  setClientIdentity: (clientId: string | null, isMaster: boolean, serviceActive?: boolean, audioMode?: 'web' | 'local') => void;
   setIsMaster: (isMaster: boolean) => void;
   setWsError: (error: string | null) => void;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Service State Actions
+  // ─────────────────────────────────────────────────────────────────────────
+  setServiceState: (active: boolean, mode: 'web' | 'local') => void;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Voice Actions
@@ -196,6 +227,17 @@ interface UnifiedSessionsStore {
   setActiveOverlay: (overlay: OverlayType) => void;
 
   // ─────────────────────────────────────────────────────────────────────────
+  // View & Prompts Actions
+  // ─────────────────────────────────────────────────────────────────────────
+  setActiveView: (view: 'sessions' | 'prompts') => void;
+  loadPrompts: () => Promise<void>;
+  selectPrompt: (id: string) => Promise<void>;
+  selectVersion: (version: string) => Promise<void>;
+  setPromptContent: (content: string) => void;
+  savePromptVersion: () => Promise<void>;
+  setPromptActiveVersion: (version: string) => Promise<void>;
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Reset
   // ─────────────────────────────────────────────────────────────────────────
   reset: () => void;
@@ -243,6 +285,22 @@ function getChildrenOfSession(tree: SessionTreeNode | null, targetId: string | n
   return session?.children ?? [];
 }
 
+/** Flattened tree node with depth info for consistent rail display */
+export interface FlattenedTreeNode {
+  node: SessionTreeNode;
+  depth: number;
+}
+
+/** Flatten tree into linear list with depth info (DFS pre-order) */
+function flattenTree(node: SessionTreeNode | null, depth = 0): FlattenedTreeNode[] {
+  if (!node) return [];
+  const result: FlattenedTreeNode[] = [{ node, depth }];
+  for (const child of node.children) {
+    result.push(...flattenTree(child, depth + 1));
+  }
+  return result;
+}
+
 /** Find deepest running session in tree */
 function findDeepestRunning(node: SessionTreeNode): SessionTreeNode | null {
   for (const child of node.children) {
@@ -276,6 +334,10 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   isMaster: false,
   wsError: null,
 
+  // Service state (soft power)
+  serviceActive: false,
+  audioMode: 'web',
+
   // Voice
   voiceState: 'idle',
   voiceProfile: null,
@@ -304,13 +366,37 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   // Overlay
   activeOverlay: null,
 
+  // View
+  activeView: 'sessions',
+
+  // Prompts
+  prompts: [],
+  selectedPromptId: null,
+  selectedVersion: null,
+  promptContent: '',
+  promptVersions: [],
+  promptsLoading: false,
+  promptsError: null,
+  promptDirty: false,
+
   // ─────────────────────────────────────────────────────────────────────────
   // Connection Actions
   // ─────────────────────────────────────────────────────────────────────────
 
-  setClientIdentity: (clientId, isMaster) => set({ clientId, isMaster }),
+  setClientIdentity: (clientId, isMaster, serviceActive, audioMode) =>
+    set({
+      clientId,
+      isMaster,
+      ...(serviceActive !== undefined && { serviceActive }),
+      ...(audioMode !== undefined && { audioMode }),
+    }),
   setIsMaster: (isMaster) => set({ isMaster }),
   setWsError: (wsError) => set({ wsError }),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Service State Actions
+  // ─────────────────────────────────────────────────────────────────────────
+  setServiceState: (serviceActive, audioMode) => set({ serviceActive, audioMode }),
 
   // ─────────────────────────────────────────────────────────────────────────
   // Voice Actions
@@ -843,6 +929,111 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
 
   // ─────────────────────────────────────────────────────────────────────────
+  // View & Prompts Actions
+  // ─────────────────────────────────────────────────────────────────────────
+
+  setActiveView: (view) => set({ activeView: view }),
+
+  loadPrompts: async () => {
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      const prompts = await promptsApi.fetchPrompts();
+      set({ prompts, promptsLoading: false });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to load prompts',
+        promptsLoading: false,
+      });
+    }
+  },
+
+  selectPrompt: async (id) => {
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      const data = await promptsApi.fetchPrompt(id);
+      set({
+        selectedPromptId: id,
+        selectedVersion: data.activeVersion,
+        promptContent: data.content ?? '',
+        promptVersions: data.versions,
+        promptDirty: false,
+        promptsLoading: false,
+      });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to load prompt',
+        promptsLoading: false,
+      });
+    }
+  },
+
+  selectVersion: async (version) => {
+    const { selectedPromptId } = get();
+    if (!selectedPromptId) return;
+
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      const data = await promptsApi.fetchVersion(selectedPromptId, version);
+      set({
+        selectedVersion: version,
+        promptContent: data.content,
+        promptDirty: false,
+        promptsLoading: false,
+      });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to load version',
+        promptsLoading: false,
+      });
+    }
+  },
+
+  setPromptContent: (content) => set({ promptContent: content, promptDirty: true }),
+
+  savePromptVersion: async () => {
+    const { selectedPromptId, promptContent } = get();
+    if (!selectedPromptId) return;
+
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      const result = await promptsApi.saveNewVersion(selectedPromptId, promptContent);
+      // Reload prompt to get updated versions list
+      const data = await promptsApi.fetchPrompt(selectedPromptId);
+      set({
+        selectedVersion: result.version,
+        promptVersions: data.versions,
+        promptDirty: false,
+        promptsLoading: false,
+      });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to save version',
+        promptsLoading: false,
+      });
+    }
+  },
+
+  setPromptActiveVersion: async (version) => {
+    const { selectedPromptId, prompts } = get();
+    if (!selectedPromptId) return;
+
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      await promptsApi.setActiveVersion(selectedPromptId, version);
+      // Update the prompts list with new active version
+      const updatedPrompts = prompts.map((p) =>
+        p.id === selectedPromptId ? { ...p, activeVersion: version } : p
+      );
+      set({ prompts: updatedPrompts, promptsLoading: false });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to set active version',
+        promptsLoading: false,
+      });
+    }
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Reset
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -869,6 +1060,15 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       subagentActive: false,
       events: [],
       activeOverlay: null,
+      activeView: 'sessions',
+      prompts: [],
+      selectedPromptId: null,
+      selectedVersion: null,
+      promptContent: '',
+      promptVersions: [],
+      promptsLoading: false,
+      promptsError: null,
+      promptDirty: false,
     });
   },
 }));
@@ -901,6 +1101,20 @@ export function useFocusedSessionChildren(): SessionTreeNode[] {
     })
   );
 }
+
+/** Get session tree for flattening (use useMemo in component to flatten) */
+export function useSessionTree(): SessionTreeNode | null {
+  return useUnifiedSessionsStore((s) => s.sessionTree);
+}
+
+/** Get flattened session tree - memoized to avoid infinite loops */
+export function useFlattenedSessionTree(): FlattenedTreeNode[] {
+  const sessionTree = useUnifiedSessionsStore((s) => s.sessionTree);
+  return useMemo(() => flattenTree(sessionTree), [sessionTree]);
+}
+
+/** Flatten tree helper - export for use with useMemo in components */
+export { flattenTree };
 
 /** Get activities for a specific session */
 export function useSessionActivities(sessionId: string | null): ActivityBlock[] {
@@ -957,6 +1171,37 @@ export function useVoiceState() {
       voiceProfile: s.voiceProfile,
       voiceActive: s.voiceActive,
       currentTool: s.currentTool,
+    }))
+  );
+}
+
+/** Get service state (soft power) */
+export function useServiceState() {
+  return useUnifiedSessionsStore(
+    useShallow((s) => ({
+      serviceActive: s.serviceActive,
+      audioMode: s.audioMode,
+    }))
+  );
+}
+
+/** Get active view */
+export function useActiveView() {
+  return useUnifiedSessionsStore((s) => s.activeView);
+}
+
+/** Get prompts state */
+export function usePromptsState() {
+  return useUnifiedSessionsStore(
+    useShallow((s) => ({
+      prompts: s.prompts,
+      selectedPromptId: s.selectedPromptId,
+      selectedVersion: s.selectedVersion,
+      promptContent: s.promptContent,
+      promptVersions: s.promptVersions,
+      promptsLoading: s.promptsLoading,
+      promptsError: s.promptsError,
+      promptDirty: s.promptDirty,
     }))
   );
 }

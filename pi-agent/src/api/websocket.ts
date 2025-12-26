@@ -42,6 +42,10 @@ let masterClientId: string | null = null;
 // Track last agent state (to prevent master takeover during active turns)
 let lastAgentState: string = 'idle';
 
+// Track service state (for welcome message and soft power control)
+let serviceActive: boolean = false;
+let audioMode: 'web' | 'local' = 'web';
+
 // Binary audio handler for WebSocketTransport
 let binaryAudioHandler: ((data: Buffer, ws: WebSocket) => void) | null = null;
 
@@ -52,20 +56,22 @@ let clientCommandHandler: ((command: ClientCommand, ws: WebSocket) => void) | nu
 let sessionInputHandler: ((sessionId: string, text: string) => Promise<void>) | null = null;
 
 export interface ClientCommand {
-  command: 'start_session' | 'stop_session';
+  command: 'start_session' | 'stop_session' | 'start_service' | 'stop_service' | 'set_audio_mode';
   profile?: string;
+  mode?: 'web' | 'local';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WebSocket Message Types (Phase 5: Simplified Protocol)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Core Types (5):
-// - welcome            : Client identity on connect
+// Core Types (6):
+// - welcome            : Client identity + service state on connect
 // - stream_chunk       : All agent message events (AI SDK format)
 // - session_tree_update: Session hierarchy changes
 // - state_change       : Voice UI state (listening/thinking/speaking)
 // - master_changed     : Multi-client coordination
+// - service_state_changed: Service active/dormant + audio mode
 //
 // Lifecycle Types (3):
 // - session_started/ended: Voice session lifecycle
@@ -79,6 +85,7 @@ export type WSMessageType =
   | 'session_tree_update'   // Session hierarchy for ThreadRail
   | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
   | 'master_changed'        // Multi-client master coordination
+  | 'service_state_changed' // Service active/dormant + audio mode
   // Lifecycle events
   | 'session_started'       // Voice session activated
   | 'session_ended'         // Voice session deactivated
@@ -134,10 +141,10 @@ export function startWebSocketServer(): Promise<void> {
       clientStates.set(ws, { id: clientId, isMaster, connectedAt: Date.now(), focusedSessionId: null });
       clients.add(ws);
 
-      // Send welcome message with client identity
+      // Send welcome message with client identity and service state
       ws.send(JSON.stringify({
         type: 'welcome',
-        payload: { clientId, isMaster },
+        payload: { clientId, isMaster, serviceActive, audioMode },
         timestamp: Date.now(),
       }));
 
@@ -504,6 +511,10 @@ export const wsBroadcast = {
     broadcast('state_change', { state, profile });
   },
 
+  // Service state (active/dormant + audio mode)
+  serviceState: (active: boolean, mode: 'web' | 'local') =>
+    broadcast('service_state_changed', { active, mode }),
+
   // Voice session lifecycle
   sessionStarted: (profile: string) =>
     broadcast('session_started', { profile }),
@@ -542,3 +553,20 @@ export const wsBroadcast = {
     broadcast('session_tree_update', { trees });
   },
 };
+
+/**
+ * Update the tracked service state and broadcast to all clients.
+ * Called by index.ts when service state changes.
+ */
+export function setServiceState(active: boolean, mode: 'web' | 'local'): void {
+  serviceActive = active;
+  audioMode = mode;
+  wsBroadcast.serviceState(active, mode);
+}
+
+/**
+ * Get current service state.
+ */
+export function getServiceState(): { active: boolean; mode: 'web' | 'local' } {
+  return { active: serviceActive, mode: audioMode };
+}
