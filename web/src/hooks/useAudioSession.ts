@@ -105,6 +105,24 @@ export function useAudioSession(): AudioSessionState {
     };
   }, []);
 
+  // Listen for audio control messages (interrupt from server when user speaks over agent)
+  useEffect(() => {
+    const handleAudioControl = (event: CustomEvent<string>) => {
+      const action = event.detail;
+      if (action === 'interrupt') {
+        if (audioControllerRef.current) {
+          audioControllerRef.current.interrupt();
+        }
+      }
+    };
+
+    window.addEventListener('ws-audio-control', handleAudioControl as EventListener);
+
+    return () => {
+      window.removeEventListener('ws-audio-control', handleAudioControl as EventListener);
+    };
+  }, []);
+
   // Stop recording if WebSocket disconnects
   useEffect(() => {
     if (!connected && isRecording) {

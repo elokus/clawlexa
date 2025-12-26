@@ -17,8 +17,11 @@
 
 import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
-import { CliSessionsRepository } from '../db/index.js';
+import { CliSessionsRepository, SessionMessagesRepository } from '../db/index.js';
 import { eventRecorder } from './event-recorder.js';
+
+// Repository instance for persisting stream events
+const messagesRepo = new SessionMessagesRepository();
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
 
@@ -65,13 +68,14 @@ export interface ClientCommand {
 // WebSocket Message Types (Phase 5: Simplified Protocol)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Core Types (6):
+// Core Types (7):
 // - welcome            : Client identity + service state on connect
 // - stream_chunk       : All agent message events (AI SDK format)
 // - session_tree_update: Session hierarchy changes
 // - state_change       : Voice UI state (listening/thinking/speaking)
 // - master_changed     : Multi-client coordination
 // - service_state_changed: Service active/dormant + audio mode
+// - audio_control      : Audio playback control (start/stop/interrupt)
 //
 // Lifecycle Types (3):
 // - session_started/ended: Voice session lifecycle
@@ -86,6 +90,7 @@ export type WSMessageType =
   | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
   | 'master_changed'        // Multi-client master coordination
   | 'service_state_changed' // Service active/dormant + audio mode
+  | 'audio_control'         // Audio playback control (start/stop/interrupt)
   // Lifecycle events
   | 'session_started'       // Voice session activated
   | 'session_ended'         // Voice session deactivated
@@ -155,16 +160,17 @@ export function startWebSocketServer(): Promise<void> {
         timestamp: Date.now(),
       }));
 
-      // Send active session trees (so clients can navigate to running sessions)
+      // Send recent session trees (for chat history persistence)
+      // Includes both active and finished sessions from the last 24 hours
       const sessionsRepo = new CliSessionsRepository();
-      const activeTrees = sessionsRepo.getActiveTrees();
-      if (activeTrees.length > 0) {
+      const recentTrees = sessionsRepo.getRecentTrees(24, 50);
+      if (recentTrees.length > 0) {
         ws.send(JSON.stringify({
           type: 'session_tree_update',
-          payload: { trees: activeTrees },
+          payload: { trees: recentTrees },
           timestamp: Date.now(),
         }));
-        console.log(`[WS] Sent ${activeTrees.length} active session trees to ${clientId.slice(0, 8)}`);
+        console.log(`[WS] Sent ${recentTrees.length} recent session trees to ${clientId.slice(0, 8)}`);
       }
 
       // Handle disconnection
@@ -534,8 +540,16 @@ export const wsBroadcast = {
     broadcast('cli_session_deleted', { all: true }),
 
   // Unified stream chunk events (AI SDK format for all agents)
-  streamChunk: (sessionId: string, event: AISDKStreamEvent) =>
-    broadcast('stream_chunk', { sessionId, event }),
+  // Also persists content-bearing events to database for history reconstruction
+  streamChunk: (sessionId: string, event: AISDKStreamEvent) => {
+    // Persist event (repository filters to content-bearing types only)
+    const result = messagesRepo.create(sessionId, event);
+    if (result) {
+      console.log(`[WS] Persisted ${event.type} for session ${sessionId.slice(0, 8)}`);
+    }
+    // Broadcast to all connected clients
+    broadcast('stream_chunk', { sessionId, event });
+  },
 
   // Session hierarchy tree update (for ThreadRail)
   sessionTreeUpdate: (rootId: string) => {

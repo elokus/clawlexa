@@ -5,6 +5,7 @@
  * Tables:
  *   - cli_sessions: Mac CLI session metadata
  *   - cli_events: Session event log
+ *   - session_messages: AI SDK stream events for chat history persistence
  *   - timers: Timers and reminders
  *   - agent_runs: Agent interaction history (optional)
  */
@@ -133,6 +134,39 @@ export const migrations: Migration[] = [
 
       -- Index for quick profile lookups (voice session by profile)
       CREATE INDEX IF NOT EXISTS idx_cli_sessions_profile ON cli_sessions(profile);
+    `,
+  },
+  {
+    version: 6,
+    name: 'session_messages',
+    up: `
+      -- Store AI SDK stream events for chat history persistence
+      -- Enables UI reconstruction with tool calls, reasoning, and full message structure
+
+      CREATE TABLE IF NOT EXISTS session_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES cli_sessions(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,      -- 'text-delta', 'tool-call', 'user-transcript', etc.
+        payload TEXT NOT NULL,         -- JSON blob of AISDKStreamEvent
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+
+      -- Index for fetching messages by session (most common query)
+      CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id);
+    `,
+  },
+  {
+    version: 7,
+    name: 'background_sessions',
+    up: `
+      -- Support for background/detached subagent sessions
+      -- Background sessions run independently without blocking the voice agent
+      -- They don't take over audio input and continue processing while user can speak
+
+      ALTER TABLE cli_sessions ADD COLUMN background INTEGER DEFAULT 0;
+
+      -- Index for querying background sessions
+      CREATE INDEX IF NOT EXISTS idx_cli_sessions_background ON cli_sessions(background);
     `,
   },
 ];

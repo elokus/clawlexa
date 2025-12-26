@@ -38,6 +38,7 @@ export interface Session {
   agent_name: AgentName | null;
   model: string | null;
   conversation_history: string | null; // JSON array
+  background: boolean; // true = detached/fire-and-forget, doesn't block voice agent
   // Terminal-specific
   mac_session_id: string | null;
   tool_call_id: string | null; // Links to the tool call that created this session
@@ -414,6 +415,32 @@ export class CliSessionsRepository {
    */
   getActiveTrees(): SessionTreeNode[] {
     const roots = this.getActiveRoots();
+    return roots.map((root) => this.getTree(root.id)!).filter(Boolean);
+  }
+
+  /**
+   * Get recent root sessions (for chat history persistence).
+   * Returns roots from the last N hours, regardless of status.
+   */
+  getRecentRoots(hoursAgo: number = 24, limit: number = 50): Session[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM cli_sessions
+         WHERE type IN ('voice', 'subagent')
+         AND parent_id IS NULL
+         AND created_at >= datetime('now', '-' || ? || ' hours')
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(hoursAgo, limit) as Session[];
+  }
+
+  /**
+   * Get recent session trees (for chat history persistence).
+   * Returns all trees from the last N hours, including finished ones.
+   */
+  getRecentTrees(hoursAgo: number = 24, limit: number = 50): SessionTreeNode[] {
+    const roots = this.getRecentRoots(hoursAgo, limit);
     return roots.map((root) => this.getTree(root.id)!).filter(Boolean);
   }
 

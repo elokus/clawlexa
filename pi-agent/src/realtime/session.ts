@@ -75,6 +75,7 @@ export type AgentState = 'idle' | 'listening' | 'thinking' | 'speaking';
 export interface SessionEvents {
   stateChange: (state: AgentState) => void;
   audio: (audio: TransportLayerAudio) => void;
+  audioInterrupted: () => void;
   transcript: (text: string, role: 'user' | 'assistant', itemId?: string) => void;
   transcriptDelta: (delta: string, role: 'user' | 'assistant', itemId?: string) => void;
   // Placeholder events for message ordering (emitted when item is created, before transcript)
@@ -222,8 +223,11 @@ export class VoiceSession {
     });
 
     // When audio playback is interrupted (user speaks over agent)
+    // The SDK handles server-side truncation automatically.
+    // We emit audioInterrupted so VoiceAgent can stop local audio playback.
     this.session.on('audio_interrupted', () => {
       this.setState('listening');
+      this.emit('audioInterrupted');
     });
 
     // Agent starts working
@@ -283,6 +287,16 @@ export class VoiceSession {
 
     // Transport events for transcription
     this.session.on('transport_event', (event: TransportEvent) => {
+      // Detect user interruption: VAD detected speech
+      // OpenAI sends input_audio_buffer.speech_started when user starts talking
+      // Always emit audioInterrupted to stop any buffered audio on the frontend
+      // (Don't check state - audio_stopped event may have already changed it due to race condition)
+      if (event.type === 'input_audio_buffer.speech_started') {
+        console.log('[VoiceSession] User speech detected - stopping playback');
+        this.emit('audioInterrupted');
+        this.setState('listening');
+      }
+
       // Item added - emit placeholder before transcript arrives
       // This ensures correct message ordering in the UI
       if (event.type === 'conversation.item.added') {

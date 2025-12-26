@@ -15,7 +15,7 @@
  * - error → error
  */
 
-import { broadcast } from '../api/websocket.js';
+import { wsBroadcast } from '../api/websocket.js';
 import type { AISDKStreamEvent, StreamChunkMessage } from '../api/stream-types.js';
 import { createStreamChunk } from '../api/stream-types.js';
 
@@ -141,12 +141,10 @@ function convertToAISDKEvent<T extends VoiceEventType>(
 
 /**
  * Broadcast a stream chunk message via WebSocket.
+ * Uses wsBroadcast.streamChunk which also persists the event to database.
  */
 function broadcastStreamChunk(chunk: StreamChunkMessage): void {
-  broadcast('stream_chunk', {
-    sessionId: chunk.sessionId,
-    event: chunk.event,
-  });
+  wsBroadcast.streamChunk(chunk.sessionId, chunk.event);
 }
 
 /**

@@ -7,6 +7,7 @@ import { useEffect, useRef } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useConnectionState, useVoiceState, useUnifiedSessionsStore } from './stores';
 import { useAudioSession } from './hooks/useAudioSession';
+import { useUrlSessionSync } from './hooks/useRouter';
 import { StageOrchestrator } from './components/layout/StageOrchestrator';
 import { ControlBar } from './components/ControlBar';
 
@@ -16,9 +17,13 @@ export function App() {
   const { voiceState, voiceProfile } = useVoiceState();
   const audioSession = useAudioSession();
 
-  // Track focused session and sync to backend
+  // Track focused session and sync to backend + URL
   const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
+  const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
   const prevFocusedRef = useRef<string | null>(null);
+
+  // Sync URL ↔ focusedSessionId (two-way binding)
+  useUrlSessionSync(focusedSessionId, focusSession);
 
   useEffect(() => {
     // Only sync if focus actually changed and we're connected

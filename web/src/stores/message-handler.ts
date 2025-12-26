@@ -111,6 +111,13 @@ export function handleWebSocketMessage(msg: WSMessage): void {
       break;
     }
 
+    case 'audio_control': {
+      const { action } = payload as { action: 'start' | 'stop' | 'interrupt' };
+      // Dispatch custom event for useAudioSession to handle
+      window.dispatchEvent(new CustomEvent('ws-audio-control', { detail: action }));
+      break;
+    }
+
     case 'master_changed': {
       const { masterId } = payload as MasterChangedPayload;
       const { clientId } = store;

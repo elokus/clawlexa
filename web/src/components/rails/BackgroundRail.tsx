@@ -9,6 +9,7 @@ import {
   useUnifiedSessionsStore,
   useActiveView,
 } from '../../stores';
+import { navigateToSession } from '../../hooks/useRouter';
 import type { SessionTreeNode } from '../../types';
 
 // Format relative time compactly
@@ -39,7 +40,6 @@ export function BackgroundRail() {
   // Store state
   const allTrees = useUnifiedSessionsStore((s) => s.allTrees);
   const sessionTree = useUnifiedSessionsStore((s) => s.sessionTree);
-  const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
   const setActiveView = useUnifiedSessionsStore((s) => s.setActiveView);
   const activeView = useActiveView();
 
@@ -59,7 +59,8 @@ export function BackgroundRail() {
   const isPromptsView = activeView === 'prompts';
 
   const handleSessionClick = (session: SessionTreeNode) => {
-    focusSession(session.id);
+    // Navigate via URL - the router sync will update the store
+    navigateToSession(session.id);
     if (isPromptsView) setActiveView('sessions');
   };
 

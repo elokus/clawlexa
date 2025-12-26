@@ -245,6 +245,14 @@ export class VoiceAgent {
       this.adapter?.toolEnd(name, result);
     });
 
+    // When audio is interrupted (user speaks over agent), stop local playback
+    // This is critical for WebSocket transport where we manage audio playback ourselves
+    this.session.on('audioInterrupted', () => {
+      if (this.transport) {
+        this.transport.interrupt();
+      }
+    });
+
     this.session.on('disconnected', () => {
       // Log the agent run to database before resetting state
       this.logAgentRun();

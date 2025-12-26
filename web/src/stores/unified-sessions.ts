@@ -28,6 +28,7 @@ import type {
 import type { TimelineItem, TranscriptItem, ToolItem } from '../types/timeline';
 import type { PromptInfo } from '../lib/prompts-api';
 import * as promptsApi from '../lib/prompts-api';
+import * as sessionsApi from '../lib/sessions-api';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -132,6 +133,7 @@ interface UnifiedSessionsStore {
   // Sessions (by ID for O(1) lookup)
   // ─────────────────────────────────────────────────────────────────────────
   sessions: Map<string, SessionState>;
+  loadingSessionIds: Set<string>; // Sessions currently loading history
 
   // ─────────────────────────────────────────────────────────────────────────
   // Subagent Activities
@@ -221,6 +223,11 @@ interface UnifiedSessionsStore {
   // Stream Chunk Handler (AI SDK Protocol)
   // ─────────────────────────────────────────────────────────────────────────
   handleStreamChunk: (sessionId: string, event: AISDKStreamEvent) => void;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // History Loading (Chat Persistence)
+  // ─────────────────────────────────────────────────────────────────────────
+  loadSessionHistory: (sessionId: string, sessionType?: SessionType) => Promise<void>;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Events & Overlay
@@ -357,6 +364,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
   // Sessions
   sessions: new Map(),
+  loadingSessionIds: new Set(),
 
   // Activities
   activitiesBySession: {},
@@ -435,17 +443,22 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
     const { tree, trees } = payload;
 
     if (trees) {
-      // Batch update - initial load
+      // Batch update - initial load / reconnect
       const newAllTrees = new Map<string, SessionTreeNode>();
       for (const t of trees) {
         newAllTrees.set(t.id, t);
       }
+
+      // First tree becomes the active sessionTree, rest go to background
       const firstTree = trees[0] ?? null;
       const deepest = firstTree ? findDeepestRunning(firstTree) : null;
+      const backgroundIds = trees.slice(1).map((t) => t.id);
+
       set({
         allTrees: newAllTrees,
         sessionTree: firstTree,
-        focusedSessionId: deepest?.id ?? null,
+        focusedSessionId: deepest?.id ?? firstTree?.id ?? null,
+        backgroundTreeIds: backgroundIds,
       });
       return;
     }
@@ -512,15 +525,31 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   focusSession: (sessionId) => {
     const { sessionTree, allTrees, backgroundTreeIds } = get();
 
+    console.log(`[Focus] Focusing session ${sessionId.slice(0, 8)}`);
+
+    // Helper to find session and trigger history load
+    const focusAndLoadHistory = (node: SessionTreeNode | null) => {
+      if (node) {
+        console.log(`[Focus] Found node type=${node.type}, triggering history load`);
+        // Trigger history loading in background (async, don't await)
+        get().loadSessionHistory(sessionId, node.type as SessionType);
+      }
+    };
+
     // Check current tree first
-    if (sessionTree && findSessionById(sessionTree, sessionId)) {
-      set({ focusedSessionId: sessionId });
-      return;
+    if (sessionTree) {
+      const node = findSessionById(sessionTree, sessionId);
+      if (node) {
+        set({ focusedSessionId: sessionId });
+        focusAndLoadHistory(node);
+        return;
+      }
     }
 
     // Search all trees
     for (const [rootId, tree] of allTrees) {
-      if (findSessionById(tree, sessionId)) {
+      const node = findSessionById(tree, sessionId);
+      if (node) {
         let newBackgroundIds = [...backgroundTreeIds];
         if (sessionTree && !newBackgroundIds.includes(sessionTree.id)) {
           newBackgroundIds.push(sessionTree.id);
@@ -531,6 +560,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
           focusedSessionId: sessionId,
           backgroundTreeIds: newBackgroundIds,
         });
+        focusAndLoadHistory(node);
         return;
       }
     }
@@ -550,11 +580,17 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   restoreTree: (rootId) => {
     const { backgroundTreeIds, allTrees } = get();
     const tree = allTrees.get(rootId);
+    const deepestNode = tree ? findDeepestRunning(tree) : null;
+    const focusedId = deepestNode?.id ?? null;
     set({
       backgroundTreeIds: backgroundTreeIds.filter((id) => id !== rootId),
       sessionTree: tree ?? null,
-      focusedSessionId: tree ? findDeepestRunning(tree)?.id ?? null : null,
+      focusedSessionId: focusedId,
     });
+    // Load history for the focused session
+    if (focusedId && deepestNode) {
+      get().loadSessionHistory(focusedId, deepestNode.type as SessionType);
+    }
   },
 
   clearFocusedSession: () => set({ focusedSessionId: null }),
@@ -910,6 +946,126 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       newSessions.set(sessionId, { ...session, messages });
       return { sessions: newSessions };
     });
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // History Loading (Chat Persistence)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  loadSessionHistory: async (sessionId, sessionType) => {
+    const { loadingSessionIds, sessions } = get();
+
+    console.log(`[History] Loading history for ${sessionId.slice(0, 8)}, type=${sessionType}`);
+
+    // Skip if already loading
+    if (loadingSessionIds.has(sessionId)) {
+      console.log(`[History] Already loading ${sessionId.slice(0, 8)}, skipping`);
+      return;
+    }
+
+    // Check if session already has messages (cached from previous load)
+    const existing = sessions.get(sessionId);
+    if (existing?.messages && existing.messages.length > 0) {
+      console.log(`[History] Session ${sessionId.slice(0, 8)} already has ${existing.messages.length} messages (cached)`);
+
+      // For voice sessions, still need to repopulate voiceTimeline from cached messages
+      if (sessionType === 'voice') {
+        console.log(`[History] Repopulating voiceTimeline from cached messages`);
+        const voiceTimeline: TimelineItem[] = [];
+        for (const message of existing.messages) {
+          for (const part of message.parts) {
+            if (part.type === 'text') {
+              voiceTimeline.push({
+                id: generateId(),
+                type: 'transcript',
+                role: message.role as 'user' | 'assistant',
+                content: part.text,
+                timestamp: message.createdAt,
+                pending: false,
+              });
+            } else if (part.type === 'tool-call') {
+              voiceTimeline.push({
+                id: part.toolCallId,
+                type: 'tool',
+                name: part.toolName,
+                args: part.args as Record<string, unknown>,
+                status: 'completed',
+                timestamp: message.createdAt,
+              });
+            }
+          }
+        }
+        set({ voiceTimeline });
+      }
+      return;
+    }
+
+    // Mark as loading
+    set((s) => ({
+      loadingSessionIds: new Set([...s.loadingSessionIds, sessionId]),
+    }));
+
+    try {
+      console.log(`[History] Fetching messages from API for ${sessionId.slice(0, 8)}`);
+      const rawMessages = await sessionsApi.fetchSessionMessages(sessionId);
+      console.log(`[History] Got ${rawMessages.length} messages from API`);
+
+      // Replay events through handleStreamChunk to reconstruct messages
+      for (const msg of rawMessages) {
+        const event = JSON.parse(msg.payload);
+        get().handleStreamChunk(sessionId, event);
+      }
+
+      // For voice sessions, also populate voiceTimeline
+      if (sessionType === 'voice') {
+        set((s) => {
+          const voiceTimeline: TimelineItem[] = [];
+          const session = s.sessions.get(sessionId);
+          if (session?.messages) {
+            for (const message of session.messages) {
+              for (const part of message.parts) {
+                if (part.type === 'text') {
+                  voiceTimeline.push({
+                    id: generateId(),
+                    type: 'transcript',
+                    role: message.role as 'user' | 'assistant',
+                    content: part.text,
+                    timestamp: message.createdAt,
+                    pending: false,
+                  });
+                } else if (part.type === 'tool-call') {
+                  voiceTimeline.push({
+                    id: part.toolCallId,
+                    type: 'tool',
+                    name: part.toolName,
+                    args: part.args as Record<string, unknown>,
+                    status: 'completed',
+                    timestamp: message.createdAt,
+                  });
+                }
+              }
+            }
+          }
+          return { voiceTimeline };
+        });
+      }
+
+      // Check what we actually got
+      const finalSession = get().sessions.get(sessionId);
+      console.log(`[History] After replay: session has ${finalSession?.messages?.length ?? 0} messages`);
+      if (sessionType === 'voice') {
+        console.log(`[History] voiceTimeline has ${get().voiceTimeline.length} items`);
+      }
+    } catch (error) {
+      console.error(`[History] Failed to load history for session ${sessionId}:`, error);
+    } finally {
+      // Remove from loading set
+      set((s) => {
+        const newLoading = new Set(s.loadingSessionIds);
+        newLoading.delete(sessionId);
+        return { loadingSessionIds: newLoading };
+      });
+    }
   },
 
   // ─────────────────────────────────────────────────────────────────────────

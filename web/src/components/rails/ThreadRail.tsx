@@ -13,6 +13,7 @@ import {
   useUnifiedSessionsStore,
   useFlattenedSessionTree,
 } from '../../stores';
+import { navigateToSession } from '../../hooks/useRouter';
 import type { SessionTreeNode } from '../../types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -107,7 +108,6 @@ export function ThreadRail() {
   const flattenedTree = useFlattenedSessionTree();
   const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
   const sessionTree = useUnifiedSessionsStore((s) => s.sessionTree);
-  const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
   const voiceActive = useUnifiedSessionsStore((s) => s.voiceActive);
   const profile = useUnifiedSessionsStore((s) => s.voiceProfile);
 
@@ -454,7 +454,7 @@ export function ThreadRail() {
                 index={0}
                 isFocused={isVoiceFocused}
                 isRoot={true}
-                onClick={() => voiceSessionId && focusSession(voiceSessionId)}
+                onClick={() => voiceSessionId && navigateToSession(voiceSessionId)}
               />
             )}
 
@@ -470,7 +470,7 @@ export function ThreadRail() {
                 index={showVoiceCard ? index + 1 : index}
                 isFocused={item.node.id === focusedSessionId}
                 isRoot={false}
-                onClick={() => focusSession(item.node.id)}
+                onClick={() => navigateToSession(item.node.id)}
               />
             ))}
           </AnimatePresence>

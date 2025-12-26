@@ -38,6 +38,7 @@ export default defineConfig({
       },
     },
   },
-  // Handle SPA routing for /dev path
+  // SPA mode: enables history API fallback for client-side routing
+  // Routes like /session/:id and /dev are handled by React Router
   appType: 'spa',
 });

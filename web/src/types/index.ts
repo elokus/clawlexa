@@ -60,13 +60,14 @@ export interface AgentProfile {
 // WebSocket Message Types (Phase 5: Simplified Protocol)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Core types (6):
+// Core types (7):
 // - welcome            : Client identity + service state on connect
 // - stream_chunk       : All agent message events (AI SDK format)
 // - session_tree_update: Session hierarchy changes
 // - state_change       : Voice UI state (listening/thinking/speaking)
 // - master_changed     : Multi-client coordination
 // - service_state_changed: Service active/dormant + audio mode
+// - audio_control      : Audio playback control (start/stop/interrupt)
 //
 // Lifecycle types (3):
 // - session_started/ended: Voice session lifecycle
@@ -81,6 +82,7 @@ export type WSMessageType =
   | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
   | 'master_changed'        // Multi-client master coordination
   | 'service_state_changed' // Service active/dormant + audio mode
+  | 'audio_control'         // Audio playback control (start/stop/interrupt)
   // Lifecycle events
   | 'session_started'       // Voice session activated
   | 'session_ended'         // Voice session deactivated

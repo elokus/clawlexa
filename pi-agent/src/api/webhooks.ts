@@ -15,6 +15,7 @@ import path from 'path';
 import {
   CliSessionsRepository,
   CliEventsRepository,
+  SessionMessagesRepository,
   type SessionStatus,
 } from '../db/index.js';
 import { handleDemoRequest } from '../demo/index.js';
@@ -327,6 +328,27 @@ async function handleWebhook(
     eventRecorder.clear();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'cleared' }));
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Sessions API - Chat History Persistence
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/sessions/:id/messages - Get session message history
+  const sessionMessagesMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/messages$/);
+  if (req.method === 'GET' && sessionMessagesMatch) {
+    try {
+      const sessionId = sessionMessagesMatch[1]!;
+      const messagesRepo = new SessionMessagesRepository();
+      const messages = messagesRepo.getBySession(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ messages }));
+    } catch (error) {
+      console.error('[API] Error fetching session messages:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch session messages' }));
+    }
     return;
   }
 

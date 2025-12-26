@@ -687,7 +687,7 @@ The WebSocket server supports multiple browser clients with a Master/Replica pat
 | `web/src/stores/unified-sessions.ts` | `clientId`, `isMaster` state, all session management |
 | `web/src/stores/message-handler.ts` | WebSocket event routing to unified store |
 
-### WebSocket Messages (9 Core Types)
+### WebSocket Messages (10 Core Types)
 
 | Message | Direction | Purpose |
 |---------|-----------|---------|
@@ -697,6 +697,7 @@ The WebSocket server supports multiple browser clients with a Master/Replica pat
 | `state_change` | Server → Client | Voice UI state (listening/thinking/speaking) |
 | `master_changed` | Server → All | Multi-client master coordination |
 | `service_state_changed` | Server → All | Service active/dormant + audio mode |
+| `audio_control` | Server → Client | Audio playback control (start/stop/interrupt) |
 | `session_started` | Server → Client | Voice session activated |
 | `session_ended` | Server → Client | Voice session deactivated |
 | `cli_session_deleted` | Server → Client | Terminal session cleanup |
@@ -863,6 +864,39 @@ audioController.setOnAudio((data) => {
   sendBinary(data);
 });
 ```
+
+#### Audio Interruption Handling
+
+**Problem**: When user speaks during agent TTS playback (interruption), the OpenAI Realtime API correctly detects this and stops generating new audio, but the audio already buffered on the client continues playing.
+
+**Root Cause**: For WebSocket connections (unlike WebRTC), the client manages audio playback. OpenAI's `audio_interrupted` event fires, but the client must stop audio playback manually.
+
+**Solution**: Propagate the interruption signal through the transport layer:
+
+```
+OpenAI SDK: audio_interrupted
+    ↓
+VoiceSession: emit 'audioInterrupted' event
+    ↓
+VoiceAgent: call transport.interrupt()
+    ↓
+WebSocketTransport: send { type: 'audio_control', payload: { action: 'interrupt' } }
+    ↓
+Frontend message-handler: dispatch 'ws-audio-control' event
+    ↓
+useAudioSession: call audioController.interrupt()
+    ↓
+AudioController: close AudioContext + clear queue → audio stops immediately
+```
+
+**Key files**:
+- `pi-agent/src/realtime/session.ts`: Emits `audioInterrupted` event
+- `pi-agent/src/agent/voice-agent.ts`: Listens for `audioInterrupted`, calls `transport.interrupt()`
+- `pi-agent/src/transport/websocket.ts`: Sends `audio_control` message
+- `web/src/stores/message-handler.ts`: Handles `audio_control`, dispatches event
+- `web/src/hooks/useAudioSession.ts`: Listens for event, calls `audioController.interrupt()`
+
+**Note**: The OpenAI Agents SDK automatically handles server-side truncation (updating conversation context). We only need to handle stopping local audio playback.
 
 #### React StrictMode WebSocket Cleanup
 
