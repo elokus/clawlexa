@@ -25,9 +25,8 @@ import { PromptsView } from '../prompts/PromptsView';
 import type { SessionTreeNode, StageItem } from '../../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Asymmetric layout: Slim Left Dock (80px), Center Stage (1fr), Wide Right Rail (360px)
+// Asymmetric layout: Expandable Left Dock (auto), Center Stage (1fr), Wide Right Rail (360px)
 // ═══════════════════════════════════════════════════════════════════════════
-const DOCK_WIDTH = 80;
 const CONTEXT_RAIL_WIDTH = 360;
 
 // Default root stage for when no session tree exists
@@ -160,7 +159,7 @@ export function StageOrchestrator() {
 
         .stage-orchestrator {
           display: grid;
-          grid-template-columns: ${DOCK_WIDTH}px 1fr ${CONTEXT_RAIL_WIDTH}px;
+          grid-template-columns: auto 1fr ${CONTEXT_RAIL_WIDTH}px;
           height: 100%;
           width: 100%;
           gap: 0;
@@ -170,7 +169,7 @@ export function StageOrchestrator() {
         }
 
         .stage-orchestrator.prompts-view {
-          grid-template-columns: ${DOCK_WIDTH}px 1fr;
+          grid-template-columns: auto 1fr;
         }
 
         /* Left Dock - Slim icon bar */
@@ -233,19 +232,19 @@ export function StageOrchestrator() {
         /* Responsive: collapse rails on smaller screens */
         @media (max-width: 1200px) {
           .stage-orchestrator {
-            grid-template-columns: 60px 1fr 280px;
+            grid-template-columns: auto 1fr 280px;
           }
           .stage-orchestrator.prompts-view {
-            grid-template-columns: 60px 1fr;
+            grid-template-columns: auto 1fr;
           }
         }
 
         @media (max-width: 1024px) {
           .stage-orchestrator {
-            grid-template-columns: 60px 1fr 60px;
+            grid-template-columns: auto 1fr 60px;
           }
           .stage-orchestrator.prompts-view {
-            grid-template-columns: 60px 1fr;
+            grid-template-columns: auto 1fr;
           }
         }
 

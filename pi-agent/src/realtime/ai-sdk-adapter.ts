@@ -6,12 +6,12 @@
  * all agent types, simplifying state management.
  *
  * Mapping:
- * - transcript (assistant) → text-delta
- * - transcript (user) → text-delta (user messages are also streamed)
+ * - transcript (assistant) → text-delta (streamed token by token)
+ * - transcript (user) → user-transcript (complete message)
  * - toolStart → tool-call
  * - toolEnd → tool-result
  * - stateChange (thinking) → start-step
- * - stateChange (idle) → finish
+ * - stateChange (speaking → *) → finish (marks message complete between turns)
  * - error → error
  */
 
@@ -50,6 +50,9 @@ function generateToolCallId(): string {
 
 // Track current tool call IDs for tool-result matching
 const pendingToolCalls = new Map<string, string>(); // toolName → toolCallId
+
+// Track previous state per session for detecting transitions
+const previousStates = new Map<string, string>(); // sessionId → previous state
 
 /**
  * Adapt a voice event to AI SDK format and broadcast as stream_chunk.
@@ -120,11 +123,9 @@ function convertToAISDKEvent<T extends VoiceEventType>(
       if (state === 'thinking') {
         return { type: 'start-step' };
       }
-      if (state === 'idle') {
-        return { type: 'finish', finishReason: 'stop' };
-      }
-      // listening and speaking don't have direct AI SDK equivalents
-      // They're handled by the frontend via state_change events
+      // Note: 'finish' is now emitted by the stateChange() method when leaving 'speaking'
+      // state, so we don't emit it here anymore to avoid duplicates.
+      // listening, speaking, and idle don't have direct AI SDK equivalents
       return null;
     }
 
@@ -153,6 +154,9 @@ function broadcastStreamChunk(chunk: StreamChunkMessage): void {
  * Provides a cleaner API for VoiceSession to use.
  */
 export function createVoiceAdapter(sessionId: string) {
+  // Initialize previous state tracking for this session
+  previousStates.set(sessionId, 'idle');
+
   return {
     /**
      * Emit a transcript event (user or assistant speech).
@@ -177,8 +181,21 @@ export function createVoiceAdapter(sessionId: string) {
 
     /**
      * Emit a state change event.
+     * Emits 'finish' when transitioning FROM speaking (end of assistant turn).
+     * Emits 'start-step' when entering thinking state.
      */
     stateChange(state: 'idle' | 'listening' | 'thinking' | 'speaking', profile: string | null): void {
+      const prevState = previousStates.get(sessionId) ?? 'idle';
+      previousStates.set(sessionId, state);
+
+      // Emit finish when leaving speaking state (marks assistant message as complete)
+      // This happens between turns (speaking → listening) and at end (speaking → idle)
+      if (prevState === 'speaking' && state !== 'speaking') {
+        const chunk = createStreamChunk(sessionId, { type: 'finish', finishReason: 'stop' });
+        broadcastStreamChunk(chunk);
+      }
+
+      // Also emit the regular state-based events
       adaptVoiceEvent(sessionId, 'stateChange', { state, profile });
     },
 
@@ -187,6 +204,13 @@ export function createVoiceAdapter(sessionId: string) {
      */
     error(message: string): void {
       adaptVoiceEvent(sessionId, 'error', { message });
+    },
+
+    /**
+     * Clean up tracking state when session ends.
+     */
+    cleanup(): void {
+      previousStates.delete(sessionId);
     },
   };
 }

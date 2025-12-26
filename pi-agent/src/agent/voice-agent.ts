@@ -28,6 +28,7 @@ export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
   audio: (audio: TransportLayerAudio) => void;
   transcript: (text: string, role: 'user' | 'assistant') => void;
+  transcriptDelta: (delta: string, role: 'user' | 'assistant') => void;
   error: (error: Error) => void;
   toolStart: (name: string, args: Record<string, unknown>) => void;
   toolEnd: (name: string, result: string) => void;
@@ -179,9 +180,12 @@ export class VoiceAgent {
     // Wire up events
     this.session.on('stateChange', (state) => {
       this.state = state;
-      // stateChange still uses direct broadcast for UI state (listening/thinking/speaking)
-      // stream_chunk only handles message content, not UI state
+      // Emit state change for UI (listening/thinking/speaking indicator)
       this.emit('stateChange', state, this.currentProfile?.name ?? null);
+
+      // Emit AI SDK lifecycle events via adapter (start-step on thinking, finish on idle)
+      // This ensures the frontend knows when a response is complete (clears pending flag)
+      this.adapter?.stateChange(state, this.currentProfile?.name ?? null);
 
       // Stop transport when going idle
       if (this.transport && state === 'idle') {
@@ -201,7 +205,18 @@ export class VoiceAgent {
       // Collect transcripts for logging
       this.transcriptBuffer.push(`${role}: ${text}`);
       // Emit stream_chunk via AI SDK adapter (unified protocol)
-      this.adapter?.transcript(text, role);
+      // Only emit for user messages - assistant messages are streamed via transcriptDelta
+      if (role === 'user') {
+        this.adapter?.transcript(text, role);
+      }
+    });
+
+    this.session.on('transcriptDelta', (delta, role) => {
+      // Stream assistant transcript deltas in real-time
+      // User transcripts don't have deltas (they arrive complete)
+      if (role === 'assistant') {
+        this.adapter?.transcript(delta, role);
+      }
     });
 
     this.session.on('error', (error) => {
@@ -223,6 +238,9 @@ export class VoiceAgent {
     this.session.on('disconnected', () => {
       // Log the agent run to database before resetting state
       this.logAgentRun();
+
+      // Clean up adapter state tracking
+      this.adapter?.cleanup();
 
       // Mark voice session as finished in database
       if (this.currentSessionId) {

@@ -23,6 +23,17 @@ interface InputAudioTranscriptionCompletedEvent {
   item_id: string;
   transcript: string;
 }
+
+// Type for output audio transcript delta event (streaming assistant speech)
+interface OutputAudioTranscriptDeltaEvent {
+  type: 'response.output_audio_transcript.delta';
+  event_id: string;
+  item_id: string;
+  content_index: number;
+  delta: string;
+  output_index: number;
+  response_id: string;
+}
 import { config } from '../config.js';
 import type { AgentProfile } from '../agent/profiles.js';
 
@@ -51,6 +62,7 @@ export interface SessionEvents {
   stateChange: (state: AgentState) => void;
   audio: (audio: TransportLayerAudio) => void;
   transcript: (text: string, role: 'user' | 'assistant') => void;
+  transcriptDelta: (delta: string, role: 'user' | 'assistant') => void;
   historyUpdated: (history: RealtimeItem[]) => void;
   error: (error: Error) => void;
   connected: () => void;
@@ -252,9 +264,17 @@ export class VoiceSession {
       this.resetConversationTimeout();
     });
 
-    // Transport events for user transcription
+    // Transport events for transcription
     this.session.on('transport_event', (event: TransportEvent) => {
-      // User input audio transcription completed
+      // Streaming assistant transcript delta
+      if (event.type === 'response.output_audio_transcript.delta') {
+        const deltaEvent = event as OutputAudioTranscriptDeltaEvent;
+        if (deltaEvent.delta) {
+          this.emit('transcriptDelta', deltaEvent.delta, 'assistant');
+        }
+      }
+
+      // User input audio transcription completed (always arrives complete, not streamed)
       if (event.type === 'conversation.item.input_audio_transcription.completed') {
         const transcriptEvent = event as InputAudioTranscriptionCompletedEvent;
         if (transcriptEvent.transcript) {

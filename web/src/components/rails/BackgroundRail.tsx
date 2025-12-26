@@ -1,699 +1,383 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Background Rail - Slim vertical Icon Dock with sessions grouped by thread
-// Obsidian Glass / Minority Report aesthetic
+// Background Rail - Expandable sidebar for session history
+// Collapsed: 80px icon dock | Expanded: 220px with session previews
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   useUnifiedSessionsStore,
-  useEvents,
-  useOverlayState,
-  useSessions,
   useActiveView,
-  type SessionState,
 } from '../../stores';
+import type { SessionTreeNode } from '../../types';
 
-type ActiveView = 'sessions' | 'prompts';
-import type { OverlayType, SessionStatus } from '../../types';
+// Format relative time compactly
+function formatTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
 
-// Persistent action icons (overlay toggles)
-const DOCK_ACTIONS: { id: OverlayType; icon: string; label: string }[] = [
-  { id: 'events', icon: '⚡', label: 'Events' },
-  { id: 'tools', icon: '◇', label: 'Tools' },
-  { id: 'history', icon: '◷', label: 'History' },
-];
-
-const SESSION_STATUS_COLORS: Record<SessionStatus, string> = {
-  pending: 'var(--color-amber)',
-  running: 'var(--color-cyan)',
-  waiting_for_input: 'var(--color-violet)',
-  finished: 'var(--color-text-dim)',
-  error: 'var(--color-rose)',
-  cancelled: 'var(--color-text-ghost)',
-};
-
-function DockButton({
-  icon,
-  label,
-  active,
-  badge,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  active?: boolean;
-  badge?: number;
-  onClick: () => void;
-}) {
-  const [showTooltip, setShowTooltip] = useState(false);
-
-  return (
-    <button
-      className={`dock-btn ${active ? 'active' : ''}`}
-      onClick={onClick}
-      onMouseEnter={() => setShowTooltip(true)}
-      onMouseLeave={() => setShowTooltip(false)}
-    >
-      <span className="dock-icon">{icon}</span>
-      {badge !== undefined && badge > 0 && (
-        <span className="dock-badge">{badge > 99 ? '99+' : badge}</span>
-      )}
-      <AnimatePresence>
-        {showTooltip && (
-          <motion.div
-            className="dock-tooltip"
-            initial={{ opacity: 0, x: -4 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -4 }}
-            transition={{ duration: 0.15 }}
-          >
-            {label}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </button>
-  );
+  if (diffMins < 1) return 'now';
+  if (diffMins < 60) return `${diffMins}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  if (diffDays < 7) return `${diffDays}d`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function SessionButton({
-  session,
-  onClick,
-}: {
-  session: SessionState;
-  onClick: () => void;
-}) {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const statusColor = SESSION_STATUS_COLORS[session.status];
-  const isActive = session.status === 'running' || session.status === 'waiting_for_input';
-
-  return (
-    <motion.button
-      className={`dock-session ${isActive ? 'active' : ''}`}
-      style={{ '--status-color': statusColor } as React.CSSProperties}
-      onClick={onClick}
-      onMouseEnter={() => setShowTooltip(true)}
-      onMouseLeave={() => setShowTooltip(false)}
-      initial={{ opacity: 0, scale: 0.8, x: -10 }}
-      animate={{ opacity: 1, scale: 1, x: 0 }}
-      whileHover={{ scale: 1.05 }}
-      transition={{ duration: 0.2 }}
-    >
-      <span className="dock-session-icon">▣</span>
-      <span className={`dock-session-indicator ${isActive ? 'pulse' : ''}`} />
-      <AnimatePresence>
-        {showTooltip && (
-          <motion.div
-            className="dock-session-tooltip"
-            initial={{ opacity: 0, x: -4 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -4 }}
-            transition={{ duration: 0.15 }}
-          >
-            <div className="tooltip-goal">{session.goal}</div>
-            <div className="tooltip-id">ID: {session.id.slice(0, 8)}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.button>
-  );
-}
-
-function ThreadGroup({
-  threadId,
-  sessions,
-  onSessionClick,
-}: {
-  threadId: string;
-  sessions: SessionState[];
-  onSessionClick: (session: SessionState) => void;
-}) {
-  const [expanded, setExpanded] = useState(true);
-  const activeCount = sessions.filter(
-    (s) => s.status === 'running' || s.status === 'waiting_for_input'
-  ).length;
-
-  return (
-    <div className="thread-group">
-      <button
-        className={`thread-header ${expanded ? 'expanded' : ''}`}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span className="thread-chevron">{expanded ? '▾' : '▸'}</span>
-        <span className="thread-count">{sessions.length}</span>
-        {activeCount > 0 && <span className="thread-active-dot" />}
-      </button>
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            className="thread-sessions"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            {sessions.map((session) => (
-              <SessionButton
-                key={session.id}
-                session={session}
-                onClick={() => onSessionClick(session)}
-              />
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
+// Check if a session tree has any running descendants
+function hasRunningDescendant(node: SessionTreeNode): boolean {
+  if (['pending', 'running', 'waiting_for_input'].includes(node.status)) return true;
+  return node.children.some(hasRunningDescendant);
 }
 
 export function BackgroundRail() {
-  // Use unified store for tree-based state
-  const backgroundTreeIds = useUnifiedSessionsStore((s) => s.backgroundTreeIds);
-  const restoreTree = useUnifiedSessionsStore((s) => s.restoreTree);
+  const [expanded, setExpanded] = useState(false);
+
+  // Store state
+  const allTrees = useUnifiedSessionsStore((s) => s.allTrees);
+  const sessionTree = useUnifiedSessionsStore((s) => s.sessionTree);
   const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
   const setActiveView = useUnifiedSessionsStore((s) => s.setActiveView);
-  const { activeOverlay, setActiveOverlay } = useOverlayState();
-  const events = useEvents();
   const activeView = useActiveView();
 
-  // Get sessions from unified store (Map)
-  const sessionsMap = useSessions();
-
-  // Convert Map to array for length checks and iteration
-  const sessions = useMemo(() => Array.from(sessionsMap.values()), [sessionsMap]);
-
-  // Convert Map to array and group by parent_id as thread
-  const sessionsByThread = useMemo(() => {
-    const grouped = new Map<string, SessionState[]>();
-    sessionsMap.forEach((session) => {
-      const threadId = session.parentId || 'root';
-      const existing = grouped.get(threadId) || [];
-      grouped.set(threadId, [...existing, session]);
+  // Get only voice sessions (true roots), sorted by creation time (newest first)
+  const rootSessions = useMemo(() => {
+    const sessions = Array.from(allTrees.values())
+      .filter((s) => s.type === 'voice'); // Only show voice sessions, not subagents
+    return sessions.sort((a, b) => {
+      const aTime = new Date(a.created_at).getTime();
+      const bTime = new Date(b.created_at).getTime();
+      return bTime - aTime;
     });
-    return grouped;
-  }, [sessionsMap]);
+  }, [allTrees]);
 
-  // Sort threads by most recent session
-  const sortedThreads = useMemo(() => {
-    const entries = Array.from(sessionsByThread.entries());
-    return entries.sort((a, b) => {
-      const aLatest = a[1][a[1].length - 1];
-      const bLatest = b[1][b[1].length - 1];
-      // Sessions don't have created_at, use id as fallback (ids are time-based)
-      return bLatest.id.localeCompare(aLatest.id);
-    });
-  }, [sessionsByThread]);
+  // The current tree root ID (even if focused on a child)
+  const currentRootId = sessionTree?.id ?? null;
+  const isPromptsView = activeView === 'prompts';
 
-  const handleOverlayToggle = (overlay: OverlayType) => {
-    if (activeOverlay === overlay) {
-      setActiveOverlay(null);
-    } else {
-      setActiveOverlay(overlay);
-    }
-  };
-
-  const handleSessionClick = (session: SessionState) => {
-    // Focus the session in the tree if it exists
+  const handleSessionClick = (session: SessionTreeNode) => {
     focusSession(session.id);
+    if (isPromptsView) setActiveView('sessions');
   };
 
   return (
-    <div className="dock-rail">
+    <motion.div
+      className="bg-rail"
+      animate={{ width: expanded ? 220 : 80 }}
+      transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+    >
       <style>{`
-        .dock-rail {
+        .bg-rail {
           display: flex;
           flex-direction: column;
-          align-items: center;
           height: 100%;
-          padding: 20px 0;
-          gap: 0;
+          background: rgba(5, 5, 10, 0.4);
           overflow: hidden;
-        }
-
-        .dock-actions {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 8px;
-          padding-bottom: 20px;
-          flex-shrink: 0;
-        }
-
-        .dock-btn {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 48px;
-          height: 48px;
-          background: transparent;
-          border: none;
-          border-radius: 12px;
-          cursor: pointer;
-          transition: all 0.2s ease;
           position: relative;
         }
 
-        .dock-btn::before {
-          content: '';
-          position: absolute;
-          left: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 3px;
-          height: 0;
-          background: var(--color-cyan);
-          border-radius: 0 2px 2px 0;
-          transition: all 0.2s ease;
-          box-shadow: 0 0 8px var(--color-cyan);
-        }
+        /* ════════════════════════════════════════════════════════════════
+           SESSIONS AREA
+           ════════════════════════════════════════════════════════════════ */
 
-        .dock-btn:hover::before {
-          height: 24px;
-        }
-
-        .dock-btn.active::before {
-          height: 32px;
-          box-shadow: 0 0 12px var(--color-cyan);
-        }
-
-        .dock-btn:hover {
-          background: rgba(56, 189, 248, 0.05);
-        }
-
-        .dock-btn.active {
-          background: rgba(56, 189, 248, 0.08);
-        }
-
-        .dock-icon {
-          font-size: 20px;
-          color: var(--color-text-dim);
-          transition: all 0.2s ease;
-        }
-
-        .dock-btn:hover .dock-icon,
-        .dock-btn.active .dock-icon {
-          color: var(--color-cyan);
-          text-shadow: 0 0 12px var(--color-cyan);
-        }
-
-        .dock-badge {
-          position: absolute;
-          top: 6px;
-          right: 6px;
-          min-width: 16px;
-          height: 16px;
-          padding: 0 4px;
-          background: var(--color-cyan);
-          border-radius: 8px;
-          font-family: var(--font-mono);
-          font-size: 9px;
-          font-weight: 600;
-          color: var(--color-void);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          box-shadow: 0 0 8px var(--color-cyan);
-        }
-
-        .dock-tooltip {
-          position: absolute;
-          left: 100%;
-          top: 50%;
-          transform: translateY(-50%);
-          margin-left: 12px;
-          padding: 6px 12px;
-          background: rgba(10, 10, 15, 0.95);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 6px;
-          font-family: var(--font-mono);
-          font-size: 11px;
-          color: var(--color-text-normal);
-          white-space: nowrap;
-          pointer-events: none;
-          z-index: 100;
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-        }
-
-        .dock-tooltip::before {
-          content: '';
-          position: absolute;
-          left: -6px;
-          top: 50%;
-          transform: translateY(-50%);
-          border: 6px solid transparent;
-          border-right-color: rgba(10, 10, 15, 0.95);
-        }
-
-        .dock-divider {
-          width: 32px;
-          height: 1px;
-          background: var(--color-glass-border);
-          margin: 4px 0 16px 0;
-          flex-shrink: 0;
-        }
-
-        .dock-tasks {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 10px;
-          overflow-y: auto;
-          padding: 0 8px;
-          flex-shrink: 0;
-        }
-
-        .dock-task {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 44px;
-          height: 44px;
-          background: rgba(10, 10, 15, 0.6);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 10px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          position: relative;
-        }
-
-        .dock-task:hover {
-          border-color: var(--color-cyan-dim);
-          background: rgba(56, 189, 248, 0.05);
-        }
-
-        .dock-task.terminal {
-          border-left: 2px solid var(--color-cyan);
-        }
-
-        .dock-task.terminal .dock-task-icon {
-          color: var(--color-cyan);
-          animation: task-pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes task-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-
-        .dock-task-icon {
-          font-family: var(--font-mono);
-          font-size: 16px;
-          color: var(--color-text-dim);
-        }
-
-        .dock-task-tooltip {
-          position: absolute;
-          left: 100%;
-          top: 50%;
-          transform: translateY(-50%);
-          margin-left: 12px;
-          padding: 6px 12px;
-          background: rgba(10, 10, 15, 0.95);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 6px;
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-text-normal);
-          white-space: nowrap;
-          pointer-events: none;
-          z-index: 100;
-          max-width: 160px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-        }
-
-        /* ═══════════════════════════════════════════════════════════════════
-           SESSION GROUPS
-           ═══════════════════════════════════════════════════════════════════ */
-
-        .sessions-section {
+        .rail-sessions {
           flex: 1;
           display: flex;
           flex-direction: column;
-          align-items: center;
+          padding: 16px 12px;
           gap: 8px;
           overflow-y: auto;
-          padding: 0 4px;
+          overflow-x: hidden;
           min-height: 0;
         }
 
-        .sessions-section::-webkit-scrollbar {
-          width: 4px;
+        .rail-sessions::-webkit-scrollbar {
+          width: 2px;
         }
 
-        .sessions-section::-webkit-scrollbar-track {
-          background: transparent;
+        .rail-sessions::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 1px;
         }
 
-        .sessions-section::-webkit-scrollbar-thumb {
-          background: rgba(56, 189, 248, 0.2);
-          border-radius: 2px;
-        }
+        /* ════════════════════════════════════════════════════════════════
+           SESSION ITEM - Minimal card
+           ════════════════════════════════════════════════════════════════ */
 
-        .sessions-label {
-          font-family: var(--font-mono);
-          font-size: 9px;
-          letter-spacing: 0.1em;
-          color: var(--color-text-ghost);
-          text-transform: uppercase;
-          padding: 4px 0;
-        }
-
-        .thread-group {
+        .rail-item {
           display: flex;
-          flex-direction: column;
           align-items: center;
-          gap: 4px;
+          gap: 10px;
+          padding: 8px;
+          background: transparent;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: background 0.15s ease;
+          text-align: left;
+          min-height: 40px;
           width: 100%;
         }
 
-        .thread-header {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 4px;
-          width: 44px;
-          height: 24px;
-          background: rgba(10, 10, 15, 0.4);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 6px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          position: relative;
+        .rail-item:hover {
+          background: rgba(255, 255, 255, 0.04);
         }
 
-        .thread-header:hover {
-          background: rgba(56, 189, 248, 0.05);
-          border-color: var(--color-cyan-dim);
+        .rail-item.is-current {
+          background: rgba(255, 255, 255, 0.06);
         }
 
-        .thread-chevron {
-          font-size: 10px;
-          color: var(--color-text-ghost);
-        }
-
-        .thread-count {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-text-dim);
-        }
-
-        .thread-active-dot {
-          width: 6px;
-          height: 6px;
+        /* Dot indicator */
+        .rail-dot {
+          width: 8px;
+          height: 8px;
           border-radius: 50%;
-          background: var(--color-cyan);
-          box-shadow: 0 0 8px var(--color-cyan);
-          animation: dot-pulse 1.5s ease-in-out infinite;
-        }
-
-        @keyframes dot-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
-
-        .thread-sessions {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 4px;
-          padding-left: 8px;
-          border-left: 1px solid rgba(56, 189, 248, 0.1);
-          margin-left: 8px;
-          overflow: hidden;
-        }
-
-        .dock-session {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 36px;
-          height: 36px;
-          background: rgba(10, 10, 15, 0.5);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 8px;
-          cursor: pointer;
+          background: rgba(255, 255, 255, 0.2);
+          flex-shrink: 0;
           transition: all 0.2s ease;
-          position: relative;
         }
 
-        .dock-session:hover {
-          border-color: var(--status-color);
-          background: color-mix(in srgb, var(--status-color) 5%, transparent);
+        .rail-item.is-active .rail-dot {
+          background: rgba(52, 211, 153, 0.8);
+          box-shadow: 0 0 6px rgba(52, 211, 153, 0.5);
         }
 
-        .dock-session.active {
-          border-left: 2px solid var(--status-color);
+        .rail-item.is-current .rail-dot {
+          background: rgba(56, 189, 248, 0.8);
+          box-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
         }
 
-        .dock-session-icon {
+        /* Text content - only visible when expanded */
+        .rail-text {
+          flex: 1;
+          min-width: 0;
+          opacity: 0;
+          transition: opacity 0.15s ease;
+        }
+
+        .bg-rail:hover .rail-text {
+          opacity: 1;
+        }
+
+        .rail-preview {
           font-family: var(--font-mono);
-          font-size: 14px;
-          color: var(--status-color);
-          opacity: 0.8;
-        }
-
-        .dock-session-indicator {
-          position: absolute;
-          top: 4px;
-          right: 4px;
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: var(--status-color);
-        }
-
-        .dock-session-indicator.pulse {
-          animation: indicator-pulse 1.5s ease-in-out infinite;
-        }
-
-        @keyframes indicator-pulse {
-          0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--status-color); }
-          50% { opacity: 0.5; box-shadow: 0 0 8px var(--status-color); }
-        }
-
-        .dock-session-tooltip {
-          position: absolute;
-          left: 100%;
-          top: 50%;
-          transform: translateY(-50%);
-          margin-left: 12px;
-          padding: 8px 12px;
-          background: rgba(10, 10, 15, 0.95);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 6px;
-          font-family: var(--font-mono);
-          pointer-events: none;
-          z-index: 100;
-          max-width: 200px;
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-        }
-
-        .tooltip-goal {
           font-size: 11px;
-          color: var(--color-text-normal);
-          margin-bottom: 4px;
+          font-weight: 400;
+          color: rgba(255, 255, 255, 0.7);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+          line-height: 1.3;
         }
 
-        .tooltip-id {
-          font-size: 9px;
-          color: var(--color-text-ghost);
+        .rail-item.is-current .rail-preview {
+          color: rgba(255, 255, 255, 0.9);
         }
 
-        .empty-sessions {
+        .rail-time {
           font-family: var(--font-mono);
           font-size: 9px;
-          color: var(--color-text-ghost);
-          text-align: center;
-          padding: 12px 0;
+          color: rgba(255, 255, 255, 0.3);
+          margin-top: 2px;
         }
 
-        .dock-tasks::-webkit-scrollbar {
-          width: 0;
+        /* ════════════════════════════════════════════════════════════════
+           EMPTY STATE
+           ════════════════════════════════════════════════════════════════ */
+
+        .rail-empty {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+        }
+
+        .rail-empty-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+        .rail-empty-text {
+          opacity: 0;
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: rgba(255, 255, 255, 0.3);
+          text-align: center;
+          line-height: 1.5;
+          transition: opacity 0.15s ease;
+        }
+
+        .bg-rail:hover .rail-empty-text {
+          opacity: 1;
+        }
+
+        .bg-rail:hover .rail-empty-dot {
+          display: none;
+        }
+
+        /* ════════════════════════════════════════════════════════════════
+           FOOTER - Navigation
+           ════════════════════════════════════════════════════════════════ */
+
+        .rail-footer {
+          flex-shrink: 0;
+          padding: 12px;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .rail-nav {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px;
+          background: transparent;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: background 0.15s ease;
+          width: 100%;
+        }
+
+        .rail-nav:hover {
+          background: rgba(255, 255, 255, 0.04);
+        }
+
+        .rail-nav.is-active {
+          background: rgba(255, 255, 255, 0.06);
+        }
+
+        .rail-nav-icon {
+          width: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 14px;
+          color: rgba(255, 255, 255, 0.4);
+          flex-shrink: 0;
+        }
+
+        .rail-nav.is-active .rail-nav-icon {
+          color: rgba(139, 92, 246, 0.8);
+        }
+
+        .rail-nav-label {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          color: rgba(255, 255, 255, 0.5);
+          opacity: 0;
+          transition: opacity 0.15s ease;
+        }
+
+        .bg-rail:hover .rail-nav-label {
+          opacity: 1;
+        }
+
+        .rail-nav.is-active .rail-nav-label {
+          color: rgba(139, 92, 246, 0.8);
+        }
+
+        /* Back button in prompts view */
+        .rail-back {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px;
+          margin-bottom: 8px;
+          background: transparent;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: background 0.15s ease;
+          width: 100%;
+        }
+
+        .rail-back:hover {
+          background: rgba(255, 255, 255, 0.04);
+        }
+
+        .rail-back-icon {
+          width: 8px;
+          font-size: 12px;
+          color: rgba(56, 189, 248, 0.7);
+          flex-shrink: 0;
+        }
+
+        .rail-back-label {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: rgba(56, 189, 248, 0.7);
+          opacity: 0;
+          transition: opacity 0.15s ease;
+        }
+
+        .bg-rail:hover .rail-back-label {
+          opacity: 1;
         }
       `}</style>
 
-      {/* Action Icons */}
-      <div className="dock-actions">
-        {DOCK_ACTIONS.map((action) => (
-          <DockButton
-            key={action.id}
-            icon={action.icon}
-            label={action.label}
-            active={activeOverlay === action.id}
-            badge={action.id === 'events' ? events.length : undefined}
-            onClick={() => handleOverlayToggle(action.id)}
-          />
-        ))}
-        {/* Prompts Toggle */}
-        <DockButton
-          icon="="
-          label="Prompts"
-          active={activeView === 'prompts'}
-          onClick={() => setActiveView(activeView === 'prompts' ? 'sessions' : 'prompts')}
-        />
-      </div>
+      {/* Sessions area */}
+      <div className="rail-sessions">
+        {/* Back button when in prompts view */}
+        {isPromptsView && (
+          <button className="rail-back" onClick={() => setActiveView('sessions')}>
+            <span className="rail-back-icon">←</span>
+            <span className="rail-back-label">Back</span>
+          </button>
+        )}
 
-      {/* Divider if there are background trees */}
-      {backgroundTreeIds.length > 0 && <div className="dock-divider" />}
+        {rootSessions.length > 0 ? (
+          <AnimatePresence mode="popLayout">
+            {rootSessions.map((session) => {
+              const isActive = hasRunningDescendant(session);
+              const isCurrent = session.id === currentRootId;
+              const preview = session.goal?.substring(0, 28) || 'Voice session';
+              const time = formatTime(session.created_at);
 
-      {/* Background Trees (minimized session trees) */}
-      {backgroundTreeIds.length > 0 && (
-        <div className="dock-tasks">
-          <AnimatePresence>
-            {backgroundTreeIds.map((treeId) => (
-              <motion.button
-                key={treeId}
-                className="dock-task terminal"
-                onClick={() => restoreTree(treeId)}
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                whileHover={{ scale: 1.05 }}
-                transition={{ duration: 0.2 }}
-                title={`Restore tree ${treeId.slice(0, 8)}`}
-              >
-                <span className="dock-task-icon">◇</span>
-              </motion.button>
-            ))}
+              return (
+                <motion.button
+                  key={session.id}
+                  className={`rail-item ${isActive ? 'is-active' : ''} ${isCurrent ? 'is-current' : ''}`}
+                  onClick={() => handleSessionClick(session)}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  <span className="rail-dot" />
+                  <div className="rail-text">
+                    <div className="rail-preview">{preview}</div>
+                    <div className="rail-time">{time}</div>
+                  </div>
+                </motion.button>
+              );
+            })}
           </AnimatePresence>
-        </div>
-      )}
-
-      {/* Divider before sessions */}
-      {(backgroundTreeIds.length > 0 || sessions.length > 0) && <div className="dock-divider" />}
-
-      {/* Sessions Section */}
-      <div className="sessions-section">
-        {sessions.length > 0 ? (
-          <>
-            <span className="sessions-label">Sessions</span>
-            {sortedThreads.map(([threadId, threadSessions]) => (
-              // Skip group wrapper for single-session threads
-              threadSessions.length === 1 ? (
-                <SessionButton
-                  key={threadSessions[0].id}
-                  session={threadSessions[0]}
-                  onClick={() => handleSessionClick(threadSessions[0])}
-                />
-              ) : (
-                <ThreadGroup
-                  key={threadId}
-                  threadId={threadId}
-                  sessions={threadSessions}
-                  onSessionClick={handleSessionClick}
-                />
-              )
-            ))}
-          </>
         ) : (
-          <span className="empty-sessions">No sessions</span>
+          <div className="rail-empty">
+            <span className="rail-empty-dot" />
+            <span className="rail-empty-text">No sessions</span>
+          </div>
         )}
       </div>
-    </div>
+
+      {/* Footer navigation */}
+      <div className="rail-footer">
+        <button
+          className={`rail-nav ${isPromptsView ? 'is-active' : ''}`}
+          onClick={() => setActiveView(isPromptsView ? 'sessions' : 'prompts')}
+        >
+          <span className="rail-nav-icon">≡</span>
+          <span className="rail-nav-label">Prompts</span>
+        </button>
+      </div>
+    </motion.div>
   );
 }
