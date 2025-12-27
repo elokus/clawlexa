@@ -63,6 +63,7 @@ export interface CreateSubagentInput {
   agent_name: AgentName;
   model: string;
   parent_id?: string; // Voice session ID - links subagent to voice session
+  background?: boolean; // If true, runs detached without blocking voice agent
 }
 
 /** @deprecated Use CreateSubagentInput instead */
@@ -101,6 +102,7 @@ export interface SessionTreeNode {
   profile: VoiceProfile | null; // For voice sessions
   agent_name: AgentName | null; // For subagent sessions
   tool_call_id: string | null; // For terminals: links to the tool call that created them
+  background: boolean; // For subagents: true if running detached from voice agent
   created_at: string;
   children: SessionTreeNode[];
 }
@@ -138,18 +140,23 @@ export class CliSessionsRepository {
   /**
    * Create a new subagent session (stateful LLM agent).
    * Subagents are typically children of voice sessions.
+   *
+   * @param input.background - If true, creates a detached session that runs independently
+   *                           without blocking the voice agent. Background sessions can
+   *                           notify the voice agent upon completion via callback.
    */
   createSubagent(input: CreateSubagentInput): Session {
     const id = input.id ?? generateId();
     const now = new Date().toISOString();
+    const background = input.background ? 1 : 0;
 
     this.db
       .prepare(
         `INSERT INTO cli_sessions
-         (id, type, goal, status, parent_id, agent_name, model, conversation_history, created_at, updated_at)
-         VALUES (?, 'subagent', ?, 'running', ?, ?, ?, '[]', ?, ?)`
+         (id, type, goal, status, parent_id, agent_name, model, conversation_history, background, created_at, updated_at)
+         VALUES (?, 'subagent', ?, 'running', ?, ?, ?, '[]', ?, ?, ?)`
       )
-      .run(id, input.goal, input.parent_id ?? null, input.agent_name, input.model, now, now);
+      .run(id, input.goal, input.parent_id ?? null, input.agent_name, input.model, background, now, now);
 
     return this.findById(id)!;
   }
@@ -402,6 +409,7 @@ export class CliSessionsRepository {
         profile: s.profile,
         agent_name: s.agent_name,
         tool_call_id: s.tool_call_id,
+        background: Boolean(s.background),
         created_at: s.created_at,
         children: children.map(buildNode),
       };

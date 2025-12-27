@@ -136,7 +136,9 @@ export function ThreadRail() {
     ? flattenedTree.filter((item) => item.node.type !== 'voice')
     : flattenedTree;
 
-  const isVoiceFocused = focusedSessionId === null || focusedSessionId === voiceSessionId;
+  // Only treat as voice-focused if explicitly focused on voice session
+  // Don't treat null as "voice focused" - it causes flicker during URL sync
+  const isVoiceFocused = voiceSessionId !== null && focusedSessionId === voiceSessionId;
   const totalItems = (showVoiceCard ? 1 : 0) + childSessions.length;
 
   return (

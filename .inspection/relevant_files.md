@@ -1,43 +1,46 @@
 # Codebase Inspection
 
-**Request:** Find all relevant files for implementing URL-based session routing in the web frontend. The feature involves: 1) Adding React Router or using existing routing, 2) Creating /session/:sessionId routes, 3) Syncing URL with focusedSessionId state, 4) Loading session history on route mount. Look for: routing configuration, session state management (focusedSessionId), session history loading, and any existing URL handling patterns.
+**Request:** Find the source of duplicate state updates causing UI flicker in ThreadRail. Issues: 1) WebSocket showing 'Reusing existing connection' twice on session click, 2) Voice session in ThreadRail flickering - appearing not at root then reappearing at root. Look for: React StrictMode double-mount issues, duplicate WebSocket connections, session tree state being set multiple times, useUrlSessionSync triggering multiple focusSession calls, and any race conditions in session focusing.
 
 ---
 
-The system uses a **Session-Centric Architecture** where the frontend is a React-based Single Page Application (SPA) driven by a unified Zustand state store.
+This report maps the architecture and data flow related to session focusing and state synchronization to investigate UI flickering and duplicate connection logs in the VΞRTΞX dashboard.
 
 ### 1) Architecture Map
-*   **Unified State Management:** `useUnifiedSessionsStore` (`web/src/stores/unified-sessions.ts`) acts as the single source of truth, managing session trees, focusing logic, and history reconstruction.
-*   **Stage Orchestration:** The UI is organized into "Stages" (`web/src/components/layout/StageOrchestrator.tsx`). The orchestrator determines which component to render based on the session type of the `focusedSessionId`.
-*   **Routing Pattern:** Currently utilizes a custom, lightweight hook-based routing system (`web/src/hooks/useRouter.ts`) that performs manual regex matching on `window.location.pathname`.
-*   **Data Retrieval:** Session metadata arrives via WebSockets, but conversation history is loaded on-demand via a REST API client (`web/src/lib/sessions-api.ts`).
-*   **Sync Logic:** A placeholder hook `useUrlSessionSync` exists in the router module but is not yet fully integrated into the main application lifecycle to bind the store state to the URL.
 
-### 2) Existing Session & Routing Flow
-*   **Entry Point:** `web/src/main.tsx` evaluates `window.location.pathname` to decide whether to render the main `App` or the `DevPage`.
-*   **Navigation Trigger:** User interaction in navigation rails (e.g., `BackgroundRail.tsx`) calls `focusSession(sessionId)` in the store.
-*   **State Update:** `focusSession` updates the `focusedSessionId` and immediately invokes `loadSessionHistory(sessionId)`.
-*   **History Loading:** The store checks if messages exist; if not, it calls `fetchSessionMessages` from the REST API and replays the events through the `handleStreamChunk` logic to rebuild the message list.
-*   **View Switching:** `StageOrchestrator` detects the change in `focusedSessionId` and triggers an `AnimatePresence` transition to the new session's stage (Terminal or Agent view).
-*   **URL/State Disconnect:** Currently, manually entering a session URL does not trigger the store's focusing logic, and clicking a session in the UI does not update the browser's address bar.
+*   **Unified State Core**: `useUnifiedSessionsStore` (`web/src/stores/unified-sessions.ts`) serves as the central authority for session trees, focusing logic, and audio/agent states.
+*   **Dual-Path Synchronization**: The system maintains state alignment through two concurrent paths: a URL-based router (`web/src/hooks/useRouter.ts`) and a WebSocket event handler (`web/src/stores/message-handler.ts`).
+*   **Singleton Resource Management**: Critical resources like WebSockets and Terminal PTYs use module-level singletons with reference counting (`useWebSocket.ts`, `terminal-client.ts`) to mitigate React 19 / StrictMode double-mounting.
+*   **Dynamic Stage Orchestration**: `StageOrchestrator.tsx` dynamically switches between `AgentStage` and `TerminalStage` based on the `focusedSessionId` and its corresponding metadata in the sessions Map.
+*   **Data Boundaries**: Session hierarchy and real-time events flow via WebSockets, while detailed message history is retrieved on-demand via the REST API (`sessions-api.ts`).
+
+### 2) Existing Flow (Session Navigation)
+
+*   **Trigger**: A user clicks a session in `ThreadRail.tsx` or `BackgroundRail.tsx`, which calls `navigateToSession(id)`.
+*   **URL Update**: The `useRouter` module updates `window.location.pathname`, triggering a `popstate` event.
+*   **URL Synchronization**: `useUrlSessionSync` (in `App.tsx`) detects the URL change and calls `store.focusSession(id)`.
+*   **Store Reconciliation**: `focusSession` updates the `focusedSessionId` and triggers `loadSessionHistory(id)`, which fetches missing messages from the REST API.
+*   **WebSocket Interleaving**: Simultaneously, `session_tree_update` events arrive via the WebSocket, causing the store to re-evaluate the tree structure and potentially adjust focus if the current session is missing or finished.
+*   **View Transition**: The `StageOrchestrator` detects the updated focus and triggers an `AnimatePresence` transition, which mounts the new Stage component (e.g., `TerminalStage`).
 
 ### 3) Relevant Code Locations
 
-**Entrypoints**
-*   `web/src/main.tsx`: The primary routing junction; currently lacks logic to pass URL parameters into the `App`.
-*   `web/index.html`: Base HTML; important if configuring a router that requires `historyApiFallback`.
+**Entrypoints & Integration Singletons**
+*   `web/src/hooks/useWebSocket.ts`: Manages the global WebSocket connection; contains ref-counting logic and connection reuse logs.
+*   `web/src/lib/terminal-client.ts`: Contains `getTerminalClient` and the "Reusing connection" logs; manages PTY session multiplexing.
+*   `web/src/main.tsx`: Wraps the application in `StrictMode`, which is a suspected factor in duplicate initialization.
 
-**Domain & Logic (Routing & State)**
-*   `web/src/hooks/useRouter.ts`: Contains `parseRoute`, `useSessionIdFromUrl`, and the unintegrated `useUrlSessionSync` hook intended for store-URL binding.
-*   `web/src/stores/unified-sessions.ts`: The central store containing `focusedSessionId`, the `focusSession` action, and the `loadSessionHistory` logic.
-*   `web/src/lib/sessions-api.ts`: API client used by the store to fetch historical messages for a session.
-*   `web/src/stores/index.ts`: Export hub for session selectors like `useFocusedSession`.
+**Domain Logic (State & Sync)**
+*   `web/src/stores/unified-sessions.ts`: Contains the primary `focusSession` action and the `handleSessionTreeUpdate` logic which reconciles incoming trees with local state.
+*   `web/src/hooks/useRouter.ts`: Contains `useUrlSessionSync`, which implements the two-way binding between URL and Zustand state.
+*   `web/src/stores/message-handler.ts`: Routes `session_tree_update` and `stream_chunk` events into the store.
 
 **UI Components**
-*   `web/src/App.tsx`: The main layout container where URL synchronization hooks would likely be initialized.
-*   `web/src/components/layout/StageOrchestrator.tsx`: The component that reacts to the "focused" state to render the appropriate session view.
-*   `web/src/components/rails/BackgroundRail.tsx`: A navigation component that currently triggers session focusing via click events.
-*   `web/src/components/rails/ThreadRail.tsx`: Hierarchical navigation that also manages session focus triggers.
+*   `web/src/components/rails/ThreadRail.tsx`: Renders the session tree and the specific logic for showing/hiding the "Voice" root card.
+*   `web/src/components/layout/StageOrchestrator.tsx`: Orchestrates transitions between stages; contains the `stageKey` logic that drives `AnimatePresence`.
+*   `web/src/components/stages/TerminalStage.tsx`: Mounts the terminal; includes `useEffect` hooks that call `getTerminalClient`.
+*   `web/src/components/rails/BackgroundRail.tsx`: Contains navigation triggers that initiate the focus flow.
 
-**Configuration**
-*   `web/vite.config.ts`: Proxy and SPA routing configuration (relevant for `appType: 'spa'` and development server behavior).
+**Backend Emitters**
+*   `pi-agent/src/api/websocket.ts`: The source of `session_tree_update` broadcasts.
+*   `pi-agent/src/agent/voice-agent.ts`: Manages voice session lifecycle and triggers tree updates in the DB.

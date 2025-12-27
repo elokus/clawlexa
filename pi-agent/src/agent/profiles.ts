@@ -12,6 +12,7 @@
 import { RealtimeAgent } from '@openai/agents/realtime';
 import { type ToolName, getToolsForSession } from '../tools/index.js';
 import { getActivePrompt, type InterpolationContext } from '../prompts/index.js';
+import type { VoiceAgent } from './voice-agent.js';
 
 export interface AgentProfile {
   /** Display name of the assistant */
@@ -332,6 +333,7 @@ Sage nur "Ich starte eine Coding-Session." und rufe dann das Tool auf. Nichts we
   voice: 'ash',
   tools: [
     'developer_session',
+    'background_task',
     'check_coding_session',
     'send_session_feedback',
     'stop_coding_session',
@@ -443,9 +445,14 @@ export async function getProfileInstructions(
  * Create a RealtimeAgent from a profile.
  * @param profile - The agent profile configuration
  * @param sessionId - The voice session ID for parent-child tracking
+ * @param voiceAgent - Optional voice agent reference for tools that need completion notifications
  */
-export function createAgentFromProfile(profile: AgentProfile, sessionId: string): RealtimeAgent {
-  const tools = getToolsForSession(profile.tools, sessionId);
+export function createAgentFromProfile(
+  profile: AgentProfile,
+  sessionId: string,
+  voiceAgent?: VoiceAgent
+): RealtimeAgent {
+  const tools = getToolsForSession(profile.tools, { sessionId, voiceAgent });
 
   return new RealtimeAgent({
     name: profile.name,
@@ -461,14 +468,16 @@ export function createAgentFromProfile(profile: AgentProfile, sessionId: string)
  *
  * @param profile - The agent profile configuration
  * @param sessionId - The voice session ID for parent-child tracking
+ * @param voiceAgent - Optional voice agent reference for tools that need completion notifications
  * @param context - Optional interpolation context for prompt variables
  */
 export async function createAgentFromProfileAsync(
   profile: AgentProfile,
   sessionId: string,
+  voiceAgent?: VoiceAgent,
   context: InterpolationContext = {}
 ): Promise<RealtimeAgent> {
-  const tools = getToolsForSession(profile.tools, sessionId);
+  const tools = getToolsForSession(profile.tools, { sessionId, voiceAgent });
 
   // Get dynamic instructions (from prompts dir or fallback to inline)
   const instructions = await getProfileInstructions(profile.name, {

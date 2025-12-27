@@ -27,6 +27,8 @@ export type SessionStatus =
 
 export type AgentName = 'cli' | 'web_search' | 'deep_thinking';
 
+export type VoiceProfile = 'jarvis' | 'marvin';
+
 /**
  * Session tree node - matches backend SessionTreeNode
  */
@@ -35,8 +37,10 @@ export interface SessionTreeNode {
   type: SessionType;
   status: SessionStatus;
   goal: string;
+  profile: VoiceProfile | null; // For voice sessions: 'jarvis' | 'marvin'
   agent_name: AgentName | null;
   tool_call_id: string | null; // For terminals: links to the tool call that created them
+  background: boolean; // For subagents: true if running detached from voice agent
   created_at: string;
   children: SessionTreeNode[];
 }

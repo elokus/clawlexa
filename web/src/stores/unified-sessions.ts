@@ -442,6 +442,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   handleSessionTreeUpdate: (payload) => {
     const { tree, trees } = payload;
 
+    // Check if URL has a session - if so, don't auto-focus (URL is source of truth)
+    const urlHasSession = window.location.pathname.startsWith('/session/');
+
     if (trees) {
       // Batch update - initial load / reconnect
       const newAllTrees = new Map<string, SessionTreeNode>();
@@ -451,13 +454,19 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
       // First tree becomes the active sessionTree, rest go to background
       const firstTree = trees[0] ?? null;
-      const deepest = firstTree ? findDeepestRunning(firstTree) : null;
       const backgroundIds = trees.slice(1).map((t) => t.id);
+
+      // Only auto-focus if URL doesn't specify a session
+      let focusId: string | null = null;
+      if (!urlHasSession) {
+        const deepest = firstTree ? findDeepestRunning(firstTree) : null;
+        focusId = deepest?.id ?? firstTree?.id ?? null;
+      }
 
       set({
         allTrees: newAllTrees,
         sessionTree: firstTree,
-        focusedSessionId: deepest?.id ?? firstTree?.id ?? null,
+        ...(focusId !== null && { focusedSessionId: focusId }),
         backgroundTreeIds: backgroundIds,
       });
       return;
@@ -482,8 +491,8 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         return null;
       };
       newRunningId = findNewRunning(tree);
-    } else {
-      // Initial load - focus deepest running immediately
+    } else if (!urlHasSession) {
+      // Initial load without URL session - focus deepest running immediately
       const deepest = findDeepestRunning(tree);
       if (deepest && deepest.id !== tree.id) {
         set({ sessionTree: tree, focusedSessionId: deepest.id });
@@ -491,7 +500,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       }
     }
 
-    // Validate existing focus
+    // Validate existing focus - only clear if session no longer exists
     let focusedId = current.focusedSessionId;
     if (focusedId && !findSessionById(tree, focusedId)) {
       focusedId = null;
@@ -502,21 +511,23 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
     newAllTrees.set(tree.id, tree);
     set({ sessionTree: tree, allTrees: newAllTrees });
 
-    // Handle delayed auto-focus for new running sessions
+    // Handle auto-focus for NEW running sessions (user just started a session)
+    // This should always focus regardless of URL - user explicitly started it
     if (newRunningId) {
       if (current.focusTimeout) clearTimeout(current.focusTimeout);
       const timeout = setTimeout(() => {
         const currentTree = get().sessionTree;
         const currentFocus = get().focusedSessionId;
         if (currentTree && findSessionById(currentTree, newRunningId)) {
-          if (currentFocus === null || currentFocus === current.focusedSessionId) {
-            get().focusSession(newRunningId);
-          }
+          // Focus new session and update URL
+          console.log(`[TreeUpdate] Auto-focusing new session ${newRunningId.slice(0, 8)}`);
+          get().focusSession(newRunningId);
         }
         set({ focusTimeout: null });
-      }, 2000);
+      }, 500); // Reduced delay for better UX
       set({ focusTimeout: timeout });
-    } else if (!focusedId && !current.focusTimeout) {
+    } else if (!focusedId && !current.focusTimeout && !urlHasSession) {
+      // Only auto-focus deepest if no focus exists and URL doesn't specify one
       const deepest = findDeepestRunning(tree);
       set({ focusedSessionId: deepest?.id ?? null });
     }

@@ -163,7 +163,8 @@ export class VoiceAgent {
     wsBroadcast.sessionTreeUpdate(sessionId);
 
     // Create session FIRST so it can buffer audio during connection
-    const agent = createAgentFromProfile(profile, sessionId);
+    // Pass `this` (VoiceAgent) so tools like background_task can notify on completion
+    const agent = createAgentFromProfile(profile, sessionId, this);
     this.session = new VoiceSession(agent, profile, sessionId);
 
     // Create AI SDK adapter for unified stream_chunk events
