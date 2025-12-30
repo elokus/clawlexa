@@ -3,11 +3,43 @@
 // Touch-friendly, swipeable, with smooth animations
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useRef, useEffect, useState } from 'react';
-import { useSessionsStore } from '../stores/sessions';
-import { useAgentStore, useSubagentActivities } from '../stores/agent';
-import { ActivityFeed } from './ActivityFeed';
+import { useRef, useEffect, useState, useCallback } from 'react';
+import { useUnifiedSessionsStore, useSubagentActivities, type ActivityBlock } from '../stores';
 import type { RealtimeEvent, CliSession } from '../types';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLI Sessions API Hook (fetches from REST API, not WebSocket session tree)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function useCliSessions() {
+  const [sessions, setSessions] = useState<CliSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchSessions = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${baseUrl}/api/sessions`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setSessions(data.sessions || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch sessions');
+      setSessions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const selectSession = useCallback((id: string | null) => {
+    setSelectedSessionId(id);
+  }, []);
+
+  return { sessions, selectedSessionId, selectSession, loading, error, fetchSessions };
+}
 
 type TabType = 'sessions' | 'agent' | 'tools' | 'events';
 
@@ -128,7 +160,7 @@ function TabButton({
 
 // Sessions Tab
 function SessionsTab() {
-  const { sessions, selectedSessionId, selectSession, loading, error, fetchSessions } = useSessionsStore();
+  const { sessions, selectedSessionId, selectSession, loading, error, fetchSessions } = useCliSessions();
 
   useEffect(() => {
     fetchSessions();
@@ -662,6 +694,155 @@ function EventsTab({ events, onClear }: { events: RealtimeEvent[]; onClear: () =
   );
 }
 
+// Agent Tab - Simple activity display
+function AgentTab({
+  blocks,
+  isActive,
+  onClear,
+}: {
+  blocks: ActivityBlock[];
+  isActive: boolean;
+  onClear: () => void;
+}) {
+  return (
+    <div className="agent-tab">
+      <style>{`
+        .agent-tab {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+        }
+
+        .agent-tab-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 12px;
+          border-bottom: 1px solid var(--color-border);
+          flex-shrink: 0;
+        }
+
+        .agent-tab-status {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: var(--color-text-ghost);
+        }
+
+        .status-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: ${isActive ? 'var(--color-violet)' : 'var(--color-emerald)'};
+          box-shadow: 0 0 6px ${isActive ? 'var(--color-violet)' : 'var(--color-emerald)'};
+        }
+
+        .status-dot.pulse {
+          animation: status-pulse 1.5s ease-in-out infinite;
+        }
+
+        .agent-tab-list {
+          flex: 1;
+          overflow-y: auto;
+          padding: 8px;
+        }
+
+        .activity-item {
+          padding: 10px 12px;
+          margin-bottom: 6px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: 8px;
+        }
+
+        .activity-item.reasoning {
+          border-left: 2px solid var(--color-violet);
+        }
+
+        .activity-item.tool {
+          border-left: 2px solid var(--color-cyan);
+        }
+
+        .activity-item.content {
+          border-left: 2px solid var(--color-emerald);
+        }
+
+        .activity-type {
+          font-family: var(--font-mono);
+          font-size: 9px;
+          color: var(--color-text-ghost);
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          margin-bottom: 4px;
+        }
+
+        .activity-content {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          color: var(--color-text-normal);
+          white-space: pre-wrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-height: 60px;
+        }
+
+        .empty-activities {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          gap: 10px;
+          color: var(--color-text-ghost);
+        }
+
+        .empty-activities-icon {
+          font-size: 24px;
+          opacity: 0.5;
+        }
+
+        .empty-activities-text {
+          font-family: var(--font-mono);
+          font-size: 11px;
+        }
+      `}</style>
+
+      {blocks.length > 0 && (
+        <div className="agent-tab-header">
+          <div className="agent-tab-status">
+            <span className={`status-dot ${isActive ? 'pulse' : ''}`} />
+            {isActive ? 'Processing...' : `${blocks.length} activities`}
+          </div>
+          <button className="clear-btn" onClick={onClear} type="button">Clear</button>
+        </div>
+      )}
+
+      <div className="agent-tab-list">
+        {blocks.length === 0 ? (
+          <div className="empty-activities">
+            <span className="empty-activities-icon">◇</span>
+            <span className="empty-activities-text">No agent activity</span>
+          </div>
+        ) : (
+          blocks.map((block) => (
+            <div key={block.id} className={`activity-item ${block.type}`}>
+              <div className="activity-type">{block.type}</div>
+              <div className="activity-content">
+                {block.type === 'reasoning' && block.content.slice(0, 100)}
+                {block.type === 'tool' && `${block.toolName}: ${JSON.stringify(block.args).slice(0, 60)}...`}
+                {block.type === 'content' && block.text.slice(0, 100)}
+                {block.type === 'error' && block.message}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Tools Tab
 function ToolsTab() {
   const tools = [
@@ -741,9 +922,12 @@ function ToolsTab() {
 
 
 export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: CommandPanelProps) {
-  const { sessions } = useSessionsStore();
+  // CLI sessions from REST API (for tab badge count)
+  const { sessions } = useCliSessions();
+  // Subagent state from unified store
   const subagentActivities = useSubagentActivities();
-  const { subagentActive, clearSubagentActivities } = useAgentStore();
+  const subagentActive = useUnifiedSessionsStore((s) => s.subagentActive);
+  const clearActivities = useUnifiedSessionsStore((s) => s.clearActivities);
 
   return (
     <div className="cmd-panel">
@@ -844,10 +1028,10 @@ export function CommandPanel({ events, activeTab, onTabChange, onClearEvents }: 
       <div className="tab-content">
         {activeTab === 'sessions' && <SessionsTab />}
         {activeTab === 'agent' && (
-          <ActivityFeed
+          <AgentTab
             blocks={subagentActivities}
             isActive={subagentActive}
-            onClear={clearSubagentActivities}
+            onClear={clearActivities}
           />
         )}
         {activeTab === 'tools' && <ToolsTab />}

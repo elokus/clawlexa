@@ -18,13 +18,17 @@ import {
   type AgentProfile,
 } from './profiles.js';
 import type { TransportLayerAudio, RealtimeItem } from '@openai/agents/realtime';
-import { getDatabase, AgentRunsRepository } from '../db/index.js';
+import { getDatabase, AgentRunsRepository, CliSessionsRepository } from '../db/index.js';
+import type { VoiceProfile } from '../db/index.js';
 import type { IAudioTransport } from '../transport/types.js';
+import { wsBroadcast } from '../api/websocket.js';
+import { createVoiceAdapter, type VoiceAdapter } from '../realtime/ai-sdk-adapter.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
   audio: (audio: TransportLayerAudio) => void;
   transcript: (text: string, role: 'user' | 'assistant') => void;
+  transcriptDelta: (delta: string, role: 'user' | 'assistant') => void;
   error: (error: Error) => void;
   toolStart: (name: string, args: Record<string, unknown>) => void;
   toolEnd: (name: string, result: string) => void;
@@ -36,8 +40,11 @@ export class VoiceAgent {
   private state: AgentState = 'idle';
   private eventHandlers: Partial<VoiceAgentEvents> = {};
   private agentRunsRepo: AgentRunsRepository;
+  private sessionsRepo: CliSessionsRepository;
   private transcriptBuffer: string[] = [];
   private transport: IAudioTransport | null = null;
+  private currentSessionId: string | null = null; // Track current voice session ID for DB
+  private adapter: VoiceAdapter | null = null; // AI SDK adapter for unified stream_chunk events
 
   /**
    * Create a VoiceAgent.
@@ -48,6 +55,7 @@ export class VoiceAgent {
     // Initialize database and repositories
     getDatabase();
     this.agentRunsRepo = new AgentRunsRepository();
+    this.sessionsRepo = new CliSessionsRepository();
 
     // Set up transport if provided
     if (transport) {
@@ -137,12 +145,31 @@ export class VoiceAgent {
     // This ID is propagated to:
     // 1. createAgentFromProfile - for factory tools (e.g., developer_session)
     // 2. VoiceSession - for lifecycle tracking and logging
+    // 3. Database - for session hierarchy tracking
     const sessionId = randomUUID();
+    this.currentSessionId = sessionId;
     console.log(`[Agent] Activating profile: ${profile.name} (Session: ${sessionId})`);
 
+    // Create voice session in database - voice is now persisted in the session tree
+    const voiceProfileName = profile.name.toLowerCase() as VoiceProfile;
+    this.sessionsRepo.createVoice({
+      id: sessionId,
+      profile: voiceProfileName,
+      goal: `Voice conversation (${profile.name})`,
+    });
+    console.log(`[Agent] Created voice session in DB: ${sessionId}`);
+
+    // Broadcast tree update so frontend can show the new voice session
+    wsBroadcast.sessionTreeUpdate(sessionId);
+
     // Create session FIRST so it can buffer audio during connection
-    const agent = createAgentFromProfile(profile, sessionId);
+    // Pass `this` (VoiceAgent) so tools like background_task can notify on completion
+    const agent = createAgentFromProfile(profile, sessionId, this);
     this.session = new VoiceSession(agent, profile, sessionId);
+
+    // Create AI SDK adapter for unified stream_chunk events
+    // This replaces the legacy wsBroadcast.transcript/toolStart/toolEnd calls
+    this.adapter = createVoiceAdapter(sessionId);
 
     // Start transport AFTER session exists so audio can be buffered
     // This is critical for web mode where audio capture starts immediately
@@ -154,7 +181,12 @@ export class VoiceAgent {
     // Wire up events
     this.session.on('stateChange', (state) => {
       this.state = state;
+      // Emit state change for UI (listening/thinking/speaking indicator)
       this.emit('stateChange', state, this.currentProfile?.name ?? null);
+
+      // Emit AI SDK lifecycle events via adapter (start-step on thinking, finish on idle)
+      // This ensures the frontend knows when a response is complete (clears pending flag)
+      this.adapter?.stateChange(state, this.currentProfile?.name ?? null);
 
       // Stop transport when going idle
       if (this.transport && state === 'idle') {
@@ -170,27 +202,74 @@ export class VoiceAgent {
       this.emit('audio', audio);
     });
 
-    this.session.on('transcript', (text, role) => {
+    // Wire up placeholder events for message ordering
+    // These are emitted when conversation.item.added arrives, before transcripts
+    this.session.on('userItemCreated', (itemId) => {
+      this.adapter?.userPlaceholder(itemId);
+    });
+
+    this.session.on('assistantItemCreated', (itemId, previousItemId) => {
+      this.adapter?.assistantPlaceholder(itemId, previousItemId);
+    });
+
+    this.session.on('transcript', (text, role, itemId) => {
       // Collect transcripts for logging
       this.transcriptBuffer.push(`${role}: ${text}`);
-      this.emit('transcript', text, role);
+      // Emit stream_chunk via AI SDK adapter (unified protocol)
+      // Only emit for user messages - assistant messages are streamed via transcriptDelta
+      if (role === 'user') {
+        this.adapter?.transcript(text, role, itemId);
+      }
+    });
+
+    this.session.on('transcriptDelta', (delta, role, itemId) => {
+      // Stream assistant transcript deltas in real-time
+      // User transcripts don't have deltas (they arrive complete)
+      if (role === 'assistant') {
+        this.adapter?.transcript(delta, role, itemId);
+      }
     });
 
     this.session.on('error', (error) => {
+      // Emit stream_chunk error via adapter
+      this.adapter?.error(error.message);
       this.emit('error', error);
     });
 
     this.session.on('toolStart', (name, args) => {
-      this.emit('toolStart', name, args);
+      // Emit stream_chunk tool-call via adapter
+      this.adapter?.toolStart(name, args);
     });
 
     this.session.on('toolEnd', (name, result) => {
-      this.emit('toolEnd', name, result);
+      // Emit stream_chunk tool-result via adapter
+      this.adapter?.toolEnd(name, result);
+    });
+
+    // When audio is interrupted (user speaks over agent), stop local playback
+    // This is critical for WebSocket transport where we manage audio playback ourselves
+    this.session.on('audioInterrupted', () => {
+      if (this.transport) {
+        this.transport.interrupt();
+      }
     });
 
     this.session.on('disconnected', () => {
       // Log the agent run to database before resetting state
       this.logAgentRun();
+
+      // Clean up adapter state tracking
+      this.adapter?.cleanup();
+
+      // Mark voice session as finished in database
+      if (this.currentSessionId) {
+        this.sessionsRepo.finish(this.currentSessionId, 'finished');
+        console.log(`[Agent] Marked voice session as finished: ${this.currentSessionId}`);
+        // Broadcast tree update so frontend knows session ended
+        wsBroadcast.sessionTreeUpdate(this.currentSessionId);
+        this.currentSessionId = null;
+      }
+
       this.state = 'idle';
       this.emit('stateChange', 'idle', null);
     });
@@ -225,6 +304,17 @@ export class VoiceAgent {
     if (this.session) {
       // Log the agent run before disconnecting
       this.logAgentRun();
+
+      // Mark voice session as finished in database (before disconnect triggers 'disconnected' event)
+      // Note: disconnect() will trigger 'disconnected' event which also handles this,
+      // but we do it here too in case deactivate() is called directly
+      if (this.currentSessionId) {
+        this.sessionsRepo.finish(this.currentSessionId, 'finished');
+        console.log(`[Agent] Marked voice session as finished: ${this.currentSessionId}`);
+        wsBroadcast.sessionTreeUpdate(this.currentSessionId);
+        this.currentSessionId = null;
+      }
+
       this.session.disconnect();
       this.session = null;
     }
@@ -235,6 +325,7 @@ export class VoiceAgent {
     }
 
     this.currentProfile = null;
+    this.adapter = null;
     this.state = 'idle';
     this.emit('stateChange', 'idle', null);
   }
@@ -277,5 +368,35 @@ export class VoiceAgent {
    */
   hasTransport(): boolean {
     return this.transport !== null;
+  }
+
+  /**
+   * Hot-swap the audio transport.
+   * Used for switching between local (device) and web (browser) audio sources.
+   */
+  setTransport(transport: IAudioTransport): void {
+    // Stop and detach old transport
+    if (this.transport) {
+      this.transport.removeAllListeners();
+      this.transport.stop();
+    }
+
+    // Set and wire new transport
+    this.transport = transport;
+    this.setupTransport();
+
+    // If agent is active, start the new transport immediately
+    if (this.isActive()) {
+      console.log('[VoiceAgent] Hot-swapping transport while active, starting new transport');
+      this.transport.start();
+    }
+  }
+
+  /**
+   * Get the current voice session ID.
+   * Used by subagents to establish parent-child relationships.
+   */
+  getCurrentSessionId(): string | null {
+    return this.currentSessionId;
   }
 }

@@ -8,10 +8,13 @@
 import { useEffect, useRef } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import type { DemoProps } from '../../registry';
-import { useAgentStore, useSubagentActivities } from '../../../stores/agent';
-import { useStageStore, useFocusedSession } from '../../../stores/stage';
-import { ChatStage } from '../../../components/stages/ChatStage';
-import { SubagentStage } from '../../../components/stages/SubagentStage';
+import {
+  useUnifiedSessionsStore,
+  useSubagentActivities,
+  useFocusedSession,
+  handleWebSocketMessage,
+} from '../../../stores';
+import { AgentStage } from '../../../components/stages/AgentStage';
 import { TerminalStage } from '../../../components/stages/TerminalStage';
 import { ThreadRail } from '../../../components/rails/ThreadRail';
 import type { SessionTreeNode, StageItem, WSMessage } from '../../../types';
@@ -25,20 +28,19 @@ const ROOT_STAGE: StageItem = {
   createdAt: Date.now(),
 };
 
-// Active stage renderer based on focused session
+// Active stage renderer based on focused session (using unified AgentStage)
 function ActiveStage({ session }: { session: SessionTreeNode | null }) {
-  const profile = useAgentStore((s) => s.profile);
+  const profile = useUnifiedSessionsStore((s) => s.voiceProfile);
   const subagentActivities = useSubagentActivities();
-  const subagentActive = useAgentStore((s) => s.subagentActive);
+  const subagentActive = useUnifiedSessionsStore((s) => s.subagentActive);
 
   // No session tree - check for subagent activity
   if (!session) {
-    // If subagent is working, show SubagentStage immediately
-    // This handles the gap between subagent_activity and session_tree_update
+    // If subagent is working, show AgentStage with subagent type
     if (subagentActivities.length > 0 || subagentActive) {
       const agentName = subagentActivities[0]?.agent || 'Agent';
       return (
-        <SubagentStage
+        <AgentStage
           stage={{
             id: `pending-${agentName}`,
             type: 'subagent',
@@ -51,7 +53,7 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
       );
     }
     // No subagent activity - show voice conversation
-    return <ChatStage stage={{ ...ROOT_STAGE, title: profile || 'Realtime Agent' }} />;
+    return <AgentStage stage={{ ...ROOT_STAGE, title: profile || 'Realtime Agent' }} />;
   }
 
   // Render based on session type
@@ -72,7 +74,7 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
 
     case 'orchestrator':
       return (
-        <SubagentStage
+        <AgentStage
           stage={{
             id: session.id,
             type: 'subagent',
@@ -85,17 +87,16 @@ function ActiveStage({ session }: { session: SessionTreeNode | null }) {
       );
 
     default:
-      return <ChatStage stage={ROOT_STAGE} />;
+      return <AgentStage stage={ROOT_STAGE} />;
   }
 }
 
 export function E2ESimulationDemo({ events, isPlaying, onReset }: DemoProps) {
-  const handleMessage = useAgentStore((s) => s.handleMessage);
-  const resetAgent = useAgentStore((s) => s.reset);
-  const resetStage = useStageStore((s) => s.reset);
+  const reset = useUnifiedSessionsStore((s) => s.reset);
+  const setClientIdentity = useUnifiedSessionsStore((s) => s.setClientIdentity);
   const focusedSession = useFocusedSession();
-  const state = useAgentStore((s) => s.state);
-  const profile = useAgentStore((s) => s.profile);
+  const state = useUnifiedSessionsStore((s) => s.voiceState);
+  const profile = useUnifiedSessionsStore((s) => s.voiceProfile);
   const subagentActivities = useSubagentActivities();
 
   // Calculate stage key for AnimatePresence transitions
@@ -111,23 +112,21 @@ export function E2ESimulationDemo({ events, isPlaying, onReset }: DemoProps) {
   // Initialize stores once
   useEffect(() => {
     if (!isInitializedRef.current) {
-      resetAgent();
-      resetStage();
-      useAgentStore.setState({ connected: true, isMaster: true });
+      reset();
+      setClientIdentity('demo-client', true);
       isInitializedRef.current = true;
       processedCountRef.current = 0;
     }
-  }, [resetAgent, resetStage]);
+  }, [reset, setClientIdentity]);
 
   // Reset when onReset is called (track via events length going to 0)
   useEffect(() => {
     if (events.length === 0 && processedCountRef.current > 0) {
-      resetAgent();
-      resetStage();
-      useAgentStore.setState({ connected: true, isMaster: true });
+      reset();
+      setClientIdentity('demo-client', true);
       processedCountRef.current = 0;
     }
-  }, [events.length, resetAgent, resetStage]);
+  }, [events.length, reset, setClientIdentity]);
 
   // Process new events as they arrive
   useEffect(() => {
@@ -143,11 +142,11 @@ export function E2ESimulationDemo({ events, isPlaying, onReset }: DemoProps) {
           payload: event.payload,
           timestamp: Date.now(),
         };
-        handleMessage(wsMessage);
+        handleWebSocketMessage(wsMessage);
       }
       processedCountRef.current = newCount;
     }
-  }, [events, handleMessage]);
+  }, [events]);
 
   return (
     <div className="e2e-demo-layout">

@@ -13,6 +13,7 @@ const OUTPUT_POLL_INTERVAL = 500; // 500ms
 
 export interface SessionManagerConfig {
   piWebhookUrl?: string;
+  demoMode?: boolean;
 }
 
 export class SessionManager {
@@ -60,8 +61,12 @@ export class SessionManager {
       throw new Error(`Session ${sessionId} already exists`);
     }
 
-    // Create tmux session
-    const tmuxSession = await tmuxManager.createSession(sessionId, command);
+    // Create tmux session (skip command in demo mode)
+    const tmuxSession = await tmuxManager.createSession(
+      sessionId,
+      command,
+      this.config.demoMode ?? false
+    );
 
     const now = new Date();
     const session: DaemonSession = {

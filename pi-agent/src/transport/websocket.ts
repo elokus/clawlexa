@@ -14,10 +14,15 @@ import { WebSocket } from 'ws';
 import { type IAudioTransport, AUDIO_CONFIG } from './types.js';
 import { broadcastBinary } from '../api/websocket.js';
 
-// Message types for WebSocket communication
+// Message types for WebSocket communication (follows WSMessage format)
+export interface WSAudioControlPayload {
+  action: 'start' | 'stop' | 'interrupt';
+}
+
 export interface WSAudioMessage {
   type: 'audio_control';
-  action: 'start' | 'stop' | 'interrupt';
+  payload: WSAudioControlPayload;
+  timestamp: number;
 }
 
 export class WebSocketTransport extends EventEmitter implements IAudioTransport {
@@ -122,6 +127,7 @@ export class WebSocketTransport extends EventEmitter implements IAudioTransport 
 
   /**
    * Send a control message to all connected clients.
+   * Uses WSMessage format for consistency with other WebSocket messages.
    */
   private sendControlMessage(action: 'start' | 'stop' | 'interrupt'): void {
     if (this.clients.size === 0) {
@@ -130,7 +136,8 @@ export class WebSocketTransport extends EventEmitter implements IAudioTransport 
 
     const message: WSAudioMessage = {
       type: 'audio_control',
-      action,
+      payload: { action },
+      timestamp: Date.now(),
     };
 
     const data = JSON.stringify(message);

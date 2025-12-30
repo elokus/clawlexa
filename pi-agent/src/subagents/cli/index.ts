@@ -5,32 +5,25 @@
  * - Persists conversation history in the database
  * - Can be resumed by subsequent voice commands
  * - Manages multiple terminal sessions as children
+ * - Emits AI SDK format events via stream_chunk for frontend
  *
  * Session Hierarchy:
- *   Voice (fire-and-forget, not persisted)
- *     → Orchestrator (stateful, conversation history)
+ *   Voice (persisted in DB)
+ *     → Subagent/Orchestrator (stateful, conversation history)
  *       → Terminal 1 (long-running Claude Code CLI)
  *       → Terminal 2
- *
- * Flow:
- * 1. Voice agent receives coding request
- * 2. Voice calls developer_session tool
- * 3. This handler finds/creates CLI orchestrator session
- * 4. Agent processes request with full conversation history
- * 5. Terminals are created as children of the orchestrator
- * 6. Orchestrator stays running while any terminals are active
  */
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { streamText, stepCountIs, readUIMessageStream } from 'ai';
 import type { RealtimeItem } from '@openai/agents/realtime';
-import { runObservableAgent } from '../../lib/agent-runner.js';
 import { wsBroadcast } from '../../api/websocket.js';
 import { loadAgentConfig } from '../loader.js';
-import { cliAgentTools, isMacDaemonAvailable } from './tools.js';
+import { cliAgentTools } from './tools.js';
 import { CliSessionsRepository } from '../../db/index.js';
 
 // Re-export for use by developer-session.ts
-export { isMacDaemonAvailable };
+export { isMacDaemonAvailable } from './tools.js';
 
 // OpenRouter provider for grok-code-fast-1
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
@@ -41,8 +34,11 @@ let currentOrchestratorId: string | undefined;
 
 // Track pending tool calls for session-creating tools
 // Maps orchestratorId → toolCallId
-// Set by agent-runner when tool-call event fires, consumed by tools when creating sessions
+// Set when tool-call event fires, consumed by tools when creating sessions
 const pendingSessionToolCalls = new Map<string, string>();
+
+// Tools that create terminal sessions - need to track their tool call IDs
+const SESSION_CREATING_TOOLS = ['start_headless_session', 'start_interactive_session'];
 
 /**
  * Get the current orchestrator session ID for terminal tracking.
@@ -54,7 +50,7 @@ export function getCurrentOrchestratorId(): string | undefined {
 
 /**
  * Set a pending tool call ID for session-creating tools.
- * Called by agent-runner when it sees a tool-call event for start_headless_session or start_interactive_session.
+ * Called internally when we see a tool-call event for session-creating tools.
  */
 export function setPendingToolCall(orchestratorId: string, toolCallId: string): void {
   pendingSessionToolCalls.set(orchestratorId, toolCallId);
@@ -72,31 +68,23 @@ export function consumePendingToolCall(orchestratorId: string): string | undefin
 }
 
 /**
- * @deprecated Use getCurrentOrchestratorId instead
- */
-export function getCurrentParentId(): string | undefined {
-  return currentOrchestratorId;
-}
-
-/**
  * Handle a developer request by delegating to the CLI orchestration agent.
  *
  * This function:
- * 1. Finds an existing running CLI orchestrator OR creates a new one
- * 2. Loads the orchestrator's conversation history from the database
+ * 1. Finds an existing running CLI subagent OR creates a new one
+ * 2. Loads the subagent's conversation history from the database
  * 3. Runs the agent with full context
- * 4. Saves the updated conversation history back to the database
- *
- * The orchestrator stays 'running' while it has active terminal sessions.
+ * 4. Emits stream_chunk events in AI SDK format
+ * 5. Saves the updated conversation history back to the database
  *
  * @param request - The user's coding request
  * @param history - Conversation history from the realtime session (voice context)
- * @param _parentId - Deprecated: Voice sessions are no longer tracked
+ * @param voiceSessionId - Voice session ID to establish parent-child relationship
  */
 export async function handleDeveloperRequest(
   request: string,
   history: RealtimeItem[],
-  _parentId?: string
+  voiceSessionId?: string
 ): Promise<string> {
   const sessionsRepo = new CliSessionsRepository();
 
@@ -104,6 +92,7 @@ export async function handleDeveloperRequest(
   console.log('[CliAgent] Handling developer request');
   console.log(`[CliAgent] Request: ${request}`);
   console.log(`[CliAgent] Voice context items: ${history.length}`);
+  console.log(`[CliAgent] Voice session ID: ${voiceSessionId ?? 'none'}`);
 
   if (!OPENROUTER_API_KEY) {
     return 'Fehler: OPEN_ROUTER_API_KEY environment variable is not set';
@@ -112,25 +101,28 @@ export async function handleDeveloperRequest(
   // Load config and prompt from disk
   const { config, prompt: systemPrompt } = await loadAgentConfig(import.meta.dirname);
 
-  // Find or create the CLI orchestrator session
-  let orchestrator = sessionsRepo.findRunningOrchestrator('cli');
+  // Find or create the CLI subagent session
+  // IMPORTANT: Scope to current voice session to avoid reusing subagents from old sessions
+  let subagent = sessionsRepo.findRunningSubagent('cli', voiceSessionId);
 
-  if (orchestrator) {
-    console.log(`[CliAgent] Resuming existing orchestrator: ${orchestrator.id}`);
+  if (subagent) {
+    console.log(`[CliAgent] Resuming existing subagent: ${subagent.id} (parent: ${voiceSessionId ?? 'none'})`);
   } else {
-    orchestrator = sessionsRepo.createOrchestrator({
+    subagent = sessionsRepo.createSubagent({
       goal: request.substring(0, 100),
       agent_name: 'cli',
       model: config.model,
+      parent_id: voiceSessionId, // Link to voice session for hierarchy
     });
-    console.log(`[CliAgent] Created new orchestrator: ${orchestrator.id}`);
+    console.log(`[CliAgent] Created new subagent: ${subagent.id} (parent: ${voiceSessionId ?? 'none'})`);
 
-    // Broadcast new orchestrator session to UI
-    wsBroadcast.sessionTreeUpdate(orchestrator.id);
+    // Broadcast tree update - use voice session as root if available, otherwise subagent
+    wsBroadcast.sessionTreeUpdate(voiceSessionId ?? subagent.id);
   }
 
-  // Set orchestrator ID for tools to access during this request
-  currentOrchestratorId = orchestrator.id;
+  // Set subagent ID for tools to access during this request
+  currentOrchestratorId = subagent.id;
+  const sessionId = subagent.id;
 
   console.log(`[CliAgent] Using model: ${config.model} via OpenRouter`);
 
@@ -140,9 +132,9 @@ export async function handleDeveloperRequest(
   });
   const model = openrouter.chat(config.model);
 
-  // Load orchestrator's conversation history from database
-  const orchestratorHistory: Array<{ role: string; content: string }> = JSON.parse(
-    orchestrator.conversation_history || '[]'
+  // Load subagent's conversation history from database
+  const subagentHistory: Array<{ role: string; content: string }> = JSON.parse(
+    subagent.conversation_history || '[]'
   );
 
   // Format voice conversation context (current session only)
@@ -169,14 +161,14 @@ export async function handleDeveloperRequest(
     .filter(Boolean)
     .join('\n');
 
-  // Format orchestrator's own history (persistent across voice sessions)
-  const orchestratorHistoryText = orchestratorHistory
+  // Format subagent's own history (persistent across voice sessions)
+  const subagentHistoryText = subagentHistory
     .map((msg) => `${msg.role}: ${msg.content}`)
     .join('\n');
 
   const userMessage = `
 ## Your Previous Conversation History (persistent)
-${orchestratorHistoryText || '(this is a new session)'}
+${subagentHistoryText || '(this is a new session)'}
 
 ## Current Voice Context
 ${voiceContextText || '(direct request, no voice context)'}
@@ -198,50 +190,171 @@ Analyze this request and take appropriate action. Remember:
   console.log('----------------------------------------');
 
   try {
-    // Run the agent using the Observable Agent Runner pattern
-    // Pass orchestratorId for per-session activity tracking on frontend
-    const output = await runObservableAgent({
-      name: config.name,
+    // Emit start event
+    wsBroadcast.streamChunk(sessionId, { type: 'start' });
+
+    // Start streaming with Vercel AI SDK
+    const result = streamText({
       model,
       system: systemPrompt,
       prompt: userMessage,
       tools: cliAgentTools,
-      maxSteps: config.maxSteps ?? 3,
-      orchestratorId: orchestrator.id,
+      stopWhen: stepCountIs(config.maxSteps ?? 3),
     });
 
-    console.log('[CliAgent] Agent response:');
-    console.log('----------------------------------------');
-    console.log(output);
-    console.log('========================================\n');
+    // Use UIMessageStream for proper streaming (works around OpenRouter fullStream bug)
+    // Track state to emit deltas between updates
+    let prevText = '';
+    let prevReasoning = '';
+    let prevStepCount = 0;
+    const emittedToolCalls = new Set<string>();
+    const emittedToolResults = new Set<string>();
+    let updateCount = 0;
 
-    // Save conversation to history
-    sessionsRepo.appendToHistory(orchestrator.id, [
-      { role: 'user', content: request },
-      { role: 'assistant', content: output || 'No response' },
-    ]);
+    console.log(`[CliAgent] Starting UIMessageStream processing...`);
 
-    // Check if orchestrator should finish (no running children)
-    const runningChildren = sessionsRepo.getRunningChildren(orchestrator.id);
-    if (runningChildren.length === 0) {
-      // No active terminals, but keep orchestrator running for potential follow-ups
-      // It will be auto-cleaned after 24h of inactivity
-      console.log('[CliAgent] No active terminals, orchestrator stays running for follow-ups');
-    } else {
-      console.log(`[CliAgent] Orchestrator has ${runningChildren.length} active terminal(s)`);
+    for await (const uiMessage of readUIMessageStream({
+      stream: result.toUIMessageStream(),
+    })) {
+      updateCount++;
+
+      // Process each part and emit events for changes
+      for (const part of uiMessage.parts) {
+        switch (part.type) {
+          case 'step-start': {
+            // Count step-starts to detect new steps
+            const stepStarts = uiMessage.parts.filter((p) => p.type === 'step-start').length;
+            if (stepStarts > prevStepCount) {
+              console.log(`[CliAgent] New step started (step ${stepStarts})`);
+              wsBroadcast.streamChunk(sessionId, { type: 'start-step' });
+              prevStepCount = stepStarts;
+            }
+            break;
+          }
+
+          case 'reasoning': {
+            // Emit reasoning deltas
+            const reasoningPart = part as { reasoning?: string; text?: string };
+            const currentReasoning = reasoningPart.text ?? reasoningPart.reasoning ?? '';
+            if (currentReasoning.length > prevReasoning.length) {
+              const delta = currentReasoning.slice(prevReasoning.length);
+              wsBroadcast.streamChunk(sessionId, { type: 'reasoning-delta', text: delta });
+              prevReasoning = currentReasoning;
+            }
+            break;
+          }
+
+          case 'text': {
+            // Emit text deltas (this is the main fix - streaming text!)
+            const textPart = part as { text: string };
+            if (textPart.text.length > prevText.length) {
+              const delta = textPart.text.slice(prevText.length);
+              wsBroadcast.streamChunk(sessionId, { type: 'text-delta', textDelta: delta });
+              prevText = textPart.text;
+            }
+            break;
+          }
+
+          default: {
+            // Handle tool invocation parts (type is "tool-{toolName}")
+            if (part.type.startsWith('tool-')) {
+              const toolPart = part as {
+                type: string;
+                toolCallId: string;
+                state: string;
+                input?: unknown;
+                output?: unknown;
+              };
+              const toolName = part.type.replace('tool-', '');
+
+              // Emit tool-call when we first see input-available
+              if (
+                toolPart.state === 'input-available' &&
+                !emittedToolCalls.has(toolPart.toolCallId)
+              ) {
+                console.log(`[CliAgent] Tool called: ${toolName}`);
+
+                // Track tool calls that create terminal sessions
+                if (SESSION_CREATING_TOOLS.includes(toolName) && currentOrchestratorId) {
+                  setPendingToolCall(currentOrchestratorId, toolPart.toolCallId);
+                }
+
+                wsBroadcast.streamChunk(sessionId, {
+                  type: 'tool-call',
+                  toolName,
+                  toolCallId: toolPart.toolCallId,
+                  input: toolPart.input,
+                });
+                emittedToolCalls.add(toolPart.toolCallId);
+              }
+
+              // Emit tool-result when we see output-available
+              if (
+                toolPart.state === 'output-available' &&
+                !emittedToolResults.has(toolPart.toolCallId)
+              ) {
+                const outputStr =
+                  typeof toolPart.output === 'string'
+                    ? toolPart.output
+                    : JSON.stringify(toolPart.output);
+
+                console.log(`[CliAgent] Tool result: ${toolName}`);
+                wsBroadcast.streamChunk(sessionId, {
+                  type: 'tool-result',
+                  toolName,
+                  toolCallId: toolPart.toolCallId,
+                  output: outputStr,
+                });
+                emittedToolResults.add(toolPart.toolCallId);
+              }
+            }
+            break;
+          }
+        }
+      }
     }
 
-    // Broadcast tree update
-    wsBroadcast.sessionTreeUpdate(orchestrator.id);
+    // Get the final text
+    const fullText = prevText;
 
-    return output || 'Keine Antwort erhalten.';
+    console.log('[CliAgent] Stream processing complete:');
+    console.log(`[CliAgent] Total updates: ${updateCount}`);
+    console.log(`[CliAgent] Final text length: ${fullText.length}`);
+    console.log(`[CliAgent] Final text: ${fullText || '(empty)'}`);
+    console.log('========================================\n');
+
+    // Emit finish event
+    wsBroadcast.streamChunk(sessionId, { type: 'finish', finishReason: 'stop' });
+
+    // Determine final response
+    let finalResponse = fullText;
+
+    // Save conversation to history
+    sessionsRepo.appendToHistory(subagent.id, [
+      { role: 'user', content: request },
+      { role: 'assistant', content: finalResponse || 'No response' },
+    ]);
+
+    // Check if subagent should finish (no running children)
+    const runningChildren = sessionsRepo.getRunningChildren(subagent.id);
+    if (runningChildren.length === 0) {
+      console.log('[CliAgent] No active terminals, subagent stays running for follow-ups');
+    } else {
+      console.log(`[CliAgent] Subagent has ${runningChildren.length} active terminal(s)`);
+    }
+
+    // Broadcast tree update - use voice session as root if available
+    wsBroadcast.sessionTreeUpdate(voiceSessionId ?? subagent.id);
+
+    return finalResponse || 'Keine Antwort erhalten.';
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[CliAgent] Error:', errorMsg);
+    wsBroadcast.streamChunk(sessionId, { type: 'error', error: errorMsg });
     wsBroadcast.error(`CLI Agent error: ${errorMsg}`);
     return `Es gab einen Fehler bei der Verarbeitung: ${errorMsg}`;
   } finally {
-    // Clear orchestrator ID to avoid leaking to subsequent requests
+    // Clear subagent ID to avoid leaking to subsequent requests
     currentOrchestratorId = undefined;
   }
 }

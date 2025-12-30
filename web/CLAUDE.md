@@ -25,142 +25,107 @@ npm run build      # Production build
         ┌───────────────────────────┼───────────────────────────┐
         ▼                           ▼                           ▼
 ┌───────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│  BackgroundRail │         │   ActiveStage   │         │   ThreadRail    │
-│  (Left 80px)    │         │   (Center)      │         │   (Right 360px) │
-│                 │         │                 │         │                 │
-│  - Overlays     │         │  - ChatStage    │         │  - Breadcrumb   │
-│  - Background   │         │  - SubagentStage│         │  - Parent stages│
-│    tasks        │         │  - TerminalStage│         │                 │
+│ BackgroundRail │         │   ActiveStage   │         │   ThreadRail    │
+│ (Left 80px)    │         │   (Center)      │         │   (Right 360px) │
+│                │         │                 │         │                 │
+│ - Minimized    │         │  AgentStage     │         │ - Focus path    │
+│   session      │         │  (voice/subagent)│        │ - Child sessions│
+│   trees        │         │  ────────────── │         │                 │
+│                │         │  TerminalStage  │         │                 │
+│                │         │  (terminal)     │         │                 │
 └───────────────┘         └─────────────────┘         └─────────────────┘
 ```
 
-## Stage Navigation System
+## Session-Centric Architecture
 
-The UI uses a **stack-based stage navigation** pattern where views can "drill down" into child contexts.
+The dashboard uses a **unified session model** where all agent sessions (voice, subagent, terminal) are managed through a single store and rendered by unified components.
 
-### Stage Types
+### Session Types
 
-| Type | Description | Icon | Color |
-|------|-------------|------|-------|
-| `chat` | Realtime Agent conversation (root) | ◎ | Emerald |
-| `subagent` | Delegated agent activity (CLI Agent, etc.) | ◇ | Violet |
-| `terminal` | CLI session output | ▣ | Cyan |
+| Type | Description | Renderer |
+|------|-------------|----------|
+| `voice` | Root conversation (OpenAI Realtime API) | AgentStage |
+| `subagent` | Delegated agent (CLI, web_search) | AgentStage |
+| `terminal` | PTY process (tmux + Claude Code) | TerminalStage |
 
-### Stage Store (`stores/stage.ts`)
+### Unified Store (`stores/unified-sessions.ts`)
 
-```typescript
-interface StageStore {
-  activeStage: StageItem;      // Currently focused view (center)
-  threadRail: StageItem[];     // Parent contexts (right rail breadcrumb)
-  backgroundTasks: StageItem[]; // Minimized tasks (left rail)
-
-  pushStage(item): void;       // Push new stage, current → threadRail
-  popStage(): void;            // Pop back to parent from threadRail
-  backgroundStage(id): void;   // Move stage to background
-  restoreStage(id): void;      // Restore from background to active
-}
-```
-
-### Navigation Flow Example
-
-```
-1. Initial State
-   Active: ChatStage (Realtime Agent)
-   ThreadRail: []
-
-2. User triggers CLI Agent via voice
-   → reasoning_start event for "Marvin"
-   → pushStage({ type: 'subagent', title: 'Marvin' })
-   Active: SubagentStage
-   ThreadRail: [ChatStage]
-
-3. CLI Agent starts terminal session
-   → cli_session_created event
-   → pushStage({ type: 'terminal', sessionId: '...' })
-   Active: TerminalStage
-   ThreadRail: [ChatStage, SubagentStage]
-
-4. Session completes
-   → popStage() after delay
-   Active: SubagentStage
-   ThreadRail: [ChatStage]
-
-5. Subagent completes
-   → popStage() after delay
-   Active: ChatStage
-   ThreadRail: []
-```
-
-## Subagent Activity System
-
-### Event Flow
-
-```
-Backend (pi-agent)                    Frontend (web)
-─────────────────                    ──────────────
-AgentRunner.emit()
-    │
-    ▼ WebSocket
-subagent_activity ──────────────────► useWebSocket.onmessage()
-{                                        │
-  agent: "Marvin",                       ▼
-  type: "reasoning_start",           handleMessage() in agent store
-  payload: {}                            │
-}                                        ▼
-                                     handleSubagentActivity()
-                                         │
-                                         ├─► pushStage() if new agent
-                                         │
-                                         └─► Create ActivityBlock
-                                                 │
-                                                 ▼
-                                             SubagentStage renders blocks
-```
-
-### Event Types
-
-| Event | Triggers | UI Effect |
-|-------|----------|-----------|
-| `reasoning_start` | Agent starts thinking | Push SubagentStage, create ReasoningBlock |
-| `reasoning_delta` | Streaming reasoning text | Append to ReasoningBlock.content |
-| `reasoning_end` | Reasoning complete | Mark block complete, show duration |
-| `tool_call` | Tool invoked | Create ToolBlock (pending) |
-| `tool_result` | Tool returns | Update ToolBlock with result |
-| `response` | Final response | Create ContentBlock |
-| `error` | Error occurred | Create ErrorBlock |
-| `complete` | Agent finished | Set subagentActive=false, auto-pop stage |
-
-### Activity Blocks (`types/index.ts`)
+Single Zustand store managing all session/agent state:
 
 ```typescript
-type ActivityBlock = ReasoningBlock | ToolBlock | ContentBlock | ErrorBlock;
+interface UnifiedSessionsStore {
+  // Connection
+  clientId: string | null;
+  isMaster: boolean;
+  wsError: string | null;
 
-interface ReasoningBlock {
-  type: 'reasoning';
-  content: string;      // Accumulated reasoning text
-  isComplete: boolean;
-  durationMs?: number;  // From reasoning_end
-}
+  // Voice State
+  voiceState: AgentState;        // 'idle' | 'listening' | 'thinking' | 'speaking'
+  voiceProfile: string | null;   // 'jarvis' | 'marvin'
+  voiceTimeline: TimelineItem[]; // Transcript + tool items
+  currentTool: { name, args } | null;
 
-interface ToolBlock {
-  type: 'tool';
-  toolName: string;
-  toolCallId: string;
-  args: Record<string, unknown>;
-  result?: string;
-  isComplete: boolean;
-}
+  // Session Tree
+  sessionTree: SessionTreeNode | null;
+  allTrees: SessionTreeNode[];
+  focusedSessionId: string | null;
+  backgroundTreeIds: Set<string>;
 
-interface ContentBlock {
-  type: 'content';
-  text: string;
-}
+  // Sessions
+  sessions: Map<string, SessionState>;  // O(1) lookup by ID
 
-interface ErrorBlock {
-  type: 'error';
-  message: string;
+  // Activities
+  activitiesBySession: Map<string, ActivityBlock[]>;
+  subagentActive: boolean;
+  activeOrchestratorId: string | null;
+
+  // Actions
+  handleStreamChunk(sessionId: string, event: AISDKStreamEvent): void;
+  handleSessionTreeUpdate(data: SessionTreeUpdatePayload): void;
+  focusSession(sessionId: string): void;
+  minimizeTree(rootId: string): void;
+  restoreTree(rootId: string): void;
+  // ...
 }
 ```
+
+### Selector Hooks
+
+```typescript
+// Import from '@/stores'
+useFocusedSession()              // SessionTreeNode | null
+useFocusPath()                   // SessionTreeNode[] (breadcrumb path)
+useFocusedSessionChildren()      // SessionTreeNode[] (children of focused)
+useSessionActivities(sessionId)  // ActivityBlock[] for specific session
+useAllActivities()               // ActivityBlock[] flattened + sorted
+useHasActiveSession()            // boolean
+useVoiceTimeline()               // TimelineItem[] (voice transcripts)
+useConnectionState()             // { connected, wsError, clientId, isMaster }
+useVoiceState()                  // { voiceState, voiceProfile, voiceActive, currentTool }
+useActiveView()                  // 'sessions' | 'prompts'
+usePromptsState()                // { prompts, selectedPromptId, promptContent, ... }
+```
+
+## WebSocket Messages (8 Core Types)
+
+| Type | Direction | Purpose |
+|------|-----------|---------|
+| `welcome` | Server→Client | Client identity on connect |
+| `stream_chunk` | Server→Client | All agent events (AI SDK format) |
+| `session_tree_update` | Server→Client | Session hierarchy changes |
+| `state_change` | Server→Client | Voice UI state |
+| `master_changed` | Server→Client | Multi-client coordination |
+| `session_started/ended` | Server→Client | Voice session lifecycle |
+| `cli_session_deleted` | Server→Client | Terminal session cleanup |
+| `error` | Server→Client | Error notification |
+
+### Client → Server
+
+| Type | Purpose |
+|------|---------|
+| `request_master` | Request audio control |
+| `focus_session` | Set focused session |
+| `session_input` | Send text to focused subagent |
 
 ## Key Components
 
@@ -168,45 +133,58 @@ interface ErrorBlock {
 
 | Component | File | Description |
 |-----------|------|-------------|
-| `ChatStage` | `ChatStage.tsx` | Realtime Agent conversation with ConversationStream |
-| `SubagentStage` | `SubagentStage.tsx` | Activity stream for delegated agents |
-| `TerminalStage` | `TerminalStage.tsx` | CLI session output with CRT effect |
+| `AgentStage` | `AgentStage.tsx` | Unified renderer for voice + subagent sessions |
+| `TerminalStage` | `TerminalStage.tsx` | PTY terminal with xterm.js |
 
-### Stores (`stores/`)
+### Rails (`components/rails/`)
+
+| Component | File | Description |
+|-----------|------|-------------|
+| `ThreadRail` | `ThreadRail.tsx` | Session tree navigation (focus path + children) |
+| `BackgroundRail` | `BackgroundRail.tsx` | Minimized session trees |
+
+### AI Elements (`components/ai-elements/`)
+
+Vercel AI SDK UI components for streaming message display:
+
+| Component | Purpose |
+|-----------|---------|
+| `Conversation` | Message list container |
+| `Message` | Individual message with parts |
+| `Loader` | Loading/streaming states |
+
+### Prompts (`components/prompts/`)
+
+Prompt management UI for editing agent prompts:
+
+| Component | File | Description |
+|-----------|------|-------------|
+| `PromptsView` | `PromptsView.tsx` | Main 2-panel layout (sidebar + editor) |
+| `PromptsSidebar` | `PromptsSidebar.tsx` | Prompt list grouped by type |
+| `PromptEditor` | `PromptEditor.tsx` | Version dropdown, save, set active, textarea |
+
+Access via "=" button in BackgroundRail. Uses `activeView` state to toggle between sessions and prompts views.
+
+## Stores (`stores/`)
 
 | Store | File | Purpose |
 |-------|------|---------|
-| `useAgentStore` | `agent.ts` | Agent state, transcripts, subagent activities |
-| `useStageStore` | `stage.ts` | Stage navigation stack |
-| `useSessionsStore` | `sessions.ts` | CLI session management |
+| `useUnifiedSessionsStore` | `unified-sessions.ts` | All session/agent state (921 LoC) |
+| `handleWebSocketMessage` | `message-handler.ts` | WebSocket event routing |
 
-### Hooks (`hooks/`)
+### Legacy Stores (Deleted)
+
+The following stores were deleted in the Session-Centric refactor:
+- ~~`agent.ts`~~ → Use `useUnifiedSessionsStore` + `useVoiceState()`, `useVoiceTimeline()`
+- ~~`stage.ts`~~ → Use `useUnifiedSessionsStore` + `useFocusedSession()`, `useFocusPath()`
+- ~~`sessions.ts`~~ → Use `useUnifiedSessionsStore.sessions` Map
+
+## Hooks (`hooks/`)
 
 | Hook | File | Purpose |
 |------|------|---------|
 | `useWebSocket` | `useWebSocket.ts` | Singleton WebSocket connection |
 | `useAudioSession` | `useAudioSession.ts` | Mic/speaker for master clients |
-
-## WebSocket Messages
-
-### Received from Backend
-
-| Message | Handler | Effect |
-|---------|---------|--------|
-| `welcome` | Set clientId, isMaster | Identity for multi-client |
-| `master_changed` | Update isMaster | Audio control handoff |
-| `state_change` | Set agent state | UI state indicator |
-| `transcript` | Add/update message | Conversation display |
-| `subagent_activity` | handleSubagentActivity() | Stage transitions, activity blocks |
-| `cli_session_created` | Push terminal stage | Navigate to terminal |
-| `cli_session_update` | Update session, auto-pop | Session lifecycle |
-
-### Sent to Backend
-
-| Message | When | Purpose |
-|---------|------|---------|
-| `request_master` | User clicks "Take Control" | Request audio control |
-| Binary audio | Recording active | Mic audio to backend |
 
 ## Multi-Client Pattern
 
@@ -221,7 +199,6 @@ The WebSocket server supports multiple browser clients with Master/Replica coord
 // In useWebSocket.ts - Module-level singleton
 let globalWs: WebSocket | null = null;
 let globalWsRefCount = 0;
-
 // Prevents duplicate connections from React StrictMode double-mount
 ```
 
@@ -255,12 +232,6 @@ See `docs/COMPONENT_DEV.md` for adding new demos.
 --color-rose: #f43f5e;      /* Error */
 ```
 
-### Animation Patterns
-
-- **Stage transitions**: Framer Motion with `layoutId` for shared element transitions
-- **Pulsing indicators**: CSS `@keyframes pulse-glow` for active states
-- **Border animations**: `pulse-violet`, `pulse-cyan` for active activity blocks
-
 ## File Structure
 
 ```
@@ -271,27 +242,34 @@ web/src/
 │   ├── layout/
 │   │   └── StageOrchestrator.tsx  # 3-column grid layout
 │   ├── stages/
-│   │   ├── ChatStage.tsx          # Realtime Agent view
-│   │   ├── SubagentStage.tsx      # Delegated agent view
-│   │   └── TerminalStage.tsx      # CLI session view
+│   │   ├── AgentStage.tsx         # Unified agent view (voice + subagent)
+│   │   └── TerminalStage.tsx      # PTY terminal view
 │   ├── rails/
-│   │   ├── BackgroundRail.tsx     # Left dock
+│   │   ├── BackgroundRail.tsx     # Left dock (minimized sessions)
 │   │   └── ThreadRail.tsx         # Right breadcrumb rail
-│   ├── overlays/
-│   │   └── ...                    # Modal overlays
-│   ├── ConversationStream.tsx     # Chat message list
-│   ├── ActivityFeed.tsx           # Activity block renderer
-│   └── ControlBar.tsx             # Bottom mic/profile controls
+│   ├── ai-elements/               # AI SDK UI components
+│   │   ├── conversation.tsx
+│   │   ├── message.tsx
+│   │   └── loader.tsx
+│   ├── prompts/                   # Prompt management UI
+│   │   ├── PromptsView.tsx        # Main 2-panel layout
+│   │   ├── PromptsSidebar.tsx     # Prompt list by type
+│   │   └── PromptEditor.tsx       # Editor with version control
+│   ├── ui/                        # shadcn/ui components
+│   └── overlays/                  # Modal overlays
 ├── hooks/
 │   ├── useWebSocket.ts            # WebSocket singleton
 │   └── useAudioSession.ts         # Audio I/O control
 ├── stores/
-│   ├── agent.ts                   # Agent + subagent state
-│   ├── stage.ts                   # Navigation stack
-│   └── sessions.ts                # CLI sessions
+│   ├── unified-sessions.ts        # All session/agent state
+│   ├── message-handler.ts         # WebSocket event routing
+│   └── index.ts                   # Store exports + selectors
 ├── types/
 │   ├── index.ts                   # Main types
 │   └── stage.ts                   # Stage-specific types
+├── lib/
+│   ├── utils.ts                   # Utility functions (cn, etc.)
+│   └── prompts-api.ts             # Prompts REST API client
 ├── dev/                           # Component dev environment
 │   ├── DevPage.tsx
 │   ├── registry.ts
@@ -302,35 +280,41 @@ web/src/
 
 ## Common Patterns
 
-### Adding a New Stage Type
-
-1. Add to `StageType` in `types/stage.ts`
-2. Add fields to `StageData` if needed
-3. Create `components/stages/NewStage.tsx`
-4. Add case in `StageOrchestrator.tsx`
-5. Add icon to `ThreadRail.tsx`
-
-### Triggering Stage Navigation
+### Using the Unified Store
 
 ```typescript
-// Push new stage (from store handler or component)
-import { useStageStore } from '../stores/stage';
+import {
+  useUnifiedSessionsStore,
+  useFocusedSession,
+  useFocusPath,
+  useVoiceTimeline,
+  useSessionActivities,
+} from '@/stores';
 
-useStageStore.getState().pushStage({
-  id: 'unique-id',
-  type: 'subagent',
-  title: 'Agent Name',
-  data: { agentName: 'Marvin' },
-  status: 'active',
-});
+function MyComponent() {
+  // Get current focused session
+  const focusedSession = useFocusedSession();
 
-// Pop back to parent
-useStageStore.getState().popStage();
+  // Get breadcrumb path
+  const focusPath = useFocusPath();
+
+  // Get voice timeline (for voice sessions)
+  const voiceTimeline = useVoiceTimeline();
+
+  // Get activities for a specific session
+  const activities = useSessionActivities(sessionId);
+
+  // Direct store access for actions
+  const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
+  const minimizeTree = useUnifiedSessionsStore((s) => s.minimizeTree);
+
+  // ...
+}
 ```
 
 ### Handling New WebSocket Events
 
 1. Add type to `WSMessageType` in `types/index.ts`
-2. Add payload interface if needed
-3. Add case in `handleMessage()` in `stores/agent.ts`
+2. Add handler in `stores/message-handler.ts`
+3. Add action/state in `stores/unified-sessions.ts` if needed
 4. Update UI components to reflect new state

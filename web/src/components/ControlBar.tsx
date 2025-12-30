@@ -7,7 +7,7 @@
  * - Integrated voice indicator shows state
  */
 
-import type { ProfileId } from '../hooks/useAudioSession';
+import type { ProfileId, AudioMode } from '../hooks/useAudioSession';
 import type { AgentState } from '../types';
 import { VoiceIndicator } from './VoiceIndicator';
 import { RecordButton } from './RecordButton';
@@ -23,6 +23,10 @@ interface ControlBarProps {
   isMaster?: boolean;
   onRequestMaster?: () => void;
   agentState?: AgentState;
+  serviceActive?: boolean;
+  audioMode?: AudioMode;
+  onToggleService?: () => void;
+  onSetAudioMode?: (mode: AudioMode) => void;
 }
 
 export function ControlBar({
@@ -36,6 +40,10 @@ export function ControlBar({
   isMaster = true,
   onRequestMaster,
   agentState = 'idle',
+  serviceActive = false,
+  audioMode = 'web',
+  onToggleService,
+  onSetAudioMode,
 }: ControlBarProps) {
   const profiles: { id: ProfileId; name: string; short: string }[] = [
     { id: 'jarvis', name: 'JARVIS', short: 'JAR' },
@@ -292,6 +300,95 @@ export function ControlBar({
           color: var(--color-rose);
         }
 
+        /* Power button */
+        .power-btn {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          border: 2px solid var(--color-border);
+          background: linear-gradient(145deg, var(--color-surface), var(--color-abyss));
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.2s var(--ease-out);
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        .power-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .power-btn:not(:disabled):hover {
+          transform: scale(1.05);
+        }
+
+        .power-btn.off {
+          border-color: var(--color-rose);
+          background: linear-gradient(145deg, rgba(244, 63, 94, 0.1), var(--color-abyss));
+        }
+
+        .power-btn.off svg {
+          color: var(--color-rose);
+        }
+
+        .power-btn.on {
+          border-color: var(--color-emerald);
+          background: linear-gradient(145deg, rgba(52, 211, 153, 0.1), var(--color-abyss));
+          box-shadow: 0 0 12px rgba(52, 211, 153, 0.2);
+        }
+
+        .power-btn.on svg {
+          color: var(--color-emerald);
+        }
+
+        .power-btn svg {
+          width: 18px;
+          height: 18px;
+          color: var(--color-text-dim);
+          transition: all 0.2s ease;
+        }
+
+        /* Mode toggle */
+        .mode-toggle {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+          background: var(--color-abyss);
+          border: 1px solid var(--color-border);
+          border-radius: 20px;
+          padding: 2px;
+        }
+
+        .mode-btn {
+          padding: 4px 10px;
+          background: transparent;
+          border: none;
+          border-radius: 16px;
+          font-family: var(--font-mono);
+          font-size: 9px;
+          letter-spacing: 0.05em;
+          color: var(--color-text-ghost);
+          cursor: pointer;
+          transition: all 0.2s ease;
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        .mode-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .mode-btn.active {
+          background: linear-gradient(135deg, var(--color-cyan-dim), transparent);
+          color: var(--color-cyan);
+        }
+
+        .mode-btn:not(.active):not(:disabled):hover {
+          color: var(--color-text-normal);
+        }
+
         /* Mobile adjustments */
         @media (max-width: 480px) {
           .control-bar-bottom {
@@ -317,19 +414,73 @@ export function ControlBar({
           .cb-right {
             min-width: 64px;
           }
+
+          .power-btn {
+            width: 32px;
+            height: 32px;
+          }
+
+          .power-btn svg {
+            width: 16px;
+            height: 16px;
+          }
+
+          .mode-btn {
+            padding: 3px 8px;
+            font-size: 8px;
+          }
         }
       `}</style>
 
       <div className="control-bar-bottom">
-        {/* Left - Profile selector + Record button */}
+        {/* Left - Power button + Mode toggle + Profile selector */}
         <div className="cb-left">
+          {/* Power button */}
+          <button
+            type="button"
+            className={`power-btn ${serviceActive ? 'on' : 'off'}`}
+            onClick={onToggleService}
+            disabled={disabled || isRecording}
+            aria-label={serviceActive ? 'Stop service' : 'Start service'}
+            title={serviceActive ? 'Service ON - Click to stop' : 'Service OFF - Click to start'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M12 2v10" />
+              <path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+            </svg>
+          </button>
+
+          <div className="cb-divider" />
+
+          {/* Mode toggle */}
+          <div className="mode-toggle">
+            <button
+              type="button"
+              className={`mode-btn ${audioMode === 'web' ? 'active' : ''}`}
+              onClick={() => onSetAudioMode?.('web')}
+              disabled={disabled || isRecording}
+            >
+              WEB
+            </button>
+            <button
+              type="button"
+              className={`mode-btn ${audioMode === 'local' ? 'active' : ''}`}
+              onClick={() => onSetAudioMode?.('local')}
+              disabled={disabled || isRecording}
+            >
+              DEVICE
+            </button>
+          </div>
+
+          <div className="cb-divider" />
+
           {profiles.map((profile) => (
             <button
               key={profile.id}
               type="button"
               className={`profile-pill ${activeProfile === profile.id ? 'active' : ''}`}
               onClick={() => onProfileChange(profile.id)}
-              disabled={isRecording || disabled}
+              disabled={isRecording || disabled || !serviceActive}
             >
               {profile.name}
             </button>
@@ -349,8 +500,9 @@ export function ControlBar({
                 type="button"
                 className={`mic-btn-compact ${isRecording ? 'recording' : ''} ${isInitializing ? 'initializing' : ''}`}
                 onClick={onToggleRecording}
-                disabled={disabled || isInitializing}
+                disabled={disabled || isInitializing || (!serviceActive && !isRecording)}
                 aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+                title={!serviceActive && !isRecording ? 'Start service first' : undefined}
               >
                 {isRecording ? (
                   <svg viewBox="0 0 24 24" fill="currentColor">

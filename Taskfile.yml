@@ -60,6 +60,14 @@ tasks:
     cmds:
       - npm run dev
 
+  dev:daemon:demo:
+    desc: Start mac daemon in demo mode (terminals without claude commands)
+    dir: mac-daemon
+    env:
+      DEMO_MODE: "true"
+    cmds:
+      - npm run dev
+
   dev:agent:
     desc: Start pi-agent (backend)
     dir: pi-agent

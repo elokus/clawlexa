@@ -4,8 +4,7 @@
 
 import { useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAgentStore } from '../../stores/agent';
-import { useStageStore } from '../../stores/stage';
+import { useEvents, useOverlayState, useUnifiedSessionsStore } from '../../stores';
 import type { RealtimeEvent } from '../../types';
 
 const EVENT_COLORS: Record<string, string> = {
@@ -27,10 +26,9 @@ const EVENT_COLORS: Record<string, string> = {
 
 export function EventsOverlay() {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const events = useAgentStore((s) => s.events);
-  const clearEvents = useAgentStore((s) => s.clearEvents);
-  const activeOverlay = useStageStore((s) => s.activeOverlay);
-  const setActiveOverlay = useStageStore((s) => s.setActiveOverlay);
+  const events = useEvents();
+  const clearEvents = useUnifiedSessionsStore((s) => s.clearEvents);
+  const { activeOverlay, setActiveOverlay } = useOverlayState();
 
   const isOpen = activeOverlay === 'events';
 

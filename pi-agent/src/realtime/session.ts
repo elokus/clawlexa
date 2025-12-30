@@ -23,6 +23,31 @@ interface InputAudioTranscriptionCompletedEvent {
   item_id: string;
   transcript: string;
 }
+
+// Type for output audio transcript delta event (streaming assistant speech)
+interface OutputAudioTranscriptDeltaEvent {
+  type: 'response.output_audio_transcript.delta';
+  event_id: string;
+  item_id: string;
+  content_index: number;
+  delta: string;
+  output_index: number;
+  response_id: string;
+}
+
+// Type for conversation.item.added event (item created, but may not have transcript yet)
+interface ConversationItemAddedEvent {
+  type: 'conversation.item.added';
+  event_id: string;
+  previous_item_id: string | null;
+  item: {
+    id: string;
+    type: string;
+    role?: 'user' | 'assistant' | 'system';
+    status?: string;
+    content?: unknown[];
+  };
+}
 import { config } from '../config.js';
 import type { AgentProfile } from '../agent/profiles.js';
 
@@ -50,7 +75,12 @@ export type AgentState = 'idle' | 'listening' | 'thinking' | 'speaking';
 export interface SessionEvents {
   stateChange: (state: AgentState) => void;
   audio: (audio: TransportLayerAudio) => void;
-  transcript: (text: string, role: 'user' | 'assistant') => void;
+  audioInterrupted: () => void;
+  transcript: (text: string, role: 'user' | 'assistant', itemId?: string) => void;
+  transcriptDelta: (delta: string, role: 'user' | 'assistant', itemId?: string) => void;
+  // Placeholder events for message ordering (emitted when item is created, before transcript)
+  userItemCreated: (itemId: string) => void;
+  assistantItemCreated: (itemId: string, previousItemId?: string) => void;
   historyUpdated: (history: RealtimeItem[]) => void;
   error: (error: Error) => void;
   connected: () => void;
@@ -193,8 +223,11 @@ export class VoiceSession {
     });
 
     // When audio playback is interrupted (user speaks over agent)
+    // The SDK handles server-side truncation automatically.
+    // We emit audioInterrupted so VoiceAgent can stop local audio playback.
     this.session.on('audio_interrupted', () => {
       this.setState('listening');
+      this.emit('audioInterrupted');
     });
 
     // Agent starts working
@@ -252,13 +285,50 @@ export class VoiceSession {
       this.resetConversationTimeout();
     });
 
-    // Transport events for user transcription
+    // Transport events for transcription
     this.session.on('transport_event', (event: TransportEvent) => {
-      // User input audio transcription completed
+      // Detect user interruption: VAD detected speech
+      // OpenAI sends input_audio_buffer.speech_started when user starts talking
+      // Always emit audioInterrupted to stop any buffered audio on the frontend
+      // (Don't check state - audio_stopped event may have already changed it due to race condition)
+      if (event.type === 'input_audio_buffer.speech_started') {
+        console.log('[VoiceSession] User speech detected - stopping playback');
+        this.emit('audioInterrupted');
+        this.setState('listening');
+      }
+
+      // Item added - emit placeholder before transcript arrives
+      // This ensures correct message ordering in the UI
+      if (event.type === 'conversation.item.added') {
+        const itemEvent = event as ConversationItemAddedEvent;
+        const { item, previous_item_id } = itemEvent;
+
+        // Only create placeholder for user audio messages (not text messages like greeting trigger)
+        // Audio items have content with type 'input_audio', text items have 'input_text'
+        const contentArray = item.content as Array<{ type?: string }> | undefined;
+        const hasAudioContent = Array.isArray(contentArray) &&
+          contentArray.some((c) => c.type === 'input_audio');
+
+        if (item.role === 'user' && item.type === 'message' && hasAudioContent) {
+          this.emit('userItemCreated', item.id);
+        } else if (item.role === 'assistant' && item.type === 'message') {
+          this.emit('assistantItemCreated', item.id, previous_item_id ?? undefined);
+        }
+      }
+
+      // Streaming assistant transcript delta
+      if (event.type === 'response.output_audio_transcript.delta') {
+        const deltaEvent = event as OutputAudioTranscriptDeltaEvent;
+        if (deltaEvent.delta) {
+          this.emit('transcriptDelta', deltaEvent.delta, 'assistant', deltaEvent.item_id);
+        }
+      }
+
+      // User input audio transcription completed (always arrives complete, not streamed)
       if (event.type === 'conversation.item.input_audio_transcription.completed') {
         const transcriptEvent = event as InputAudioTranscriptionCompletedEvent;
         if (transcriptEvent.transcript) {
-          this.emit('transcript', transcriptEvent.transcript, 'user');
+          this.emit('transcript', transcriptEvent.transcript, 'user', transcriptEvent.item_id);
 
           // Check for stop phrases to end conversation
           if (containsStopPhrase(transcriptEvent.transcript)) {

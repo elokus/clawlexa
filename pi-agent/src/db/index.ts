@@ -15,8 +15,11 @@ export type {
   SessionStatus,
   SessionType,
   AgentName,
+  VoiceProfile,
   SessionTreeNode,
   CreateSessionInput,
+  CreateVoiceInput,
+  CreateSubagentInput,
   CreateOrchestratorInput,
   CreateTerminalInput,
 } from './repositories/cli-sessions.js';
@@ -29,3 +32,6 @@ export type { Timer, TimerMode, TimerStatus, CreateTimerInput } from './reposito
 
 export { AgentRunsRepository } from './repositories/agent-runs.js';
 export type { AgentRun, CreateAgentRunInput } from './repositories/agent-runs.js';
+
+export { SessionMessagesRepository, PERSISTABLE_EVENT_TYPES } from './repositories/session-messages.js';
+export type { SessionMessage } from './repositories/session-messages.js';

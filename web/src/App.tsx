@@ -3,25 +3,35 @@
 // 3-column stage-based interface with shared element transitions
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
-import { useAgentStore } from './stores/agent';
+import { useConnectionState, useVoiceState, useUnifiedSessionsStore } from './stores';
 import { useAudioSession } from './hooks/useAudioSession';
+import { useUrlSessionSync } from './hooks/useRouter';
 import { StageOrchestrator } from './components/layout/StageOrchestrator';
 import { ControlBar } from './components/ControlBar';
 
 export function App() {
-  const { reconnect } = useWebSocket();
-  const { connected, state, profile, loadMockConversation } = useAgentStore();
+  const { reconnect, sendFocusSession } = useWebSocket();
+  const { connected } = useConnectionState();
+  const { voiceState, voiceProfile } = useVoiceState();
   const audioSession = useAudioSession();
 
-  const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true';
+  // Track focused session and sync to backend + URL
+  const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
+  const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
+  const prevFocusedRef = useRef<string | null>(null);
+
+  // Sync URL ↔ focusedSessionId (two-way binding)
+  useUrlSessionSync(focusedSessionId, focusSession);
 
   useEffect(() => {
-    if (isDemoMode) {
-      loadMockConversation();
+    // Only sync if focus actually changed and we're connected
+    if (connected && focusedSessionId !== prevFocusedRef.current) {
+      prevFocusedRef.current = focusedSessionId;
+      sendFocusSession(focusedSessionId);
     }
-  }, [isDemoMode, loadMockConversation]);
+  }, [focusedSessionId, connected, sendFocusSession]);
 
   const stateConfig = {
     idle: { color: 'rgba(110, 110, 136, 0.8)', glow: 'transparent' },
@@ -30,7 +40,7 @@ export function App() {
     speaking: { color: '#34d399', glow: '#34d399' },
   };
 
-  const currentState = stateConfig[state] || stateConfig.idle;
+  const currentState = stateConfig[voiceState] || stateConfig.idle;
 
   return (
     <div className="vertex-app">
@@ -284,7 +294,7 @@ export function App() {
             <span className="connection-dot" />
             <span className="connection-label">{connected ? 'Live' : 'Off'}</span>
           </div>
-          {profile && <span className="profile-tag">{profile}</span>}
+          {voiceProfile && <span className="profile-tag">{voiceProfile}</span>}
         </div>
       </header>
 
@@ -303,10 +313,14 @@ export function App() {
             onToggleRecording={audioSession.toggleSession}
             isInitializing={audioSession.isInitializing}
             error={audioSession.error}
-            disabled={!connected || isDemoMode}
+            disabled={!connected}
             isMaster={audioSession.isMaster}
             onRequestMaster={audioSession.requestMaster}
-            agentState={state}
+            agentState={voiceState}
+            serviceActive={audioSession.serviceActive}
+            audioMode={audioSession.audioMode}
+            onToggleService={audioSession.toggleService}
+            onSetAudioMode={audioSession.setAudioMode}
           />
         </div>
       </div>

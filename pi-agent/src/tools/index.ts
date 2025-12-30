@@ -14,6 +14,7 @@ export {
   stopSessionTool,
   viewPastSessionsTool,
 } from './developer-session.js';
+export { createBackgroundTaskTool } from './background-task.js';
 
 // Tool registry by name for easy lookup
 import { webSearchTool } from '../subagents/web-search/index.js';
@@ -28,6 +29,8 @@ import {
   stopSessionTool,
   viewPastSessionsTool,
 } from './developer-session.js';
+import { createBackgroundTaskTool } from './background-task.js';
+import type { VoiceAgent } from '../agent/voice-agent.js';
 
 // Static tools that don't need session context
 const staticToolsByName = {
@@ -48,18 +51,43 @@ const staticToolsByName = {
 } as const;
 
 // Type includes both static tools and factory-created tools
-export type ToolName = keyof typeof staticToolsByName | 'developer_session';
+export type ToolName = keyof typeof staticToolsByName | 'developer_session' | 'background_task';
+
+/**
+ * Options for creating tools with injected dependencies.
+ */
+export interface ToolCreationOptions {
+  /** Voice session ID for parent-child tracking */
+  sessionId: string;
+  /** Voice agent reference for completion notifications (needed by background_task) */
+  voiceAgent?: VoiceAgent;
+}
 
 /**
  * Get tools for a session, instantiating factory tools with the session ID.
  * This allows tools like developer_session to access the voice session ID
  * without polluting the conversation context.
+ *
+ * @param names - Tool names to instantiate
+ * @param options - Session ID and optional voice agent reference
  */
-export function getToolsForSession(names: ToolName[], sessionId: string) {
+export function getToolsForSession(names: ToolName[], options: ToolCreationOptions | string) {
+  // Support legacy signature (sessionId string) for backwards compatibility
+  const { sessionId, voiceAgent } = typeof options === 'string'
+    ? { sessionId: options, voiceAgent: undefined }
+    : options;
+
   return names.map((name) => {
     // Factory tool: developer_session needs sessionId injected
     if (name === 'developer_session') {
       return createDeveloperSessionTool(sessionId);
+    }
+    // Factory tool: background_task needs sessionId AND voiceAgent
+    if (name === 'background_task') {
+      if (!voiceAgent) {
+        console.warn('[Tools] background_task requires voiceAgent - tool may not notify on completion');
+      }
+      return createBackgroundTaskTool(voiceAgent!, sessionId);
     }
     // Static tools
     if (name in staticToolsByName) {

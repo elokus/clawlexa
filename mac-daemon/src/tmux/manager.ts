@@ -28,10 +28,14 @@ export class TmuxManager {
 
   /**
    * Create a new tmux session with the given command
+   * @param sessionId - Unique session identifier
+   * @param command - Command to run in the session (optional, skipped in demo mode)
+   * @param skipCommand - If true, creates session without running the command (for testing)
    */
   async createSession(
     sessionId: string,
-    command: string = 'claude'
+    command: string = 'claude',
+    skipCommand: boolean = false
   ): Promise<string> {
     const sessionName = this.getSessionName(sessionId);
 
@@ -52,6 +56,12 @@ export class TmuxManager {
 
     // Export DEV_SESSION_ID so hooks can identify this session
     await this.sendInput(sessionId, `export DEV_SESSION_ID="${sessionId}"`);
+
+    // In demo mode, skip running the command - just leave the shell prompt
+    if (skipCommand) {
+      console.log(`[TmuxManager] Demo mode: skipping command for ${sessionName}`);
+      return sessionName;
+    }
 
     // Small delay before sending the actual command
     await new Promise((resolve) => setTimeout(resolve, 100));

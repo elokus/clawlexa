@@ -5,10 +5,9 @@
 
 import { useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAgentStore } from '../../stores/agent';
-import { useStageStore } from '../../stores/stage';
+import { useVoiceTimeline, useVoiceState, useFocusedSession } from '../../stores';
 import { VoiceIndicator } from '../VoiceIndicator';
-import type { TranscriptItem } from '../../types';
+import type { TranscriptItem, TimelineItem } from '../../types';
 
 interface GlassHUDProps {
   /** Show even when not on terminal stage */
@@ -16,16 +15,15 @@ interface GlassHUDProps {
 }
 
 export function GlassHUD({ forceShow = false }: GlassHUDProps) {
-  const state = useAgentStore((s) => s.state);
-  const profile = useAgentStore((s) => s.profile);
-  const timeline = useAgentStore((s) => s.timeline);
-  const activeStage = useStageStore((s) => s.activeStage);
+  const { voiceState: state, voiceProfile: profile } = useVoiceState();
+  const timeline = useVoiceTimeline();
+  const focusedSession = useFocusedSession();
 
   // Only show HUD when:
   // 1. Agent is speaking or thinking
   // 2. We're on a terminal stage (or forceShow is true)
   const isAgentActive = state === 'speaking' || state === 'thinking';
-  const isTerminalStage = activeStage.type === 'terminal';
+  const isTerminalStage = focusedSession?.type === 'terminal';
   const shouldShow = isAgentActive && (isTerminalStage || forceShow);
 
   // Get the latest assistant message (what's being spoken) from timeline

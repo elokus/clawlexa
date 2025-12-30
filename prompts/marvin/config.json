@@ -1,0 +1,21 @@
+{
+  "name": "Marvin",
+  "description": "Developer assistant with CLI session management",
+  "type": "voice",
+  "activeVersion": "v1",
+  "metadata": {
+    "voice": "ash",
+    "wakeWord": "computer",
+    "tools": [
+      "developer_session",
+      "check_coding_session",
+      "send_session_feedback",
+      "stop_coding_session",
+      "view_past_sessions",
+      "deep_thinking",
+      "add_todo",
+      "view_todos",
+      "delete_todo"
+    ]
+  }
+}

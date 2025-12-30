@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useStageStore } from '../../stores/stage';
+import { useOverlayState } from '../../stores';
 
 const TOOLS = [
   { name: 'add_todo', desc: 'Add a new task to your list', icon: '◈', color: 'var(--color-violet)' },
@@ -19,8 +19,7 @@ const TOOLS = [
 ];
 
 export function ToolsOverlay() {
-  const activeOverlay = useStageStore((s) => s.activeOverlay);
-  const setActiveOverlay = useStageStore((s) => s.setActiveOverlay);
+  const { activeOverlay, setActiveOverlay } = useOverlayState();
 
   const isOpen = activeOverlay === 'tools';
   const handleClose = () => setActiveOverlay(null);

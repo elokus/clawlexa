@@ -17,8 +17,11 @@
 
 import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
-import { CliSessionsRepository } from '../db/index.js';
+import { CliSessionsRepository, SessionMessagesRepository } from '../db/index.js';
 import { eventRecorder } from './event-recorder.js';
+
+// Repository instance for persisting stream events
+const messagesRepo = new SessionMessagesRepository();
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
 
@@ -30,6 +33,7 @@ interface ClientState {
   id: string;
   isMaster: boolean;
   connectedAt: number;
+  focusedSessionId: string | null;
 }
 
 // Track state per WebSocket client
@@ -41,40 +45,57 @@ let masterClientId: string | null = null;
 // Track last agent state (to prevent master takeover during active turns)
 let lastAgentState: string = 'idle';
 
+// Track service state (for welcome message and soft power control)
+let serviceActive: boolean = false;
+let audioMode: 'web' | 'local' = 'web';
+
 // Binary audio handler for WebSocketTransport
 let binaryAudioHandler: ((data: Buffer, ws: WebSocket) => void) | null = null;
 
 // Client command handler
 let clientCommandHandler: ((command: ClientCommand, ws: WebSocket) => void) | null = null;
 
+// Session input handler for direct text input to subagents
+let sessionInputHandler: ((sessionId: string, text: string) => Promise<void>) | null = null;
+
 export interface ClientCommand {
-  command: 'start_session' | 'stop_session';
+  command: 'start_session' | 'stop_session' | 'start_service' | 'stop_service' | 'set_audio_mode';
   profile?: string;
+  mode?: 'web' | 'local';
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// WebSocket Message Types (Phase 5: Simplified Protocol)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Core Types (7):
+// - welcome            : Client identity + service state on connect
+// - stream_chunk       : All agent message events (AI SDK format)
+// - session_tree_update: Session hierarchy changes
+// - state_change       : Voice UI state (listening/thinking/speaking)
+// - master_changed     : Multi-client coordination
+// - service_state_changed: Service active/dormant + audio mode
+// - audio_control      : Audio playback control (start/stop/interrupt)
+//
+// Lifecycle Types (3):
+// - session_started/ended: Voice session lifecycle
+// - cli_session_deleted  : Terminal session cleanup
+// - error                : Error messages
+//
 export type WSMessageType =
-  | 'state_change'
-  | 'transcript'
-  | 'audio_start'
-  | 'audio_end'
-  | 'error'
-  | 'session_started'
-  | 'session_ended'
-  | 'tool_start'
-  | 'tool_end'
-  | 'item_pending'
-  | 'item_completed'
-  | 'cli_session_update'
-  | 'cli_session_created'   // New tmux session created
-  | 'cli_session_output'    // Session output streaming
-  | 'cli_session_deleted'   // Session deleted from database
-  // Unified subagent activity stream (replaces worker_activity and cli_agent_* events)
-  | 'subagent_activity'
-  // Multi-client master/replica coordination
-  | 'welcome'               // Sent on connect with clientId and isMaster
-  | 'master_changed'        // Broadcast when master changes
-  // Session hierarchy tree updates
-  | 'session_tree_update';  // Full session tree for ThreadRail
+  // Core unified protocol
+  | 'welcome'               // Client identity on connect
+  | 'stream_chunk'          // All agent events (AI SDK format: text-delta, tool-call, etc.)
+  | 'session_tree_update'   // Session hierarchy for ThreadRail
+  | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
+  | 'master_changed'        // Multi-client master coordination
+  | 'service_state_changed' // Service active/dormant + audio mode
+  | 'audio_control'         // Audio playback control (start/stop/interrupt)
+  // Lifecycle events
+  | 'session_started'       // Voice session activated
+  | 'session_ended'         // Voice session deactivated
+  | 'cli_session_deleted'   // Terminal session removed
+  | 'error';                // Error messages
 
 interface WSMessage {
   type: WSMessageType;
@@ -122,13 +143,13 @@ export function startWebSocketServer(): Promise<void> {
       }
 
       // Store client state
-      clientStates.set(ws, { id: clientId, isMaster, connectedAt: Date.now() });
+      clientStates.set(ws, { id: clientId, isMaster, connectedAt: Date.now(), focusedSessionId: null });
       clients.add(ws);
 
-      // Send welcome message with client identity
+      // Send welcome message with client identity and service state
       ws.send(JSON.stringify({
         type: 'welcome',
-        payload: { clientId, isMaster },
+        payload: { clientId, isMaster, serviceActive, audioMode },
         timestamp: Date.now(),
       }));
 
@@ -139,16 +160,17 @@ export function startWebSocketServer(): Promise<void> {
         timestamp: Date.now(),
       }));
 
-      // Send active session trees (so clients can navigate to running sessions)
+      // Send recent session trees (for chat history persistence)
+      // Includes both active and finished sessions from the last 24 hours
       const sessionsRepo = new CliSessionsRepository();
-      const activeTrees = sessionsRepo.getActiveTrees();
-      if (activeTrees.length > 0) {
+      const recentTrees = sessionsRepo.getRecentTrees(24, 50);
+      if (recentTrees.length > 0) {
         ws.send(JSON.stringify({
           type: 'session_tree_update',
-          payload: { trees: activeTrees },
+          payload: { trees: recentTrees },
           timestamp: Date.now(),
         }));
-        console.log(`[WS] Sent ${activeTrees.length} active session trees to ${clientId.slice(0, 8)}`);
+        console.log(`[WS] Sent ${recentTrees.length} recent session trees to ${clientId.slice(0, 8)}`);
       }
 
       // Handle disconnection
@@ -383,6 +405,45 @@ function handleClientMessage(ws: WebSocket, msg: { type: string; payload?: unkno
       break;
     }
 
+    case 'focus_session': {
+      // Track which session this client is focused on
+      const { sessionId } = msg.payload as { sessionId: string | null };
+      if (clientState) {
+        clientState.focusedSessionId = sessionId;
+        console.log(`[WS] ${shortId} focused on session: ${sessionId?.slice(0, 8) ?? 'none'}`);
+      }
+      break;
+    }
+
+    case 'session_input': {
+      // Route text input to focused session
+      const { text } = msg.payload as { text: string };
+      const sessionId = clientState?.focusedSessionId;
+
+      if (!sessionId) {
+        sendTo(ws, 'error', { message: 'No session focused' });
+        return;
+      }
+
+      if (!text?.trim()) {
+        sendTo(ws, 'error', { message: 'Empty input' });
+        return;
+      }
+
+      console.log(`[WS] ${shortId} input to session ${sessionId.slice(0, 8)}: "${text.slice(0, 50)}..."`);
+
+      // Call the session input handler (async, don't await)
+      if (sessionInputHandler) {
+        sessionInputHandler(sessionId, text).catch((err) => {
+          console.error(`[WS] Session input error:`, err);
+          sendTo(ws, 'error', { message: `Input error: ${err.message}` });
+        });
+      } else {
+        sendTo(ws, 'error', { message: 'Session input handler not registered' });
+      }
+      break;
+    }
+
     default:
       console.log(`[WS] Unknown message type: ${msg.type}`);
   }
@@ -419,86 +480,76 @@ export function onClientCommand(handler: (command: ClientCommand, ws: WebSocket)
   clientCommandHandler = handler;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Subagent Activity Types - Unified streaming events for all subagents
-// ═══════════════════════════════════════════════════════════════════════════
-
-export type SubagentEventType =
-  | 'reasoning_start'   // Reasoning/thinking started
-  | 'reasoning_delta'   // Streaming reasoning chunk
-  | 'reasoning_end'     // Reasoning complete
-  | 'tool_call'         // Tool invocation with args
-  | 'tool_result'       // Tool execution result
-  | 'response'          // Final text response
-  | 'error'             // Error occurred
-  | 'complete';         // Agent finished
-
-export interface SubagentActivityPayload {
-  /** Agent name for UI display (e.g., "Marvin", "Jarvis") */
-  agent: string;
-  /** Event type */
-  type: SubagentEventType;
-  /** Event-specific payload */
-  payload: unknown;
-  /** Orchestrator session ID for per-session activity tracking */
-  orchestratorId?: string;
+/**
+ * Register a handler for session input messages.
+ * Called when a client sends text input to their focused session.
+ */
+export function onSessionInput(handler: (sessionId: string, text: string) => Promise<void>): void {
+  sessionInputHandler = handler;
 }
 
-// Convenience broadcast functions
+// ═══════════════════════════════════════════════════════════════════════════
+// Stream Chunk Types - AI SDK format events for all agents
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Re-export types from stream-types.ts for convenience
+export type { AISDKStreamEvent, StreamChunkMessage } from './stream-types.js';
+import type { AISDKStreamEvent } from './stream-types.js';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Broadcast Helpers (Phase 5: Simplified)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Core broadcasts:
+// - streamChunk        : All agent message content (voice + CLI + web-search)
+// - sessionTreeUpdate  : Session hierarchy changes
+// - stateChange        : Voice UI state
+//
+// Lifecycle broadcasts:
+// - sessionStarted/Ended: Voice session lifecycle
+// - cliSessionDeleted   : Terminal cleanup
+// - error               : Error messages
+//
 export const wsBroadcast = {
+  // Voice UI state (listening/thinking/speaking/idle)
   stateChange: (state: string, profile: string | null) => {
     lastAgentState = state; // Track state for master takeover logic
     broadcast('state_change', { state, profile });
   },
 
-  transcript: (text: string, role: 'user' | 'assistant', itemId?: string, final = true) =>
-    broadcast('transcript', { id: itemId, text, role, final }),
+  // Service state (active/dormant + audio mode)
+  serviceState: (active: boolean, mode: 'web' | 'local') =>
+    broadcast('service_state_changed', { active, mode }),
 
-  itemPending: (itemId: string, role: 'user' | 'assistant') =>
-    broadcast('item_pending', { itemId, role }),
-
-  itemCompleted: (itemId: string, text: string, role: 'user' | 'assistant') =>
-    broadcast('item_completed', { itemId, text, role }),
-
-  toolStart: (name: string, args?: Record<string, unknown>) =>
-    broadcast('tool_start', { name, args }),
-
-  toolEnd: (name: string, result?: string) =>
-    broadcast('tool_end', { name, result }),
-
+  // Voice session lifecycle
   sessionStarted: (profile: string) =>
     broadcast('session_started', { profile }),
 
   sessionEnded: (profile: string | null) =>
     broadcast('session_ended', { profile }),
 
+  // Error messages
   error: (message: string) =>
     broadcast('error', { message }),
 
-  cliSessionUpdate: (session: { id: string; status: string; goal: string }) =>
-    broadcast('cli_session_update', session),
-
-  cliSessionCreated: (session: {
-    id: string;
-    goal: string;
-    mode: 'headless' | 'interactive';
-    projectPath: string;
-    command: string;
-    parentId?: string;
-  }) => broadcast('cli_session_created', session),
-
-  cliSessionOutput: (sessionId: string, output: string) =>
-    broadcast('cli_session_output', { sessionId, output }),
-
+  // Terminal session cleanup
   cliSessionDeleted: (sessionId: string) =>
     broadcast('cli_session_deleted', { sessionId }),
 
   cliAllSessionsDeleted: () =>
     broadcast('cli_session_deleted', { all: true }),
 
-  // Unified subagent activity events (replaces workerActivity and cliAgent* events)
-  subagentActivity: (payload: SubagentActivityPayload) =>
-    broadcast('subagent_activity', payload),
+  // Unified stream chunk events (AI SDK format for all agents)
+  // Also persists content-bearing events to database for history reconstruction
+  streamChunk: (sessionId: string, event: AISDKStreamEvent) => {
+    // Persist event (repository filters to content-bearing types only)
+    const result = messagesRepo.create(sessionId, event);
+    if (result) {
+      console.log(`[WS] Persisted ${event.type} for session ${sessionId.slice(0, 8)}`);
+    }
+    // Broadcast to all connected clients
+    broadcast('stream_chunk', { sessionId, event });
+  },
 
   // Session hierarchy tree update (for ThreadRail)
   sessionTreeUpdate: (rootId: string) => {
@@ -516,3 +567,20 @@ export const wsBroadcast = {
     broadcast('session_tree_update', { trees });
   },
 };
+
+/**
+ * Update the tracked service state and broadcast to all clients.
+ * Called by index.ts when service state changes.
+ */
+export function setServiceState(active: boolean, mode: 'web' | 'local'): void {
+  serviceActive = active;
+  audioMode = mode;
+  wsBroadcast.serviceState(active, mode);
+}
+
+/**
+ * Get current service state.
+ */
+export function getServiceState(): { active: boolean; mode: 'web' | 'local' } {
+  return { active: serviceActive, mode: audioMode };
+}

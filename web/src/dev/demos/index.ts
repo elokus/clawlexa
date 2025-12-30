@@ -3,10 +3,7 @@
 // Import all demos here to register them with the registry
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Subagent Components
-import './activity-feed';
-
-// Session Components
+// Session Components (uses unified AgentStage)
 import './e2e-simulation';
 // import './terminal-stage';
 

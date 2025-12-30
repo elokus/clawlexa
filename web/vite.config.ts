@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+import path from 'path';
 
 // Backend host configuration:
 // - For Pi mode (default): PI_HOST=192.168.0.164 or marlon.local
@@ -7,7 +9,12 @@ import react from '@vitejs/plugin-react';
 const PI_HOST = process.env.PI_HOST || 'localhost';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   server: {
     port: 5173,
     host: true,
@@ -31,6 +38,7 @@ export default defineConfig({
       },
     },
   },
-  // Handle SPA routing for /dev path
+  // SPA mode: enables history API fallback for client-side routing
+  // Routes like /session/:id and /dev are handled by React Router
   appType: 'spa',
 });

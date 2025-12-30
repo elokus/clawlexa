@@ -56,31 +56,38 @@ export interface AgentProfile {
   voice: string;
 }
 
-// WebSocket message types
+// ═══════════════════════════════════════════════════════════════════════════
+// WebSocket Message Types (Phase 5: Simplified Protocol)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Core types (7):
+// - welcome            : Client identity + service state on connect
+// - stream_chunk       : All agent message events (AI SDK format)
+// - session_tree_update: Session hierarchy changes
+// - state_change       : Voice UI state (listening/thinking/speaking)
+// - master_changed     : Multi-client coordination
+// - service_state_changed: Service active/dormant + audio mode
+// - audio_control      : Audio playback control (start/stop/interrupt)
+//
+// Lifecycle types (3):
+// - session_started/ended: Voice session lifecycle
+// - cli_session_deleted  : Terminal session cleanup
+// - error                : Error messages
+//
 export type WSMessageType =
-  | 'state_change'
-  | 'transcript'
-  | 'audio_start'
-  | 'audio_end'
-  | 'error'
-  | 'session_started'
-  | 'session_ended'
-  | 'tool_start'
-  | 'tool_end'
-  | 'item_pending'
-  | 'item_completed'
-  | 'cli_session_update'
-  | 'cli_session_created'
-  | 'cli_session_output'
-  | 'cli_session_deleted'
-  // Unified subagent activity stream
-  | 'subagent_activity'
-  // Session tree updates (v2 architecture)
-  | 'session_tree_update'
-  // Multi-client master/replica coordination
-  | 'welcome'
-  | 'master_changed'
-  | 'request_master';
+  // Core unified protocol
+  | 'welcome'               // Client identity on connect
+  | 'stream_chunk'          // All agent events (AI SDK format: text-delta, tool-call, etc.)
+  | 'session_tree_update'   // Session hierarchy for ThreadRail
+  | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
+  | 'master_changed'        // Multi-client master coordination
+  | 'service_state_changed' // Service active/dormant + audio mode
+  | 'audio_control'         // Audio playback control (start/stop/interrupt)
+  // Lifecycle events
+  | 'session_started'       // Voice session activated
+  | 'session_ended'         // Voice session deactivated
+  | 'cli_session_deleted'   // Terminal session removed
+  | 'error';                // Error messages
 
 export interface WSMessage {
   type: WSMessageType;
@@ -88,10 +95,20 @@ export interface WSMessage {
   timestamp: number;
 }
 
-// Multi-client coordination payloads
+// ═══════════════════════════════════════════════════════════════════════════
+// WebSocket Payload Types (Phase 5: Simplified)
+// ═══════════════════════════════════════════════════════════════════════════
+
 export interface WelcomePayload {
   clientId: string;
   isMaster: boolean;
+  serviceActive: boolean;
+  audioMode: 'web' | 'local';
+}
+
+export interface ServiceStateChangedPayload {
+  active: boolean;
+  mode: 'web' | 'local';
 }
 
 export interface MasterChangedPayload {
@@ -106,67 +123,6 @@ export interface StateChangePayload {
 export interface SessionStartedPayload {
   sessionId?: string;
   profile?: string;
-}
-
-export interface TranscriptPayload {
-  id?: string;
-  text: string;
-  role: MessageRole;
-  final?: boolean;
-}
-
-export interface ToolPayload {
-  name: string;
-  args?: Record<string, unknown>;
-  result?: string;
-}
-
-export interface ItemPendingPayload {
-  itemId: string;
-  role: MessageRole;
-}
-
-export interface ItemCompletedPayload {
-  itemId: string;
-  text: string;
-  role: MessageRole;
-}
-
-// CLI Session payloads (still used for session management)
-export interface CliSessionCreatedPayload {
-  id: string;
-  goal: string;
-  mode: 'headless' | 'interactive';
-  projectPath: string;
-  command: string;
-  parentId?: string;
-}
-
-export interface CliSessionOutputPayload {
-  sessionId: string;
-  output: string;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Subagent Activity Types - Unified UI state for all subagent events
-// ═══════════════════════════════════════════════════════════════════════════
-
-export type SubagentEventType =
-  | 'reasoning_start'
-  | 'reasoning_delta'
-  | 'reasoning_end'
-  | 'tool_call'
-  | 'tool_result'
-  | 'response'
-  | 'error'
-  | 'complete';
-
-export interface SubagentActivityPayload {
-  agent: string;
-  type: SubagentEventType;
-  payload: unknown;
-  /** Orchestrator session ID for per-session activity tracking */
-  orchestratorId?: string;
 }
 
 // Activity Block types for UI rendering

@@ -1,0 +1,20 @@
+{
+  "name": "Jarvis",
+  "description": "General assistant with web search, todos, and smart home control",
+  "type": "voice",
+  "activeVersion": "v1",
+  "metadata": {
+    "voice": "echo",
+    "wakeWord": "hey_jarvis",
+    "tools": [
+      "web_search",
+      "add_todo",
+      "view_todos",
+      "delete_todo",
+      "control_light",
+      "set_timer",
+      "list_timers",
+      "cancel_timer"
+    ]
+  }
+}
