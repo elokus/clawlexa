@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "dev": "bun run dev-server.ts",
-    "build": "bun build ./index.html --outdir=dist",
+    "build": "bun build ./index.html --outdir=dist --env='PUBLIC_*'",
     "preview": "bun run --production dev-server.ts",
     "typecheck": "bun run tsc --noEmit"
   },

@@ -8,7 +8,7 @@ const server = Bun.serve({
   port: 5173,
   development: { hmr: true, console: true },
 
-  routes: {
+  static: {
     "/": index,
   },
 
