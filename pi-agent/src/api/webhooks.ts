@@ -12,6 +12,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import type { Socket } from 'net';
 import {
   CliSessionsRepository,
   CliEventsRepository,
@@ -50,6 +51,7 @@ type WebhookHandler = (payload: WebhookPayload) => Promise<void>;
 
 let webhookHandler: WebhookHandler | null = null;
 let server: http.Server | null = null;
+const openConnections = new Set<Socket>();
 
 // Pending session completions - resolve when webhook received
 const pendingCompletions = new Map<
@@ -774,9 +776,19 @@ export function startWebhookServer(): Promise<void> {
     }
 
     server = http.createServer(handleWebhook);
+    openConnections.clear();
+
+    server.on('connection', (socket) => {
+      openConnections.add(socket);
+      socket.on('close', () => {
+        openConnections.delete(socket);
+      });
+    });
 
     server.on('error', (err) => {
       console.error('[Webhook] Server error:', err);
+      server = null;
+      openConnections.clear();
       reject(err);
     });
 
@@ -798,11 +810,37 @@ export function stopWebhookServer(): Promise<void> {
       return;
     }
 
-    server.close(() => {
-      console.log('[Webhook] Server stopped');
-      server = null;
+    const currentServer = server;
+    server = null;
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      openConnections.clear();
       resolve();
-    });
+    };
+
+    const timeout = setTimeout(() => {
+      for (const socket of openConnections) {
+        socket.destroy();
+      }
+      openConnections.clear();
+      console.warn('[Webhook] Force shutdown after close timeout');
+      finish();
+    }, 2000);
+
+    try {
+      currentServer.close(() => {
+        clearTimeout(timeout);
+        console.log('[Webhook] Server stopped');
+        finish();
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      console.warn('[Webhook] Error while closing server:', error);
+      finish();
+    }
   });
 }
 
