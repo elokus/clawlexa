@@ -112,7 +112,7 @@ export const startHeadlessSessionTool = tool({
         }
 
         wsBroadcast.sessionTreeUpdate(orchestratorId);
-        return completion.message || 'Aufgabe abgeschlossen, keine Ausgabe.';
+        return `Headless-Session ${terminalId} abgeschlossen.\n${completion.message || 'Aufgabe abgeschlossen, keine Ausgabe.'}`;
       } else {
         sessionsRepo.finish(terminalId, 'error');
         wsBroadcast.sessionTreeUpdate(orchestratorId);
@@ -202,7 +202,7 @@ export const startInteractiveSessionTool = tool({
       });
 
       wsBroadcast.sessionTreeUpdate(orchestratorId);
-      return `Interaktive Session gestartet in ${project_path}. Claude arbeitet jetzt an der Aufgabe.`;
+      return `Interaktive Session gestartet in ${project_path}. Terminal-ID: ${terminalId}. Claude arbeitet jetzt an der Aufgabe.`;
     } catch (error) {
       sessionsRepo.finish(terminalId, 'error');
       wsBroadcast.sessionTreeUpdate(orchestratorId);
@@ -231,7 +231,9 @@ export const sendSessionInputTool = tool({
         payload: { input },
       });
 
-      return result.success ? 'Eingabe gesendet.' : `Fehler: ${result.message}`;
+      return result.success
+        ? `Eingabe an Terminal ${session_id} gesendet.`
+        : `Fehler: ${result.message}`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -248,10 +250,18 @@ export const checkSessionStatusTool = tool({
 
     try {
       const result = await macClient.readCliOutput(session_id);
+      const details = await macClient.getSessionDetails(session_id);
+      const runtimeStatus = details?.status || result.status;
 
       const recentOutput = result.output.slice(-10).join('\n');
+      const outputSummary =
+        recentOutput || '(keine Ausgabe - interaktive Session wartet eventuell auf Eingabe)';
+      const waitingHint =
+        runtimeStatus === 'waiting_for_input'
+          ? '\n\nHinweis: Session wartet auf Input. Nutze send_session_input.'
+          : '';
 
-      return `Status: ${result.status}\n\nLetzte Ausgabe:\n${recentOutput || '(keine Ausgabe)'}`;
+      return `Session: ${session_id}\nStatus: ${runtimeStatus}\n\nLetzte Ausgabe:\n${outputSummary}${waitingHint}`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -267,16 +277,43 @@ export const listActiveSessionsTool = tool({
     try {
       const sessionsRepo = new CliSessionsRepository();
       const dbSessions = sessionsRepo.getActive();
+      const orchestratorId = getCurrentOrchestratorId();
 
       if (dbSessions.length === 0) {
         return 'Keine aktiven Sessions.';
       }
 
-      const summaries = dbSessions.map(
-        (s) => `- ${s.id.substring(0, 8)}: ${s.goal} (${s.status})`
-      );
+      const ownTerminals =
+        orchestratorId
+          ? dbSessions.filter((s) => s.type === 'terminal' && s.parent_id === orchestratorId)
+          : [];
+      const otherSessions =
+        orchestratorId
+          ? dbSessions.filter((s) => !(s.type === 'terminal' && s.parent_id === orchestratorId))
+          : dbSessions;
 
-      return `Aktive Sessions:\n${summaries.join('\n')}`;
+      const ownTerminalSummary =
+        ownTerminals.length > 0
+          ? [
+              `Aktive Terminals für Orchestrator ${orchestratorId}:`,
+              ...ownTerminals.map(
+                (s) => `- ${s.id} (${s.status}) goal="${s.goal.substring(0, 80)}"`
+              ),
+            ].join('\n')
+          : '';
+
+      const otherSummary =
+        otherSessions.length > 0
+          ? [
+              'Weitere aktive Sessions:',
+              ...otherSessions.map((s) => {
+                const parent = s.parent_id ? `, parent=${s.parent_id}` : '';
+                return `- ${s.id} [${s.type}] (${s.status}${parent}) goal="${s.goal.substring(0, 80)}"`;
+              }),
+            ].join('\n')
+          : '';
+
+      return [ownTerminalSummary, otherSummary].filter(Boolean).join('\n\n');
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }

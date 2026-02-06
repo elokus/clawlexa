@@ -50,6 +50,14 @@ export function getCurrentOrchestratorId(): string | undefined {
 }
 
 /**
+ * Set or clear the current orchestrator session ID.
+ * Used by direct input routing so CLI tools can resolve the active orchestrator context.
+ */
+export function setCurrentOrchestratorId(orchestratorId: string | undefined): void {
+  currentOrchestratorId = orchestratorId;
+}
+
+/**
  * Set a pending tool call ID for session-creating tools.
  * Called internally when we see a tool-call event for session-creating tools.
  */
@@ -127,7 +135,7 @@ export async function handleDeveloperRequest(
   }
 
   // Set subagent ID for tools to access during this request
-  currentOrchestratorId = subagent.id;
+  setCurrentOrchestratorId(subagent.id);
   const sessionId = subagent.id;
 
   console.log(`[CliAgent] Using model: ${config.model} via OpenRouter`);
@@ -348,6 +356,6 @@ export async function handleDeveloperRequest(
     return `Es gab einen Fehler bei der Verarbeitung: ${errorMsg}`;
   } finally {
     // Clear subagent ID to avoid leaking to subsequent requests
-    currentOrchestratorId = undefined;
+    setCurrentOrchestratorId(undefined);
   }
 }

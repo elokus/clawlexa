@@ -14,11 +14,13 @@
 import { tool, RealtimeContextData } from '@openai/agents/realtime';
 import { z } from 'zod';
 import { handleDeveloperRequest, isMacDaemonAvailable } from '../subagents/cli/index.js';
+import { handleDirectInput } from '../subagents/direct-input.js';
 import { getProcessManager } from '../processes/manager.js';
 import { generateSessionName, resolveSessionName } from '../utils/session-names.js';
-import { CliSessionsRepository, HandoffsRepository } from '../db/index.js';
+import { CliSessionsRepository, HandoffsRepository, CliEventsRepository } from '../db/index.js';
 import type { Session } from '../db/repositories/cli-sessions.js';
 import type { VoiceAgent } from '../agent/voice-agent.js';
+import * as macClient from './mac-client.js';
 
 /**
  * Resolve a named coding session (subagent) by exact or fuzzy name.
@@ -88,6 +90,125 @@ function getPrimaryTerminal(repo: CliSessionsRepository, subagentId: string): Se
   if (allTerminals.length === 0) return null;
 
   return allTerminals.sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+}
+
+function parseEventPayload(payload: string | null): string {
+  if (!payload) return '(keine Nachricht)';
+
+  try {
+    const parsed = JSON.parse(payload) as {
+      message?: unknown;
+      status?: unknown;
+      input?: unknown;
+      reason?: unknown;
+    };
+
+    if (typeof parsed.message === 'string' && parsed.message.length > 0) {
+      return parsed.message;
+    }
+    if (typeof parsed.status === 'string' && parsed.status.length > 0) {
+      return `Status: ${parsed.status}`;
+    }
+    if (typeof parsed.input === 'string' && parsed.input.length > 0) {
+      return `Input: ${parsed.input}`;
+    }
+    if (typeof parsed.reason === 'string' && parsed.reason.length > 0) {
+      return `Grund: ${parsed.reason}`;
+    }
+  } catch {
+    // Payload might already be plain text
+  }
+
+  return payload;
+}
+
+async function getTerminalRuntimeState(
+  terminal: Session
+): Promise<{ runtimeStatus: string; recentOutput: string[] }> {
+  let runtimeStatus: string = terminal.status;
+  let recentOutput: string[] = [];
+
+  try {
+    const details = await macClient.getSessionDetails(terminal.id);
+    if (details?.status) {
+      runtimeStatus = details.status;
+    }
+  } catch (error) {
+    console.warn(`[DeveloperSession] Failed to load terminal details ${terminal.id}:`, error);
+  }
+
+  try {
+    const output = await macClient.readCliOutput(terminal.id);
+    if (output.status) {
+      runtimeStatus = output.status;
+    }
+    recentOutput = output.output.slice(-8);
+  } catch (error) {
+    console.warn(`[DeveloperSession] Failed to read terminal output ${terminal.id}:`, error);
+  }
+
+  return { runtimeStatus, recentOutput };
+}
+
+async function buildFeedbackRoutingMessage(
+  session: Session,
+  feedback: string,
+  sessionsRepo: CliSessionsRepository,
+  eventsRepo: CliEventsRepository
+): Promise<string> {
+  const allTerminals = getTerminalChildren(sessionsRepo, session.id);
+  const activeTerminals = getActiveTerminalChildren(sessionsRepo, session.id);
+  const primaryTerminal = getPrimaryTerminal(sessionsRepo, session.id);
+
+  let primaryStatus = '(kein Terminal)';
+  let primaryOutput = '(keine Ausgabe erfasst)';
+  let primaryEvent = '(kein Event)';
+
+  if (primaryTerminal) {
+    const { runtimeStatus, recentOutput } = await getTerminalRuntimeState(primaryTerminal);
+    primaryStatus = runtimeStatus;
+    primaryOutput =
+      recentOutput.length > 0
+        ? recentOutput.join('\n')
+        : '(keine Ausgabe - möglicherweise wartet Claude auf Eingabe)';
+
+    const recentEvents = eventsRepo.getBySession(primaryTerminal.id, 1);
+    const lastEvent = recentEvents[0];
+    if (lastEvent) {
+      primaryEvent = `${lastEvent.event_type}: ${parseEventPayload(lastEvent.payload)}`;
+    }
+  }
+
+  const activeTerminalSummary =
+    activeTerminals.length > 0
+      ? activeTerminals
+          .map((terminal) => `- ${terminal.id} (${terminal.status})`)
+          .join('\n')
+      : '- keine aktiven Terminals';
+
+  return [
+    '## Routed Voice Feedback',
+    `Session Name: ${session.name ?? session.id}`,
+    `Session ID: ${session.id}`,
+    `Session Status: ${session.status}`,
+    `Aktive Terminals: ${activeTerminals.length}/${allTerminals.length}`,
+    'Terminal-Übersicht:',
+    activeTerminalSummary,
+    `Primäres Terminal: ${primaryTerminal?.id ?? 'keins'}`,
+    `Primärer Status: ${primaryStatus}`,
+    `Letztes Event: ${primaryEvent}`,
+    'Letzte Ausgabe (primär):',
+    primaryOutput,
+    '',
+    '## Nutzer-Feedback',
+    feedback,
+    '',
+    '## WICHTIGE ORCHESTRIERUNGSREGELN',
+    '- Nutze die bestehende Session/Terminals weiter.',
+    '- Starte KEINE neue Session für dasselbe Projekt, außer der Nutzer fordert explizit eine neue Session.',
+    '- Wenn ein Terminal auf waiting_for_input steht, leite das Feedback mit send_session_input dorthin.',
+    '- Nur wenn es kein nutzbares Terminal gibt: erkläre das und starte dann gezielt eine neue Session.',
+  ].join('\n');
 }
 
 const developerSessionParameters = z.object({
@@ -236,9 +357,6 @@ export const checkSessionTool = tool<
       return 'Der Mac ist gerade nicht erreichbar.';
     }
 
-    const { CliEventsRepository } = await import('../db/index.js');
-    const macClient = await import('./mac-client.js');
-
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
@@ -255,32 +373,30 @@ export const checkSessionTool = tool<
         return `Session "${displayName}": ${session.status}\nZiel: ${session.goal}\n\nEs wurde noch kein Terminal gestartet.`;
       }
 
-      const output = await macClient.readCliOutput(terminal.id);
-      const recentLines = output.output.slice(-5).join('\n');
+      const allTerminals = getTerminalChildren(sessionsRepo, session.id);
+      const activeTerminals = getActiveTerminalChildren(sessionsRepo, session.id);
+      const { runtimeStatus, recentOutput } = await getTerminalRuntimeState(terminal);
+      const recentLines =
+        recentOutput.length > 0
+          ? recentOutput.join('\n')
+          : '(keine Ausgabe - interaktive Sessions können auf Eingabe warten)';
 
       // Get last webhook event for this session
       const recentEvents = eventsRepo.getBySession(terminal.id, 1);
       const lastEvent = recentEvents[0];
       let lastWebhookInfo = '';
       if (lastEvent) {
-        let eventMessage = '';
-        if (lastEvent.payload) {
-          try {
-            const payload = JSON.parse(lastEvent.payload);
-            if (payload.message) {
-              eventMessage = payload.message;
-            } else if (payload.status) {
-              eventMessage = `Status: ${payload.status}`;
-            }
-          } catch {
-            eventMessage = lastEvent.payload;
-          }
-        }
-        lastWebhookInfo = `\n\nLetzter Webhook (${lastEvent.event_type}): ${eventMessage || '(keine Nachricht)'}`;
+        const eventMessage = parseEventPayload(lastEvent.payload);
+        lastWebhookInfo = `\n\nLetztes Event (${lastEvent.event_type}): ${eventMessage}`;
       }
 
+      const waitingHint =
+        runtimeStatus === 'waiting_for_input' || terminal.status === 'waiting_for_input'
+          ? '\n\nHinweis: Claude wartet gerade auf Eingabe. Nutze send_session_feedback, um die Session weiterzuführen.'
+          : '';
+
       const displayName = session.name!;
-      return `Session "${displayName}": ${session.status}\nTerminal: ${terminal.status}\nZiel: ${session.goal}\n\nLetzte Ausgabe:\n${recentLines || '(keine)'}${lastWebhookInfo}`;
+      return `Session "${displayName}": ${session.status}\nTerminals: ${activeTerminals.length}/${allTerminals.length} aktiv\nPrimäres Terminal: ${terminal.id.slice(0, 8)} (${runtimeStatus})\nZiel: ${session.goal}\n\nLetzte Ausgabe:\n${recentLines}${lastWebhookInfo}${waitingHint}`;
     } else {
       // List all active named coding sessions
       const sessions = sessionsRepo
@@ -308,8 +424,12 @@ export const checkSessionTool = tool<
           }
         }
         const displayName = s.name!;
-        const terminalStatus = primaryTerminal ? `, terminal=${primaryTerminal.status}` : '';
-        return `${displayName}: ${s.goal?.substring(0, 50) ?? 'kein Ziel'} (${s.status}${terminalStatus})${lastMessage}`;
+        const terminalStatus = primaryTerminal
+          ? `, terminal=${primaryTerminal.status}`
+          : ', terminal=none';
+        const waitingHint =
+          primaryTerminal?.status === 'waiting_for_input' ? ' (wartet auf Eingabe)' : '';
+        return `${displayName}: ${s.goal?.substring(0, 50) ?? 'kein Ziel'} (${s.status}${terminalStatus})${waitingHint}${lastMessage}`;
       });
 
       return `${sessions.length} aktive Session${sessions.length > 1 ? 's' : ''}:\n${summaries.join('\n')}`;
@@ -347,28 +467,40 @@ export const sendFeedbackTool = tool<
     }
 
     const sessionsRepo = new CliSessionsRepository();
-    const terminal = getPrimaryTerminal(sessionsRepo, session.id);
-    if (!terminal || !isActiveSessionStatus(terminal.status)) {
-      const displayName = session.name!;
-      return `Session "${displayName}" hat aktuell kein aktives Terminal.`;
-    }
-
-    const macClient = await import('./mac-client.js');
-    const { CliEventsRepository } = await import('../db/index.js');
-
     const eventsRepo = new CliEventsRepository();
+    const processManager = getProcessManager();
 
     try {
-      const result = await macClient.sendCliInput(terminal.id, feedback);
+      const routedFeedback = await buildFeedbackRoutingMessage(
+        session,
+        feedback,
+        sessionsRepo,
+        eventsRepo
+      );
+
+      // Option 2 routing: always feed follow-up input through the CLI orchestrator.
+      processManager.spawn({
+        name: session.name ?? `cli-${session.id.slice(0, 8)}`,
+        sessionId: `feedback-${Date.now()}`,
+        type: 'headless',
+        notifyVoiceOnCompletion: false,
+        execute: async () => {
+          await handleDirectInput(session.id, routedFeedback);
+          return 'Feedback verarbeitet.';
+        },
+      });
 
       eventsRepo.create({
-        session_id: terminal.id,
+        session_id: session.id,
         event_type: 'input',
-        payload: { input: feedback },
+        payload: {
+          input: feedback,
+          routed_via: 'orchestrator',
+        },
       });
 
       const displayName = session.name!;
-      return result.success ? `Feedback an "${displayName}" gesendet.` : `Fehler: ${result.message}`;
+      return `Feedback an "${displayName}" wurde an den Orchestrator übergeben.`;
     } catch (error) {
       return `Fehler beim Senden: ${error instanceof Error ? error.message : String(error)}`;
     }
