@@ -359,6 +359,22 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 status: 'completed',
                 result: resultText,
               } as Partial<ToolItem>);
+            } else {
+              // Keep result visible even when call/result ordering or IDs drift.
+              const resultText =
+                typeof event.output === 'string'
+                  ? event.output
+                  : JSON.stringify(event.output, null, 2);
+              const fallbackTool: ToolItem = {
+                id: event.toolCallId,
+                type: 'tool',
+                name: event.toolName,
+                args: {},
+                status: 'completed',
+                result: resultText,
+                timestamp,
+              };
+              store.addVoiceTimelineItem(fallbackTool);
             }
             store.setCurrentTool(null);
             break;

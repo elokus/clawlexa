@@ -55,6 +55,37 @@ export interface HealthResponse {
   sessions: number;
 }
 
+interface ApiEnvelope<T> {
+  success?: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function getEnvelopeData<T>(raw: unknown): T | null {
+  if (!isObject(raw)) return null;
+  if (!('data' in raw)) return null;
+  return (raw as ApiEnvelope<T>).data ?? null;
+}
+
+function getEnvelopeSuccess(raw: unknown, fallback: boolean): boolean {
+  if (!isObject(raw)) return fallback;
+  const success = (raw as ApiEnvelope<unknown>).success;
+  return typeof success === 'boolean' ? success : fallback;
+}
+
+function getEnvelopeMessage(raw: unknown, fallback: string): string {
+  if (!isObject(raw)) return fallback;
+  const envelope = raw as ApiEnvelope<unknown>;
+  if (typeof envelope.message === 'string' && envelope.message.length > 0) return envelope.message;
+  if (typeof envelope.error === 'string' && envelope.error.length > 0) return envelope.error;
+  return fallback;
+}
+
 /**
  * Check if the Mac daemon is reachable.
  */
@@ -93,9 +124,29 @@ export async function startCliSession(
     body: JSON.stringify({ sessionId, goal, command }),
   });
 
-  const data = (await res.json()) as StartSessionResponse;
-  console.log(`[MacClient] Start response:`, data);
-  return data;
+  const raw = (await res.json()) as unknown;
+  const wrappedData = getEnvelopeData<{
+    sessionId?: string;
+    tmuxSession?: string;
+  }>(raw);
+
+  const success = getEnvelopeSuccess(raw, res.ok);
+  const normalized: StartSessionResponse = wrappedData
+    ? {
+        success,
+        sessionId: wrappedData.sessionId ?? sessionId,
+        tmuxSession: wrappedData.tmuxSession ?? '',
+        message: getEnvelopeMessage(raw, success ? 'Session gestartet.' : 'Fehler beim Starten der Session.'),
+      }
+    : {
+        success,
+        sessionId: (raw as Partial<StartSessionResponse>)?.sessionId ?? sessionId,
+        tmuxSession: (raw as Partial<StartSessionResponse>)?.tmuxSession ?? '',
+        message: getEnvelopeMessage(raw, success ? 'Session gestartet.' : 'Fehler beim Starten der Session.'),
+      };
+
+  console.log(`[MacClient] Start response:`, normalized);
+  return normalized;
 }
 
 /**
@@ -133,7 +184,25 @@ export async function readCliOutput(
     method: 'GET',
   });
 
-  const data = (await res.json()) as SessionOutputResponse;
+  const raw = (await res.json()) as unknown;
+  const wrappedData = getEnvelopeData<{
+    sessionId?: string;
+    status?: string;
+    output?: unknown;
+    hasMore?: unknown;
+  }>(raw);
+  const source = wrappedData ?? (isObject(raw) ? raw : {});
+
+  const data: SessionOutputResponse = {
+    success: getEnvelopeSuccess(raw, res.ok),
+    sessionId: typeof source.sessionId === 'string' ? source.sessionId : sessionId,
+    status: typeof source.status === 'string' ? source.status : '',
+    output: Array.isArray(source.output)
+      ? source.output.filter((line): line is string => typeof line === 'string')
+      : [],
+    hasMore: Boolean(source.hasMore),
+  };
+
   // Don't log full output - too noisy
   console.log(`[MacClient] Output status: ${data.status}, lines: ${data.output?.length ?? 0}`);
   return data;
@@ -147,9 +216,18 @@ export async function listCliSessions(): Promise<ListSessionsResponse> {
     method: 'GET',
   });
 
-  const data = (await res.json()) as ListSessionsResponse;
-  console.log(`[MacClient] Listed ${data.sessions?.length ?? 0} sessions`);
-  return data;
+  const raw = (await res.json()) as unknown;
+  const wrappedData = getEnvelopeData<unknown>(raw);
+  const flatSessions = isObject(raw) ? raw.sessions : undefined;
+  const candidate = wrappedData ?? flatSessions;
+  const sessions = Array.isArray(candidate) ? (candidate as MacSession[]) : [];
+  const normalized: ListSessionsResponse = {
+    success: getEnvelopeSuccess(raw, res.ok),
+    sessions,
+  };
+
+  console.log(`[MacClient] Listed ${normalized.sessions?.length ?? 0} sessions`);
+  return normalized;
 }
 
 /**
@@ -165,8 +243,12 @@ export async function getSessionDetails(
       method: 'GET',
     });
 
-    if (!res.ok) return null;
-    return (await res.json()) as MacSession;
+  if (!res.ok) return null;
+    const raw = (await res.json()) as unknown;
+    const wrappedData = getEnvelopeData<MacSession>(raw);
+    if (wrappedData) return wrappedData;
+    if (isObject(raw) && typeof raw.sessionId === 'string') return raw as unknown as MacSession;
+    return null;
   } catch (error) {
     console.error(`[MacClient] Failed to get session ${sessionId}:`, error);
     return null;
@@ -187,9 +269,13 @@ export async function terminateSession(
     method: 'DELETE',
   });
 
-  const data = (await res.json()) as TerminateSessionResponse;
-  console.log(`[MacClient] Terminate response:`, data);
-  return data;
+  const raw = (await res.json()) as unknown;
+  const normalized: TerminateSessionResponse = {
+    success: getEnvelopeSuccess(raw, res.ok),
+    message: getEnvelopeMessage(raw, res.ok ? 'Session beendet.' : 'Fehler beim Beenden der Session.'),
+  };
+  console.log(`[MacClient] Terminate response:`, normalized);
+  return normalized;
 }
 
 /**

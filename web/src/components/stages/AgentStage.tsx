@@ -78,7 +78,7 @@ function timelineToMessages(timeline: TimelineItem[]): DisplayMessage[] {
           args: tool.args || {},
         },
       ];
-      if (tool.result) {
+      if (tool.result !== undefined) {
         parts.push({
           type: 'tool-result',
           toolName: tool.name,
