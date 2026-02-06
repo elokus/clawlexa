@@ -13,6 +13,7 @@ import { readFile } from 'fs/promises';
 import { join, basename } from 'path';
 import {
   getActivePrompt,
+  getPromptConfig,
   getPromptIdForSubagent,
   type InterpolationContext,
 } from '../prompts/index.js';
@@ -58,6 +59,15 @@ export async function loadAgentConfig(
     agent_name: config.name,
     ...context,
   };
+
+  // Override model/maxSteps from centralized prompts config (JIT — no restart needed)
+  const promptConfig = await getPromptConfig(promptId);
+  if (promptConfig?.metadata?.model) {
+    config.model = promptConfig.metadata.model;
+  }
+  if (promptConfig?.metadata?.maxSteps) {
+    config.maxSteps = promptConfig.metadata.maxSteps;
+  }
 
   // Try centralized prompts first, fall back to local PROMPT.md
   let prompt = await getActivePrompt(promptId, fullContext);

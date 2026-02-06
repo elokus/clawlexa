@@ -29,16 +29,23 @@ import * as macClient from '../tools/mac-client.js';
 import {
   listPrompts,
   getPromptInfo,
+  getPromptConfig,
   getPromptVersion,
   listVersions,
   createPromptVersion,
   setActiveVersion,
   createPrompt,
+  updatePromptConfig,
   getActivePromptRaw,
   type PromptConfig,
 } from '../prompts/index.js';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
+const OPEN_ROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY ?? '';
+
+// OpenRouter models cache
+let modelsCache: { data: unknown[]; timestamp: number } | null = null;
+const MODELS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 interface WebhookPayload {
   sessionId: string;
@@ -522,6 +529,44 @@ async function handleWebhook(
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // Models API (OpenRouter proxy with cache)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (req.method === 'GET' && req.url === '/api/models') {
+    try {
+      const now = Date.now();
+      if (!modelsCache || now - modelsCache.timestamp > MODELS_CACHE_TTL) {
+        const response = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: {
+            'Authorization': `Bearer ${OPEN_ROUTER_API_KEY}`,
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`OpenRouter API error: ${response.status}`);
+        }
+        const json = await response.json() as { data: Array<{ id: string; name: string; context_length: number; pricing: { prompt: string; completion: string } }> };
+        // Trim to essential fields and sort by id
+        const models = json.data
+          .map((m) => ({
+            id: m.id,
+            name: m.name,
+            context_length: m.context_length,
+            pricing: m.pricing,
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+        modelsCache = { data: models, timestamp: now };
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(modelsCache.data));
+    } catch (error) {
+      console.error('[API] Error fetching models:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch models' }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // Prompts API
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -648,6 +693,41 @@ async function handleWebhook(
         console.error('[API] Error setting active version:', error);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to set active version' }));
+      }
+    });
+    return;
+  }
+
+  // PUT /api/prompts/:id/metadata - Update prompt metadata (model, maxSteps, etc.)
+  const metadataMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)\/metadata$/);
+  if (req.method === 'PUT' && metadataMatch) {
+    const promptId = metadataMatch[1]!;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { metadata } = JSON.parse(body) as { metadata: PromptConfig['metadata'] };
+        if (!metadata) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'metadata is required' }));
+          return;
+        }
+        // Merge with existing metadata
+        const existing = await getPromptConfig(promptId);
+        if (!existing) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Prompt not found' }));
+          return;
+        }
+        const mergedMetadata = { ...existing.metadata, ...metadata };
+        await updatePromptConfig(promptId, { metadata: mergedMetadata });
+        console.log(`[API] Updated metadata for ${promptId}:`, mergedMetadata);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, promptId, metadata: mergedMetadata }));
+      } catch (error) {
+        console.error('[API] Error updating metadata:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to update metadata' }));
       }
     });
     return;

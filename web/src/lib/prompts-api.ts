@@ -115,6 +115,24 @@ export async function setActiveVersion(
 }
 
 /**
+ * Update prompt metadata (model, maxSteps, etc.)
+ */
+export async function updateMetadata(
+  id: string,
+  metadata: PromptConfig['metadata']
+): Promise<{ success: boolean; promptId: string; metadata: PromptConfig['metadata'] }> {
+  const res = await fetch(`${API_BASE}/api/prompts/${encodeURIComponent(id)}/metadata`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ metadata }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update metadata: ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
  * Create a new prompt
  */
 export async function createPrompt(

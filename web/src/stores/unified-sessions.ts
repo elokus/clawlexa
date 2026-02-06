@@ -260,6 +260,7 @@ interface UnifiedSessionsStore {
   setPromptContent: (content: string) => void;
   savePromptVersion: () => Promise<void>;
   setPromptActiveVersion: (version: string) => Promise<void>;
+  updatePromptMetadata: (id: string, metadata: PromptInfo['metadata']) => Promise<void>;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Reset
@@ -1243,6 +1244,23 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
     } catch (error) {
       set({
         promptsError: error instanceof Error ? error.message : 'Failed to set active version',
+        promptsLoading: false,
+      });
+    }
+  },
+
+  updatePromptMetadata: async (id, metadata) => {
+    const { prompts } = get();
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      await promptsApi.updateMetadata(id, metadata);
+      const updatedPrompts = prompts.map((p) =>
+        p.id === id ? { ...p, metadata: { ...p.metadata, ...metadata } } : p
+      );
+      set({ prompts: updatedPrompts, promptsLoading: false });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to update metadata',
         promptsLoading: false,
       });
     }
