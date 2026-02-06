@@ -138,14 +138,25 @@ export function ThreadRail() {
   const profile = useUnifiedSessionsStore((s) => s.voiceProfile);
 
   const handleClearSessions = async () => {
-    if (isClearing) return;
+    const rootId = sessionTree?.id;
+    if (isClearing || !rootId) return;
+
     setIsClearing(true);
     try {
-      const res = await fetch(`${API_URL}/api/sessions`, { method: 'DELETE' });
-      if (res.ok) {
-        const data = await res.json();
-        console.log('[ThreadRail] Cleared', data.deleted, 'sessions');
+      const res = await fetch(
+        `${API_URL}/api/sessions/${encodeURIComponent(rootId)}/tree`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`DELETE /api/sessions/${rootId}/tree failed (${res.status}): ${errorText}`);
       }
+
+      const data = await res.json();
+      console.log('[ThreadRail] Cleared thread:', data);
+
+      // The currently focused session may be gone; clear URL and let tree sync pick the next root.
+      navigateToSession(null, true);
     } catch (err) {
       console.error('[ThreadRail] Error:', err);
     } finally {
@@ -501,8 +512,8 @@ export function ThreadRail() {
         <button
           className="thread-clear"
           onClick={handleClearSessions}
-          disabled={isClearing}
-          title="Clear sessions"
+          disabled={isClearing || !sessionTree}
+          title="Clear current thread"
         >
           {isClearing ? '…' : '×'}
         </button>

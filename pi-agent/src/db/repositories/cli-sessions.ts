@@ -503,6 +503,26 @@ export class CliSessionsRepository {
       .all(threadId) as Session[];
   }
 
+  /**
+   * Get all session IDs in a tree (root + descendants), depth-first.
+   */
+  getTreeSessionIds(rootId: string): string[] {
+    const root = this.findById(rootId);
+    if (!root) return [];
+
+    const ids: string[] = [];
+    const collect = (sessionId: string): void => {
+      ids.push(sessionId);
+      const children = this.getChildren(sessionId);
+      for (const child of children) {
+        collect(child.id);
+      }
+    };
+
+    collect(rootId);
+    return ids;
+  }
+
   // ============================================================================
   // UPDATE METHODS
   // ============================================================================
@@ -600,20 +620,52 @@ export class CliSessionsRepository {
   // ============================================================================
 
   /**
-   * Delete a session and its events (cascade).
+   * Delete a session and its related data.
+   * - session_messages + cli_events are removed via ON DELETE CASCADE
+   * - handoff_packets are removed explicitly (schema has no cascade)
    */
   delete(id: string): boolean {
+    this.db
+      .query(
+        `DELETE FROM handoff_packets
+         WHERE source_session_id = ? OR target_session_id = ?`
+      )
+      .run(id, id);
+
     const result = this.db.query('DELETE FROM cli_sessions WHERE id = ?').run(id);
     return result.changes > 0;
   }
 
   /**
-   * Delete all sessions and their events (cascade).
+   * Delete all sessions and related data.
+   * - handoff_packets are removed first to avoid FK violations
+   * - cli_events + session_messages are removed via ON DELETE CASCADE
    * Returns the number of sessions deleted.
    */
   deleteAll(): number {
+    this.db.query('DELETE FROM handoff_packets').run();
+
     const result = this.db.query('DELETE FROM cli_sessions').run();
     return result.changes;
+  }
+
+  /**
+   * Delete a subtree rooted at the given session ID.
+   * Returns the list of successfully deleted session IDs.
+   */
+  deleteTree(rootId: string): string[] {
+    const ids = this.getTreeSessionIds(rootId);
+    if (ids.length === 0) return [];
+
+    // Delete children first, then root.
+    const deletedIds: string[] = [];
+    for (const id of [...ids].reverse()) {
+      if (this.delete(id)) {
+        deletedIds.push(id);
+      }
+    }
+
+    return deletedIds;
   }
 
   /**

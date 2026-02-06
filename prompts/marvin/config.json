@@ -2,7 +2,7 @@
   "name": "Marvin",
   "description": "Developer assistant with CLI session management",
   "type": "voice",
-  "activeVersion": "v1",
+  "activeVersion": "v2",
   "metadata": {
     "voice": "ash",
     "wakeWord": "computer",

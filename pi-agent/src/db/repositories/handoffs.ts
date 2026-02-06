@@ -69,4 +69,25 @@ export class HandoffsRepository {
       `SELECT * FROM handoff_packets WHERE source_session_id = ? ORDER BY created_at DESC`
     ).all(sourceSessionId) as HandoffRow[];
   }
+
+  /**
+   * Delete handoffs that reference a session as source or target.
+   * Returns number of rows deleted.
+   */
+  deleteBySession(sessionId: string): number {
+    const result = this.db.query(
+      `DELETE FROM handoff_packets
+       WHERE source_session_id = ? OR target_session_id = ?`
+    ).run(sessionId, sessionId);
+    return result.changes;
+  }
+
+  /**
+   * Delete all handoff packets.
+   * Returns number of rows deleted.
+   */
+  deleteAll(): number {
+    const result = this.db.query('DELETE FROM handoff_packets').run();
+    return result.changes;
+  }
 }

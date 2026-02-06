@@ -146,10 +146,13 @@ async function main() {
   processManager.on('process:completed', (process: ManagedProcess) => {
     console.log(`[ProcessManager] Process "${process.name}" completed`);
 
-    // Broadcast process-status to frontend on the voice session
     const sessionsRepo = new CliSessionsRepository();
     const session = sessionsRepo.findById(process.sessionId);
-    const voiceSessionId = session?.parent_id || process.sessionId;
+    if (!session) {
+      // Detached process without DB session linkage (e.g. developer_session fire-and-forget).
+      return;
+    }
+    const voiceSessionId = session.type === 'voice' ? session.id : session.parent_id ?? session.id;
 
     wsBroadcast.streamChunk(voiceSessionId, {
       type: 'process-status',
@@ -158,6 +161,10 @@ async function main() {
       status: 'completed',
       summary: process.result?.substring(0, 200),
     });
+
+    if (!process.notifyVoiceOnCompletion) {
+      return;
+    }
 
     // Notify voice agent or queue for next session
     if (agent.isActive()) {
@@ -174,7 +181,11 @@ async function main() {
 
     const sessionsRepo = new CliSessionsRepository();
     const session = sessionsRepo.findById(process.sessionId);
-    const voiceSessionId = session?.parent_id || process.sessionId;
+    if (!session) {
+      // Detached process without DB session linkage (e.g. developer_session fire-and-forget).
+      return;
+    }
+    const voiceSessionId = session.type === 'voice' ? session.id : session.parent_id ?? session.id;
 
     wsBroadcast.streamChunk(voiceSessionId, {
       type: 'process-status',
@@ -183,6 +194,10 @@ async function main() {
       status: 'error',
       summary: process.error,
     });
+
+    if (!process.notifyVoiceOnCompletion) {
+      return;
+    }
 
     if (agent.isActive()) {
       agent.sendMessage(

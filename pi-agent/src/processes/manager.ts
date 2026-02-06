@@ -19,6 +19,7 @@ export interface ManagedProcess {
   name: string;              // Human-readable ("swift-falcon")
   sessionId: string;          // DB session ID
   type: 'headless' | 'interactive' | 'web_search' | 'deep_thinking';
+  notifyVoiceOnCompletion: boolean;
   status: 'running' | 'finished' | 'error';
   startedAt: number;
   finishedAt?: number;
@@ -30,6 +31,7 @@ export interface SpawnConfig {
   name: string;
   sessionId: string;
   type: ManagedProcess['type'];
+  notifyVoiceOnCompletion?: boolean;
   execute: () => Promise<string>;
 }
 
@@ -42,6 +44,7 @@ export class ProcessManager extends EventEmitter {
       name: config.name,
       sessionId: config.sessionId,
       type: config.type,
+      notifyVoiceOnCompletion: config.notifyVoiceOnCompletion ?? false,
       status: 'running',
       startedAt: Date.now(),
     };

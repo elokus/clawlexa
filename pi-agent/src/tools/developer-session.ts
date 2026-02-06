@@ -48,6 +48,48 @@ function resolveNamedSession(sessionName: string, includeFinished = false): Sess
   return candidates.find((s) => s.id === resolved.id) ?? null;
 }
 
+function isSessionStartIntent(request: string): boolean {
+  const normalized = request.toLowerCase();
+  const startWords = ['start', 'starte', 'starte bitte', 'öffne', 'open', 'create', 'erstelle', 'launch', 'begin'];
+  const sessionWords = ['session', 'coding-session', 'cli', 'interaktiv', 'interactive', 'terminal', 'claude'];
+  return startWords.some((word) => normalized.includes(word)) &&
+    sessionWords.some((word) => normalized.includes(word));
+}
+
+function isExplicitNewSessionIntent(request: string): boolean {
+  const normalized = request.toLowerCase();
+  return normalized.includes('neue session') ||
+    normalized.includes('new session') ||
+    normalized.includes('another session') ||
+    normalized.includes('weitere session') ||
+    normalized.includes('zweite session');
+}
+
+function isActiveSessionStatus(status: Session['status']): boolean {
+  return status === 'pending' || status === 'running' || status === 'waiting_for_input';
+}
+
+function getTerminalChildren(repo: CliSessionsRepository, subagentId: string): Session[] {
+  return repo.getChildren(subagentId).filter((child) => child.type === 'terminal');
+}
+
+function getActiveTerminalChildren(repo: CliSessionsRepository, subagentId: string): Session[] {
+  return getTerminalChildren(repo, subagentId).filter((child) => isActiveSessionStatus(child.status));
+}
+
+function getPrimaryTerminal(repo: CliSessionsRepository, subagentId: string): Session | null {
+  const activeTerminals = getActiveTerminalChildren(repo, subagentId);
+  if (activeTerminals.length > 0) {
+    // Oldest active terminal is treated as the primary thread for direct feedback/checks.
+    return activeTerminals[0] ?? null;
+  }
+
+  const allTerminals = getTerminalChildren(repo, subagentId);
+  if (allTerminals.length === 0) return null;
+
+  return allTerminals.sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+}
+
 const developerSessionParameters = z.object({
   request: z
     .string()
@@ -120,11 +162,24 @@ Examples:
       const existingSubagent = sessionsRepo.findRunningSubagent('cli', sessionId);
 
       if (existingSubagent?.name) {
+        const activeTerminals = getActiveTerminalChildren(sessionsRepo, existingSubagent.id);
+
+        // Guard against accidental session-start loops when one session is already running.
+        if (
+          activeTerminals.length > 0 &&
+          isSessionStartIntent(request) &&
+          !isExplicitNewSessionIntent(request)
+        ) {
+          console.log(`[DeveloperSession] Session "${existingSubagent.name}" already active, skipping duplicate start intent`);
+          return `Session "${existingSubagent.name}" läuft bereits. Sag mir stattdessen die nächste Aufgabe für diese Session.`;
+        }
+
         // Reuse existing session — announce its name, not a new one
         processManager.spawn({
           name: existingSubagent.name,
           sessionId: `dev-${Date.now()}`,
           type: 'headless',
+          notifyVoiceOnCompletion: false,
           execute: async () => {
             return await handleDeveloperRequest(handoff, sessionId);
           },
@@ -142,6 +197,7 @@ Examples:
         name,
         sessionId: `dev-${Date.now()}`, // Unique process ID
         type: 'headless',
+        notifyVoiceOnCompletion: false,
         execute: async () => {
           return await handleDeveloperRequest(handoff, sessionId, name);
         },
@@ -193,11 +249,17 @@ export const checkSessionTool = tool<
         return `Session "${session_name}" nicht gefunden.`;
       }
 
-      const output = await macClient.readCliOutput(session.id);
+      const terminal = getPrimaryTerminal(sessionsRepo, session.id);
+      if (!terminal) {
+        const displayName = session.name!;
+        return `Session "${displayName}": ${session.status}\nZiel: ${session.goal}\n\nEs wurde noch kein Terminal gestartet.`;
+      }
+
+      const output = await macClient.readCliOutput(terminal.id);
       const recentLines = output.output.slice(-5).join('\n');
 
       // Get last webhook event for this session
-      const recentEvents = eventsRepo.getBySession(session.id, 1);
+      const recentEvents = eventsRepo.getBySession(terminal.id, 1);
       const lastEvent = recentEvents[0];
       let lastWebhookInfo = '';
       if (lastEvent) {
@@ -218,7 +280,7 @@ export const checkSessionTool = tool<
       }
 
       const displayName = session.name!;
-      return `Session "${displayName}": ${session.status}\nZiel: ${session.goal}\n\nLetzte Ausgabe:\n${recentLines || '(keine)'}${lastWebhookInfo}`;
+      return `Session "${displayName}": ${session.status}\nTerminal: ${terminal.status}\nZiel: ${session.goal}\n\nLetzte Ausgabe:\n${recentLines || '(keine)'}${lastWebhookInfo}`;
     } else {
       // List all active named coding sessions
       const sessions = sessionsRepo
@@ -230,8 +292,9 @@ export const checkSessionTool = tool<
       }
 
       const summaries = sessions.map((s) => {
-        // Get last event for this session
-        const recentEvents = eventsRepo.getBySession(s.id, 1);
+        const primaryTerminal = getPrimaryTerminal(sessionsRepo, s.id);
+        const eventSessionId = primaryTerminal?.id ?? s.id;
+        const recentEvents = eventsRepo.getBySession(eventSessionId, 1);
         const lastEvent = recentEvents[0];
         let lastMessage = '';
         if (lastEvent?.payload) {
@@ -245,7 +308,8 @@ export const checkSessionTool = tool<
           }
         }
         const displayName = s.name!;
-        return `${displayName}: ${s.goal?.substring(0, 50) ?? 'kein Ziel'} (${s.status})${lastMessage}`;
+        const terminalStatus = primaryTerminal ? `, terminal=${primaryTerminal.status}` : '';
+        return `${displayName}: ${s.goal?.substring(0, 50) ?? 'kein Ziel'} (${s.status}${terminalStatus})${lastMessage}`;
       });
 
       return `${sessions.length} aktive Session${sessions.length > 1 ? 's' : ''}:\n${summaries.join('\n')}`;
@@ -282,16 +346,23 @@ export const sendFeedbackTool = tool<
       return `Session "${session_name}" nicht gefunden.`;
     }
 
+    const sessionsRepo = new CliSessionsRepository();
+    const terminal = getPrimaryTerminal(sessionsRepo, session.id);
+    if (!terminal || !isActiveSessionStatus(terminal.status)) {
+      const displayName = session.name!;
+      return `Session "${displayName}" hat aktuell kein aktives Terminal.`;
+    }
+
     const macClient = await import('./mac-client.js');
     const { CliEventsRepository } = await import('../db/index.js');
 
     const eventsRepo = new CliEventsRepository();
 
     try {
-      const result = await macClient.sendCliInput(session.id, feedback);
+      const result = await macClient.sendCliInput(terminal.id, feedback);
 
       eventsRepo.create({
-        session_id: session.id,
+        session_id: terminal.id,
         event_type: 'input',
         payload: { input: feedback },
       });
@@ -338,17 +409,43 @@ export const stopSessionTool = tool<
     const eventsRepo = new CliEventsRepository();
 
     try {
-      await macClient.terminateSession(session.id);
-      sessionsRepo.updateStatus(session.id, 'cancelled');
+      const activeTerminals = getActiveTerminalChildren(sessionsRepo, session.id);
+      const terminationErrors: string[] = [];
+      let terminatedCount = 0;
 
-      eventsRepo.create({
-        session_id: session.id,
-        event_type: 'finished',
-        payload: { reason: 'user_cancelled' },
-      });
+      for (const terminal of activeTerminals) {
+        try {
+          const result = await macClient.terminateSession(terminal.id);
+          if (!result.success) {
+            terminationErrors.push(`${terminal.id.slice(0, 8)}: ${result.message}`);
+            continue;
+          }
+
+          sessionsRepo.updateStatus(terminal.id, 'cancelled');
+          eventsRepo.create({
+            session_id: terminal.id,
+            event_type: 'finished',
+            payload: { reason: 'user_cancelled' },
+          });
+          terminatedCount += 1;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          terminationErrors.push(`${terminal.id.slice(0, 8)}: ${message}`);
+        }
+      }
+
+      if (terminationErrors.length === 0 || terminatedCount > 0) {
+        sessionsRepo.updateStatus(session.id, 'cancelled');
+      }
 
       const displayName = session.name!;
-      return `Session "${displayName}" beendet.`;
+      if (terminationErrors.length === 0) {
+        if (activeTerminals.length === 0) {
+          return `Session "${displayName}" beendet (kein aktives Terminal mehr).`;
+        }
+        return `Session "${displayName}" beendet (${terminatedCount} Terminal${terminatedCount === 1 ? '' : 'e'} gestoppt).`;
+      }
+      return `Session "${displayName}" teilweise beendet (${terminatedCount}/${activeTerminals.length} Terminals gestoppt). Fehler: ${terminationErrors.join('; ')}`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }

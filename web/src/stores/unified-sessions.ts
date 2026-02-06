@@ -344,6 +344,75 @@ function getAllTreeIds(node: SessionTreeNode): Set<string> {
   return ids;
 }
 
+function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
+  const timeline: TimelineItem[] = [];
+  const toolIndexByCallId = new Map<string, number>();
+
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === 'text') {
+        timeline.push({
+          id: generateId(),
+          type: 'transcript',
+          role: message.role as 'user' | 'assistant',
+          content: part.text,
+          timestamp: message.createdAt,
+          pending: false,
+        });
+        continue;
+      }
+
+      if (part.type === 'tool-call') {
+        const toolItem: ToolItem = {
+          id: part.toolCallId,
+          type: 'tool',
+          name: part.toolName,
+          args: part.args as Record<string, unknown>,
+          status: 'running',
+          timestamp: message.createdAt,
+        };
+        toolIndexByCallId.set(part.toolCallId, timeline.length);
+        timeline.push(toolItem);
+        continue;
+      }
+
+      if (part.type === 'tool-result') {
+        const resultText =
+          typeof part.result === 'string'
+            ? part.result
+            : JSON.stringify(part.result, null, 2);
+        const existingIdx = toolIndexByCallId.get(part.toolCallId);
+
+        if (existingIdx !== undefined) {
+          const existing = timeline[existingIdx];
+          if (existing?.type === 'tool') {
+            timeline[existingIdx] = {
+              ...existing,
+              status: 'completed',
+              result: resultText,
+            };
+          }
+        } else {
+          // Keep result visible even when persisted history misses the call event.
+          const fallbackTool: ToolItem = {
+            id: part.toolCallId,
+            type: 'tool',
+            name: part.toolName,
+            args: {},
+            status: 'completed',
+            result: resultText,
+            timestamp: message.createdAt,
+          };
+          toolIndexByCallId.set(part.toolCallId, timeline.length);
+          timeline.push(fallbackTool);
+        }
+      }
+    }
+  }
+
+  return timeline;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Store Implementation
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1000,31 +1069,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       // For voice sessions, still need to repopulate voiceTimeline from cached messages
       if (sessionType === 'voice') {
         console.log(`[History] Repopulating voiceTimeline from cached messages`);
-        const voiceTimeline: TimelineItem[] = [];
-        for (const message of existing.messages) {
-          for (const part of message.parts) {
-            if (part.type === 'text') {
-              voiceTimeline.push({
-                id: generateId(),
-                type: 'transcript',
-                role: message.role as 'user' | 'assistant',
-                content: part.text,
-                timestamp: message.createdAt,
-                pending: false,
-              });
-            } else if (part.type === 'tool-call') {
-              voiceTimeline.push({
-                id: part.toolCallId,
-                type: 'tool',
-                name: part.toolName,
-                args: part.args as Record<string, unknown>,
-                status: 'completed',
-                timestamp: message.createdAt,
-              });
-            }
-          }
-        }
-        set({ voiceTimeline });
+        set({ voiceTimeline: buildVoiceTimelineFromMessages(existing.messages) });
       }
       return;
     }
@@ -1048,34 +1093,8 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       // For voice sessions, also populate voiceTimeline
       if (sessionType === 'voice') {
         set((s) => {
-          const voiceTimeline: TimelineItem[] = [];
           const session = s.sessions.get(sessionId);
-          if (session?.messages) {
-            for (const message of session.messages) {
-              for (const part of message.parts) {
-                if (part.type === 'text') {
-                  voiceTimeline.push({
-                    id: generateId(),
-                    type: 'transcript',
-                    role: message.role as 'user' | 'assistant',
-                    content: part.text,
-                    timestamp: message.createdAt,
-                    pending: false,
-                  });
-                } else if (part.type === 'tool-call') {
-                  voiceTimeline.push({
-                    id: part.toolCallId,
-                    type: 'tool',
-                    name: part.toolName,
-                    args: part.args as Record<string, unknown>,
-                    status: 'completed',
-                    timestamp: message.createdAt,
-                  });
-                }
-              }
-            }
-          }
-          return { voiceTimeline };
+          return { voiceTimeline: buildVoiceTimelineFromMessages(session?.messages ?? []) };
         });
       }
 

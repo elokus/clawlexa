@@ -5,7 +5,7 @@
  * Inspired by pi-mono's session persistence pattern.
  */
 
-import { appendFileSync, mkdirSync, existsSync } from 'fs';
+import { appendFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { CliSessionsRepository } from '../db/repositories/cli-sessions.js';
 
@@ -175,6 +175,74 @@ export function getSessionLogger(
  */
 export function removeSessionLogger(sessionId: string): void {
   loggers.delete(sessionId);
+}
+
+/**
+ * Clear all persisted session JSONL logs.
+ * Returns number of deleted files.
+ */
+export function clearAllSessionLogs(): number {
+  loggers.clear();
+
+  if (!existsSync(SESSIONS_DIR)) {
+    return 0;
+  }
+
+  let deleted = 0;
+  const entries = readdirSync(SESSIONS_DIR, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) {
+      continue;
+    }
+
+    const filePath = join(SESSIONS_DIR, entry.name);
+    try {
+      unlinkSync(filePath);
+      deleted += 1;
+    } catch (err) {
+      console.error(`[SessionLogger] Failed to delete ${filePath}:`, err);
+    }
+  }
+
+  return deleted;
+}
+
+/**
+ * Clear session JSONL logs for specific sessions.
+ * Returns number of deleted files.
+ */
+export function clearSessionLogsForSessions(
+  sessions: Array<{ id: string; name: string | null }>
+): number {
+  if (!existsSync(SESSIONS_DIR) || sessions.length === 0) {
+    return 0;
+  }
+
+  let deleted = 0;
+  const filenames = new Set<string>();
+
+  for (const session of sessions) {
+    const rawName = session.name ?? session.id.slice(0, 12);
+    const sanitized = rawName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    filenames.add(`${sanitized}.jsonl`);
+  }
+
+  for (const filename of filenames) {
+    const filePath = join(SESSIONS_DIR, filename);
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    try {
+      unlinkSync(filePath);
+      deleted += 1;
+    } catch (err) {
+      console.error(`[SessionLogger] Failed to delete ${filePath}:`, err);
+    }
+  }
+
+  return deleted;
 }
 
 /**

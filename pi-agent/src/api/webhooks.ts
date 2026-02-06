@@ -16,12 +16,15 @@ import {
   CliSessionsRepository,
   CliEventsRepository,
   SessionMessagesRepository,
+  HandoffsRepository,
+  type Session,
   type SessionStatus,
 } from '../db/index.js';
 import { handleDemoRequest } from '../demo/index.js';
 import { eventRecorder } from './event-recorder.js';
 import { wsBroadcast } from './websocket.js';
-import { logWebhookStatus } from '../logging/session-logger.js';
+import { clearAllSessionLogs, clearSessionLogsForSessions, logWebhookStatus } from '../logging/session-logger.js';
+import * as macClient from '../tools/mac-client.js';
 import {
   listPrompts,
   getPromptInfo,
@@ -211,16 +214,142 @@ async function handleWebhook(
   if (req.method === 'DELETE' && req.url === '/api/sessions') {
     try {
       const sessionsRepo = new CliSessionsRepository();
+      const handoffsRepo = new HandoffsRepository();
+
+      const activeStatuses: SessionStatus[] = ['pending', 'running', 'waiting_for_input'];
+      const sessions = sessionsRepo.list();
+      const activeTerminalSessions = sessions.filter(
+        (session) =>
+          activeStatuses.includes(session.status) &&
+          (session.type === 'terminal' || session.mac_session_id !== null)
+      );
+
+      let terminatedPtySessions = 0;
+      const terminationErrors: string[] = [];
+
+      // Best-effort PTY termination before DB cleanup.
+      for (const session of activeTerminalSessions) {
+        try {
+          const result = await macClient.terminateSession(session.id);
+          if (result.success) {
+            terminatedPtySessions += 1;
+          } else {
+            terminationErrors.push(`${session.id.slice(0, 8)}: ${result.message}`);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          terminationErrors.push(`${session.id.slice(0, 8)}: ${message}`);
+        }
+      }
+
+      // Remove handoff packets first to avoid FK violations on cli_sessions.
+      const deletedHandoffs = handoffsRepo.deleteAll();
       const deleted = sessionsRepo.deleteAll();
-      console.log(`[API] Deleted all ${deleted} sessions`);
+      const deletedLogs = clearAllSessionLogs();
+
+      if (terminationErrors.length > 0) {
+        console.warn('[API] PTY termination warnings:', terminationErrors);
+      }
+
+      console.log(
+        `[API] Cleared ${deleted} sessions, ${deletedHandoffs} handoffs, ${deletedLogs} session logs, terminated ${terminatedPtySessions} PTY sessions`
+      );
+
       // Broadcast to all connected clients
       wsBroadcast.cliAllSessionsDeleted();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ deleted }));
+      res.end(JSON.stringify({
+        deleted,
+        deletedHandoffs,
+        deletedLogs,
+        terminatedPtySessions,
+        terminationErrors,
+      }));
     } catch (error) {
       console.error('[API] Error deleting sessions:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to delete sessions' }));
+    }
+    return;
+  }
+
+  // DELETE /api/sessions/:id/tree - Delete a thread tree (root + descendants)
+  const deleteTreeMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/tree$/);
+  if (req.method === 'DELETE' && deleteTreeMatch) {
+    try {
+      const rootId = deleteTreeMatch[1]!;
+      const sessionsRepo = new CliSessionsRepository();
+      const rootSession = sessionsRepo.findById(rootId);
+
+      if (!rootSession) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+        return;
+      }
+
+      const treeIds = sessionsRepo.getTreeSessionIds(rootId);
+      const treeSessions: Session[] = treeIds
+        .map((id) => sessionsRepo.findById(id))
+        .filter((session): session is Session => session !== null);
+
+      const activeStatuses: SessionStatus[] = ['pending', 'running', 'waiting_for_input'];
+      const activeTerminalSessions = treeSessions.filter(
+        (session) =>
+          activeStatuses.includes(session.status) &&
+          (session.type === 'terminal' || session.mac_session_id !== null)
+      );
+
+      let terminatedPtySessions = 0;
+      const terminationErrors: string[] = [];
+
+      // Best-effort PTY termination before DB cleanup.
+      for (const session of activeTerminalSessions) {
+        try {
+          const result = await macClient.terminateSession(session.id);
+          if (result.success) {
+            terminatedPtySessions += 1;
+          } else {
+            terminationErrors.push(`${session.id.slice(0, 8)}: ${result.message}`);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          terminationErrors.push(`${session.id.slice(0, 8)}: ${message}`);
+        }
+      }
+
+      const deletedLogs = clearSessionLogsForSessions(
+        treeSessions.map((session) => ({ id: session.id, name: session.name }))
+      );
+      const deletedSessionIds = sessionsRepo.deleteTree(rootId);
+
+      if (terminationErrors.length > 0) {
+        console.warn('[API] PTY termination warnings (tree delete):', terminationErrors);
+      }
+
+      console.log(
+        `[API] Deleted tree ${rootId}: ${deletedSessionIds.length} sessions, ${deletedLogs} logs, terminated ${terminatedPtySessions} PTY sessions`
+      );
+
+      // Remove deleted sessions from in-memory client stores.
+      for (const deletedId of deletedSessionIds) {
+        wsBroadcast.cliSessionDeleted(deletedId);
+      }
+
+      // Refresh tree list for all clients.
+      wsBroadcast.allActiveTreesUpdate();
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        deleted: deletedSessionIds.length,
+        deletedSessionIds,
+        deletedLogs,
+        terminatedPtySessions,
+        terminationErrors,
+      }));
+    } catch (error) {
+      console.error('[API] Error deleting session tree:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to delete session tree' }));
     }
     return;
   }
@@ -231,11 +360,48 @@ async function handleWebhook(
     try {
       const sessionId = deleteSessionMatch[1]!;
       const sessionsRepo = new CliSessionsRepository();
+      const handoffsRepo = new HandoffsRepository();
+      const session = sessionsRepo.findById(sessionId);
+
+      if (!session) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+        return;
+      }
+
+      let terminatedPtySession = false;
+      let terminationError: string | null = null;
+      const isActive = ['pending', 'running', 'waiting_for_input'].includes(session.status);
+      const isTerminalSession = session.type === 'terminal' || session.mac_session_id !== null;
+
+      // Best-effort PTY termination before deleting the DB row.
+      if (isActive && isTerminalSession) {
+        try {
+          const result = await macClient.terminateSession(sessionId);
+          terminatedPtySession = result.success;
+          if (!result.success) {
+            terminationError = result.message;
+          }
+        } catch (error) {
+          terminationError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const deletedHandoffs = handoffsRepo.deleteBySession(sessionId);
       const deleted = sessionsRepo.delete(sessionId);
+
       if (deleted) {
-        console.log(`[API] Deleted session ${sessionId}`);
+        console.log(
+          `[API] Deleted session ${sessionId} (handoffs: ${deletedHandoffs}, terminatedPty: ${terminatedPtySession})`
+        );
+        wsBroadcast.cliSessionDeleted(sessionId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ deleted: true }));
+        res.end(JSON.stringify({
+          deleted: true,
+          deletedHandoffs,
+          terminatedPtySession,
+          terminationError,
+        }));
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Session not found' }));
