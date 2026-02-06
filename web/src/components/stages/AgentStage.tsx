@@ -204,6 +204,10 @@ function ToolPart({
     developer_session: { label: 'Dev Session', icon: '▣', color: 'text-cyan-400' },
     start_headless_session: { label: 'Headless Session', icon: '▣', color: 'text-cyan-400' },
     start_interactive_session: { label: 'Interactive Session', icon: '▣', color: 'text-cyan-400' },
+    check_coding_session: { label: 'Session Status', icon: '◆', color: 'text-cyan-400' },
+    send_session_feedback: { label: 'Sending Feedback', icon: '◆', color: 'text-cyan-400' },
+    stop_coding_session: { label: 'Stopping Session', icon: '◆', color: 'text-rose-400' },
+    view_past_sessions: { label: 'Past Sessions', icon: '◆', color: 'text-violet-400' },
   };
 
   const config = toolConfig[toolName] || { label: toolName, icon: '◆', color: 'text-muted-foreground' };
@@ -224,6 +228,11 @@ function ToolPart({
           <Loader size={12} className="text-cyan-400" />
         ) : (
           <span className="text-emerald-400 text-[10px]">✓</span>
+        )}
+        {result !== undefined && !isOpen && (
+          <span className="text-[10px] text-emerald-400/60 ml-auto truncate max-w-[200px] font-normal">
+            {typeof result === 'string' ? result.split('\n')[0]!.slice(0, 60) : 'Done'}
+          </span>
         )}
         {linkedSession && onNavigateToSession && (
           <button

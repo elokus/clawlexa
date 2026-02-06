@@ -6,6 +6,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { getDatabase } from '../database.js';
+import { logCliEvent } from '../../logging/session-logger.js';
 
 export type EventType =
   | 'created'
@@ -54,6 +55,17 @@ export class CliEventsRepository {
          VALUES (?, ?, ?)`
       )
       .run(input.session_id, input.event_type, payload);
+
+    // Mirror DB event into per-session JSONL debug log.
+    let parsedPayload: unknown = null;
+    if (payload !== null) {
+      try {
+        parsedPayload = JSON.parse(payload);
+      } catch {
+        parsedPayload = payload;
+      }
+    }
+    logCliEvent(input.session_id, input.event_type, parsedPayload);
 
     return this.findById(result.lastInsertRowid as number)!;
   }

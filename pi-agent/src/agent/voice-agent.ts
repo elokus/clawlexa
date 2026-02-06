@@ -26,6 +26,7 @@ import { createVoiceAdapter, type VoiceAdapter } from '../realtime/ai-sdk-adapte
 import type { ManagedProcess } from '../processes/manager.js';
 import { buildHandoffPacket, type HandoffPacket, type VoiceContextEntry } from '../context/handoff.js';
 import { getProcessManager } from '../processes/manager.js';
+import { getSessionLogger, removeSessionLogger } from '../logging/session-logger.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
@@ -168,6 +169,9 @@ export class VoiceAgent {
     // Broadcast tree update so frontend can show the new voice session
     wsBroadcast.sessionTreeUpdate(sessionId);
 
+    // Create JSONL session logger for debugging
+    getSessionLogger(sessionId, null, 'voice', null, { profile: voiceProfileName });
+
     // Create session FIRST so it can buffer audio during connection
     // Pass `this` (VoiceAgent) so tools like background_task can notify on completion
     const agent = createAgentFromProfile(profile, sessionId, this);
@@ -193,6 +197,18 @@ export class VoiceAgent {
       // Emit AI SDK lifecycle events via adapter (start-step on thinking, finish on idle)
       // This ensures the frontend knows when a response is complete (clears pending flag)
       this.adapter?.stateChange(state, this.currentProfile?.name ?? null);
+
+      // Log state change to JSONL
+      if (this.currentSessionId) {
+        const logger = getSessionLogger(this.currentSessionId);
+        logger.append({
+          type: 'state-change',
+          id: `sc-${Date.now()}`,
+          state,
+          profile: this.currentProfile?.name ?? null,
+          timestamp: new Date().toISOString(),
+        });
+      }
 
       // Stop transport when going idle
       if (this.transport && state === 'idle') {
@@ -277,6 +293,8 @@ export class VoiceAgent {
         console.log(`[Agent] Marked voice session as finished: ${this.currentSessionId}`);
         // Broadcast tree update so frontend knows session ended
         wsBroadcast.sessionTreeUpdate(this.currentSessionId);
+        // Remove JSONL logger
+        removeSessionLogger(this.currentSessionId);
         this.currentSessionId = null;
       }
 
@@ -322,6 +340,8 @@ export class VoiceAgent {
         this.sessionsRepo.finish(this.currentSessionId, 'finished');
         console.log(`[Agent] Marked voice session as finished: ${this.currentSessionId}`);
         wsBroadcast.sessionTreeUpdate(this.currentSessionId);
+        // Remove JSONL logger
+        removeSessionLogger(this.currentSessionId);
         this.currentSessionId = null;
       }
 

@@ -334,16 +334,30 @@ export function handleWebSocketMessage(msg: WSMessage): void {
 
           case 'tool-result': {
             const { voiceTimeline } = store;
-            const toolIdx = voiceTimeline.findIndex(
-              (item) =>
-                item.type === 'tool' &&
-                (item as ToolItem).name === event.toolName &&
-                (item as ToolItem).status === 'running'
+            // Match by toolCallId first (reliable even with repeated same tool names).
+            // Fall back to the latest running tool with same name for older events.
+            let toolIdx = voiceTimeline.findIndex(
+              (item) => item.type === 'tool' && item.id === event.toolCallId
             );
+            if (toolIdx < 0) {
+              toolIdx = [...voiceTimeline]
+                .map((item, idx) => ({ item, idx }))
+                .reverse()
+                .find(
+                  ({ item }) =>
+                    item.type === 'tool' &&
+                    (item as ToolItem).name === event.toolName &&
+                    (item as ToolItem).status === 'running'
+                )?.idx ?? -1;
+            }
             if (toolIdx >= 0) {
+              const resultText =
+                typeof event.output === 'string'
+                  ? event.output
+                  : JSON.stringify(event.output, null, 2);
               store.updateVoiceTimelineItem(voiceTimeline[toolIdx].id, {
                 status: 'completed',
-                result: event.output as string,
+                result: resultText,
               } as Partial<ToolItem>);
             }
             store.setCurrentTool(null);
@@ -377,4 +391,3 @@ export function handleWebSocketMessage(msg: WSMessage): void {
     }
   }
 }
-

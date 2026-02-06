@@ -15,7 +15,7 @@
  */
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { streamText, stepCountIs, readUIMessageStream } from 'ai';
+import { streamText, stepCountIs, readUIMessageStream, type CoreMessage } from 'ai';
 import { wsBroadcast } from '../../api/websocket.js';
 import { loadAgentConfig } from '../loader.js';
 import { cliAgentTools } from './tools.js';
@@ -147,50 +147,50 @@ export async function handleDeveloperRequest(
   const voiceContextText = formatVoiceContext(handoff);
   const activeProcessesText = formatActiveProcesses(handoff);
 
-  // Format subagent's own history (persistent across voice sessions)
-  const subagentHistoryText = subagentHistory
-    .map((msg) => `${msg.role}: ${msg.content}`)
-    .join('\n');
-
   // Update handoff packet with target session ID
   const handoffsRepo = new HandoffsRepository();
   handoffsRepo.setTargetSession(handoff.id, subagent.id);
 
-  const userMessage = `
-## Your Previous Conversation History (persistent)
-${subagentHistoryText || '(this is a new session)'}
+  // Build messages array from subagent history + new request
+  const messages: CoreMessage[] = [];
 
-## Current Voice Context
-${voiceContextText}
+  // Restore previous conversation turns as proper messages
+  for (const msg of subagentHistory) {
+    messages.push({
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+    });
+  }
 
-## Active Background Tasks
-${activeProcessesText}
+  // New user message with voice context
+  const userMessage = [
+    voiceContextText ? `## Voice Context\n${voiceContextText}` : '',
+    activeProcessesText ? `## Active Background Tasks\n${activeProcessesText}` : '',
+    `## Request\n${request}`,
+    '',
+    'Analyze this request and take appropriate action. Remember:',
+    '- For quick tasks (reviews, simple fixes): use headless mode with claude -p',
+    '- For complex tasks (implementation, refactoring): use interactive mode',
+    '- For feature implementation, prefix with "use the \'feature planner fast\' skill to implement..."',
+    '- Navigate to the correct project directory first',
+  ].filter(Boolean).join('\n\n');
 
-## Current Request
-${request}
+  messages.push({ role: 'user', content: userMessage });
 
-Analyze this request and take appropriate action. Remember:
-- For quick tasks (reviews, simple fixes): use headless mode with claude -p
-- For complex tasks (implementation, refactoring): use interactive mode
-- For feature implementation, prefix with "use the 'feature planner fast' skill to implement..."
-- Navigate to the correct project directory first
-- You can reference previous conversations above for context
-`.trim();
-
-  console.log('[CliAgent] Full prompt to agent:');
-  console.log('----------------------------------------');
-  console.log(userMessage);
-  console.log('----------------------------------------');
+  console.log(`[CliAgent] Messages count: ${messages.length} (${subagentHistory.length} history + 1 new)`);
 
   try {
+    // Emit user message for frontend display before starting stream
+    wsBroadcast.streamChunk(sessionId, { type: 'user-transcript', text: request });
+
     // Emit start event
     wsBroadcast.streamChunk(sessionId, { type: 'start' });
 
-    // Start streaming with Vercel AI SDK
+    // Start streaming with Vercel AI SDK (multi-turn messages)
     const result = streamText({
       model,
       system: systemPrompt,
-      prompt: userMessage,
+      messages,
       tools: cliAgentTools,
       stopWhen: stepCountIs(config.maxSteps ?? 3),
     });

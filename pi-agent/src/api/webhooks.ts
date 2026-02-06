@@ -21,6 +21,7 @@ import {
 import { handleDemoRequest } from '../demo/index.js';
 import { eventRecorder } from './event-recorder.js';
 import { wsBroadcast } from './websocket.js';
+import { logWebhookStatus } from '../logging/session-logger.js';
 import {
   listPrompts,
   getPromptInfo,
@@ -540,6 +541,9 @@ async function handleWebhook(
         if (payload.message) {
           console.log(`  Message: ${payload.message}`);
         }
+
+        // Mirror webhook status into session JSONL logs for replay/debugging.
+        logWebhookStatus(payload.sessionId, payload.status, payload.message, payload.output);
 
         // Update database
         const sessionsRepo = new CliSessionsRepository();

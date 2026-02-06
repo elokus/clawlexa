@@ -19,6 +19,7 @@ import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { CliSessionsRepository, SessionMessagesRepository } from '../db/index.js';
 import { eventRecorder } from './event-recorder.js';
+import { logStreamEvent } from '../logging/session-logger.js';
 
 // Repository instance for persisting stream events
 const messagesRepo = new SessionMessagesRepository();
@@ -547,6 +548,10 @@ export const wsBroadcast = {
     if (result) {
       console.log(`[WS] Persisted ${event.type} for session ${sessionId.slice(0, 8)}`);
     }
+
+    // Log to JSONL file
+    logStreamEvent(sessionId, event as { type: string; [key: string]: unknown });
+
     // Broadcast to all connected clients
     broadcast('stream_chunk', { sessionId, event });
   },

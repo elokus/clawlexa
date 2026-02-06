@@ -15,9 +15,38 @@ import { tool, RealtimeContextData } from '@openai/agents/realtime';
 import { z } from 'zod';
 import { handleDeveloperRequest, isMacDaemonAvailable } from '../subagents/cli/index.js';
 import { getProcessManager } from '../processes/manager.js';
-import { generateSessionName } from '../utils/session-names.js';
+import { generateSessionName, resolveSessionName } from '../utils/session-names.js';
 import { CliSessionsRepository, HandoffsRepository } from '../db/index.js';
+import type { Session } from '../db/repositories/cli-sessions.js';
 import type { VoiceAgent } from '../agent/voice-agent.js';
+
+/**
+ * Resolve a named coding session (subagent) by exact or fuzzy name.
+ * Only named subagent sessions are considered.
+ */
+function resolveNamedSession(sessionName: string, includeFinished = false): Session | null {
+  const repo = new CliSessionsRepository();
+  const query = sessionName.trim();
+  if (!query) return null;
+
+  const subagents = repo.list({ type: 'subagent' });
+  const candidates = subagents.filter((s) => {
+    if (!s.name) return false;
+    if (includeFinished) return true;
+    return ['pending', 'running', 'waiting_for_input'].includes(s.status);
+  });
+
+  const exact = candidates.find((s) => s.name === query);
+  if (exact) return exact;
+
+  const resolved = resolveSessionName(
+    query,
+    candidates.map((s) => ({ name: s.name!, id: s.id }))
+  );
+  if (!resolved) return null;
+
+  return candidates.find((s) => s.id === resolved.id) ?? null;
+}
 
 const developerSessionParameters = z.object({
   request: z
@@ -84,13 +113,31 @@ Examples:
       const handoffsRepo = new HandoffsRepository();
       handoffsRepo.save(handoff);
 
-      // Generate a session name upfront so we can return it immediately
       const sessionsRepo = new CliSessionsRepository();
+      const processManager = getProcessManager();
+
+      // Check if there's already a running CLI subagent for this voice session
+      const existingSubagent = sessionsRepo.findRunningSubagent('cli', sessionId);
+
+      if (existingSubagent?.name) {
+        // Reuse existing session — announce its name, not a new one
+        processManager.spawn({
+          name: existingSubagent.name,
+          sessionId: `dev-${Date.now()}`,
+          type: 'headless',
+          execute: async () => {
+            return await handleDeveloperRequest(handoff, sessionId);
+          },
+        });
+        console.log(`[DeveloperSession] Reusing existing subagent "${existingSubagent.name}"`);
+        return `Sende an "${existingSubagent.name}": ${request.substring(0, 80)}`;
+      }
+
+      // No existing session — generate new name
       const activeNames = sessionsRepo.getActiveSessionNames();
       const name = generateSessionName(activeNames);
 
       // Spawn as background process via ProcessManager - returns immediately
-      const processManager = getProcessManager();
       processManager.spawn({
         name,
         sessionId: `dev-${Date.now()}`, // Unique process ID
@@ -109,10 +156,10 @@ Examples:
 // Additional tools for session management from voice
 
 const checkSessionParameters = z.object({
-  session_id: z
+  session_name: z
     .string()
     .optional()
-    .describe('Session ID to check. If not provided, shows all active sessions.'),
+    .describe('Name der Session (z.B. "terra-comet"). Ohne Angabe werden alle aktiven Sessions gezeigt.'),
 });
 
 export const checkSessionTool = tool<
@@ -122,35 +169,35 @@ export const checkSessionTool = tool<
   name: 'check_coding_session',
   description:
     'Check the status of a coding session or list all active sessions. ' +
-    'Use when the user asks "how is the session going" or "what sessions are running".',
+    'Use when the user asks "how is the session going" or "what sessions are running". ' +
+    'Use session names, not IDs.',
   parameters: checkSessionParameters,
-  async execute({ session_id }) {
-    console.log('[CheckSession] Checking session:', session_id ?? 'all');
+  async execute({ session_name }) {
+    console.log('[CheckSession] Checking session:', session_name ?? 'all');
 
     const macAvailable = await isMacDaemonAvailable();
     if (!macAvailable) {
       return 'Der Mac ist gerade nicht erreichbar.';
     }
 
-    // Import dynamically to avoid circular dependencies
-    const { CliSessionsRepository, CliEventsRepository } = await import('../db/index.js');
+    const { CliEventsRepository } = await import('../db/index.js');
     const macClient = await import('./mac-client.js');
 
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
-    if (session_id) {
-      // Check specific session
-      const session = sessionsRepo.findById(session_id);
+    if (session_name) {
+      // Resolve by exact or fuzzy session name
+      const session = resolveNamedSession(session_name);
       if (!session) {
-        return `Session ${session_id} nicht gefunden.`;
+        return `Session "${session_name}" nicht gefunden.`;
       }
 
-      const output = await macClient.readCliOutput(session_id);
+      const output = await macClient.readCliOutput(session.id);
       const recentLines = output.output.slice(-5).join('\n');
 
       // Get last webhook event for this session
-      const recentEvents = eventsRepo.getBySession(session_id, 1);
+      const recentEvents = eventsRepo.getBySession(session.id, 1);
       const lastEvent = recentEvents[0];
       let lastWebhookInfo = '';
       if (lastEvent) {
@@ -170,10 +217,13 @@ export const checkSessionTool = tool<
         lastWebhookInfo = `\n\nLetzter Webhook (${lastEvent.event_type}): ${eventMessage || '(keine Nachricht)'}`;
       }
 
-      return `Session ${session_id.substring(0, 8)}...: ${session.status}\nZiel: ${session.goal}\n\nLetzte Ausgabe:\n${recentLines || '(keine)'}${lastWebhookInfo}`;
+      const displayName = session.name!;
+      return `Session "${displayName}": ${session.status}\nZiel: ${session.goal}\n\nLetzte Ausgabe:\n${recentLines || '(keine)'}${lastWebhookInfo}`;
     } else {
-      // List all active sessions
-      const sessions = sessionsRepo.getActive();
+      // List all active named coding sessions
+      const sessions = sessionsRepo
+        .getActive()
+        .filter((s) => s.type === 'subagent' && Boolean(s.name));
 
       if (sessions.length === 0) {
         return 'Keine aktiven Coding-Sessions.';
@@ -194,7 +244,8 @@ export const checkSessionTool = tool<
             // Ignore parse errors
           }
         }
-        return `${s.id.substring(0, 8)}: ${s.goal?.substring(0, 50) ?? 'kein Ziel'} (${s.status})${lastMessage}`;
+        const displayName = s.name!;
+        return `${displayName}: ${s.goal?.substring(0, 50) ?? 'kein Ziel'} (${s.status})${lastMessage}`;
       });
 
       return `${sessions.length} aktive Session${sessions.length > 1 ? 's' : ''}:\n${summaries.join('\n')}`;
@@ -203,7 +254,7 @@ export const checkSessionTool = tool<
 });
 
 const sendFeedbackParameters = z.object({
-  session_id: z.string().describe('The session ID to send feedback to'),
+  session_name: z.string().describe('Name der Session (z.B. "terra-comet")'),
   feedback: z.string().describe('The feedback or input to send to the session'),
 });
 
@@ -214,14 +265,21 @@ export const sendFeedbackTool = tool<
   name: 'send_session_feedback',
   description:
     'Send feedback or input to an active coding session. ' +
-    'Use when the user wants to guide or correct what Claude is doing in a session.',
+    'Use when the user wants to guide or correct what Claude is doing in a session. ' +
+    'Use session names, not IDs.',
   parameters: sendFeedbackParameters,
-  async execute({ session_id, feedback }) {
-    console.log(`[SendFeedback] Sending to ${session_id}: ${feedback}`);
+  async execute({ session_name, feedback }) {
+    console.log(`[SendFeedback] Sending to ${session_name}: ${feedback}`);
 
     const macAvailable = await isMacDaemonAvailable();
     if (!macAvailable) {
       return 'Der Mac ist gerade nicht erreichbar.';
+    }
+
+    // Resolve by exact or fuzzy session name
+    const session = resolveNamedSession(session_name);
+    if (!session) {
+      return `Session "${session_name}" nicht gefunden.`;
     }
 
     const macClient = await import('./mac-client.js');
@@ -230,15 +288,16 @@ export const sendFeedbackTool = tool<
     const eventsRepo = new CliEventsRepository();
 
     try {
-      const result = await macClient.sendCliInput(session_id, feedback);
+      const result = await macClient.sendCliInput(session.id, feedback);
 
       eventsRepo.create({
-        session_id,
+        session_id: session.id,
         event_type: 'input',
         payload: { input: feedback },
       });
 
-      return result.success ? 'Feedback gesendet.' : `Fehler: ${result.message}`;
+      const displayName = session.name!;
+      return result.success ? `Feedback an "${displayName}" gesendet.` : `Fehler: ${result.message}`;
     } catch (error) {
       return `Fehler beim Senden: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -246,7 +305,7 @@ export const sendFeedbackTool = tool<
 });
 
 const stopSessionParameters = z.object({
-  session_id: z.string().describe('The session ID to stop'),
+  session_name: z.string().describe('Name der Session (z.B. "terra-comet")'),
 });
 
 export const stopSessionTool = tool<
@@ -255,33 +314,41 @@ export const stopSessionTool = tool<
 >({
   name: 'stop_coding_session',
   description:
-    'Stop/terminate a coding session. Use when the user wants to cancel or end a session.',
+    'Stop/terminate a coding session. Use when the user wants to cancel or end a session. ' +
+    'Use session names, not IDs.',
   parameters: stopSessionParameters,
-  async execute({ session_id }) {
-    console.log(`[StopSession] Stopping session ${session_id}`);
+  async execute({ session_name }) {
+    console.log(`[StopSession] Stopping session ${session_name}`);
 
     const macAvailable = await isMacDaemonAvailable();
     if (!macAvailable) {
       return 'Der Mac ist gerade nicht erreichbar.';
     }
 
+    // Resolve by exact or fuzzy session name
+    const session = resolveNamedSession(session_name);
+    if (!session) {
+      return `Session "${session_name}" nicht gefunden.`;
+    }
+
     const macClient = await import('./mac-client.js');
-    const { CliSessionsRepository, CliEventsRepository } = await import('../db/index.js');
+    const { CliEventsRepository } = await import('../db/index.js');
 
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
     try {
-      await macClient.terminateSession(session_id);
-      sessionsRepo.updateStatus(session_id, 'cancelled');
+      await macClient.terminateSession(session.id);
+      sessionsRepo.updateStatus(session.id, 'cancelled');
 
       eventsRepo.create({
-        session_id,
+        session_id: session.id,
         event_type: 'finished',
         payload: { reason: 'user_cancelled' },
       });
 
-      return 'Session beendet.';
+      const displayName = session.name!;
+      return `Session "${displayName}" beendet.`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -293,10 +360,10 @@ const viewPastSessionsParameters = z.object({
     .number()
     .optional()
     .describe('Number of sessions to show (default: 5)'),
-  session_id: z
+  session_name: z
     .string()
     .optional()
-    .describe('Specific session ID to get full details for'),
+    .describe('Name einer bestimmten Session für Detailansicht (z.B. "terra-comet")'),
 });
 
 export const viewPastSessionsTool = tool<
@@ -307,24 +374,24 @@ export const viewPastSessionsTool = tool<
   description:
     'View completed/past coding sessions and their results. ' +
     'Use when the user asks about previous sessions, what was done, or session history. ' +
-    'Can show a list of recent sessions or details for a specific session.',
+    'Can show a list of recent sessions or details for a specific session name.',
   parameters: viewPastSessionsParameters,
-  async execute({ limit = 5, session_id }) {
-    console.log('[ViewPastSessions] Viewing past sessions, limit:', limit, 'session_id:', session_id);
+  async execute({ limit = 5, session_name }) {
+    console.log('[ViewPastSessions] Viewing past sessions, limit:', limit, 'session_name:', session_name);
 
-    const { CliSessionsRepository, CliEventsRepository } = await import('../db/index.js');
+    const { CliEventsRepository } = await import('../db/index.js');
     const sessionsRepo = new CliSessionsRepository();
     const eventsRepo = new CliEventsRepository();
 
-    if (session_id) {
-      // Get details for a specific session
-      const session = sessionsRepo.findById(session_id);
+    if (session_name) {
+      // Resolve by exact or fuzzy session name (include finished)
+      const session = resolveNamedSession(session_name, true);
       if (!session) {
-        return `Session ${session_id} nicht gefunden.`;
+        return `Session "${session_name}" nicht gefunden.`;
       }
 
       // Get all events for this session
-      const events = eventsRepo.getBySession(session_id);
+      const events = eventsRepo.getBySession(session.id);
 
       // Find the result message (from finished or status_change events)
       let resultMessage = '';
@@ -343,8 +410,9 @@ export const viewPastSessionsTool = tool<
       }
 
       const createdAt = new Date(session.created_at).toLocaleString('de-DE');
+      const displayName = session.name!;
 
-      return `Session ${session_id.substring(0, 8)}
+      return `Session "${displayName}"
 Status: ${session.status}
 Erstellt: ${createdAt}
 Ziel: ${session.goal}
@@ -353,7 +421,9 @@ Ergebnis:
 ${resultMessage || '(kein Ergebnis gespeichert)'}`;
     } else {
       // List recent sessions
-      const allSessions = sessionsRepo.list();
+      const allSessions = sessionsRepo
+        .list({ type: 'subagent' })
+        .filter((s) => Boolean(s.name));
       const recentSessions = allSessions.slice(0, limit);
 
       if (recentSessions.length === 0) {
@@ -382,7 +452,8 @@ ${resultMessage || '(kein Ergebnis gespeichert)'}`;
           minute: '2-digit'
         });
 
-        return `${s.id.substring(0, 8)} [${createdAt}] (${s.status}): ${s.goal?.substring(0, 40) || 'kein Ziel'}${shortResult ? `\n  → ${shortResult}` : ''}`;
+        const displayName = s.name!;
+        return `${displayName} [${createdAt}] (${s.status}): ${s.goal?.substring(0, 40) || 'kein Ziel'}${shortResult ? `\n  → ${shortResult}` : ''}`;
       });
 
       return `Letzte ${recentSessions.length} Sessions:\n\n${summaries.join('\n\n')}`;
