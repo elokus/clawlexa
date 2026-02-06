@@ -167,9 +167,13 @@ export async function sendCliInput(
     body: JSON.stringify({ input }),
   });
 
-  const data = (await res.json()) as SessionInputResponse;
-  console.log(`[MacClient] Input response:`, data);
-  return data;
+  const raw = (await res.json()) as unknown;
+  const normalized: SessionInputResponse = {
+    success: getEnvelopeSuccess(raw, res.ok),
+    message: getEnvelopeMessage(raw, res.ok ? 'Input gesendet.' : 'Fehler beim Senden von Input.'),
+  };
+  console.log(`[MacClient] Input response:`, normalized);
+  return normalized;
 }
 
 /**
