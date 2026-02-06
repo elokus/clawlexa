@@ -92,6 +92,30 @@ function getPrimaryTerminal(repo: CliSessionsRepository, subagentId: string): Se
   return allTerminals.sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
 }
 
+function clipText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
+function normalizeOutputLine(line: string): string {
+  const trimmed = line.trimEnd();
+
+  // Collapse very long visual separators from terminal UIs.
+  if (/^[\-\u2500\s]+$/.test(trimmed) && trimmed.length > 30) {
+    return '----------------------------------------';
+  }
+
+  return clipText(trimmed, 160);
+}
+
+function formatOutputBlock(lines: string[]): string {
+  if (lines.length === 0) {
+    return '| (keine Ausgabe - interaktive Session wartet eventuell auf Eingabe)';
+  }
+
+  return lines.map((line) => `| ${normalizeOutputLine(line)}`).join('\n');
+}
+
 function parseEventPayload(payload: string | null): string {
   if (!payload) return '(keine Nachricht)';
 
@@ -167,47 +191,52 @@ async function buildFeedbackRoutingMessage(
   if (primaryTerminal) {
     const { runtimeStatus, recentOutput } = await getTerminalRuntimeState(primaryTerminal);
     primaryStatus = runtimeStatus;
-    primaryOutput =
-      recentOutput.length > 0
-        ? recentOutput.join('\n')
-        : '(keine Ausgabe - möglicherweise wartet Claude auf Eingabe)';
+    primaryOutput = formatOutputBlock(recentOutput);
 
     const recentEvents = eventsRepo.getBySession(primaryTerminal.id, 1);
     const lastEvent = recentEvents[0];
     if (lastEvent) {
-      primaryEvent = `${lastEvent.event_type}: ${parseEventPayload(lastEvent.payload)}`;
+      primaryEvent = `[${lastEvent.event_type}] ${parseEventPayload(lastEvent.payload)}`;
     }
   }
 
-  const activeTerminalSummary =
+  const activeTerminalLines =
     activeTerminals.length > 0
       ? activeTerminals
-          .map((terminal) => `- ${terminal.id} (${terminal.status})`)
-          .join('\n')
-      : '- keine aktiven Terminals';
+          .map((terminal) => `- ${terminal.id} [${terminal.status}]`)
+      : ['- keine aktiven Terminals'];
 
   return [
-    '## Routed Voice Feedback',
-    `Session Name: ${session.name ?? session.id}`,
-    `Session ID: ${session.id}`,
-    `Session Status: ${session.status}`,
-    `Aktive Terminals: ${activeTerminals.length}/${allTerminals.length}`,
-    'Terminal-Übersicht:',
-    activeTerminalSummary,
-    `Primäres Terminal: ${primaryTerminal?.id ?? 'keins'}`,
-    `Primärer Status: ${primaryStatus}`,
-    `Letztes Event: ${primaryEvent}`,
-    'Letzte Ausgabe (primär):',
+    '=== ROUTED VOICE FEEDBACK ===',
+    '',
+    '[Session]',
+    `Name             : ${session.name ?? '(unbenannt)'}`,
+    `ID               : ${session.id}`,
+    `Status           : ${session.status}`,
+    '',
+    '[Terminals]',
+    `Active           : ${activeTerminals.length}/${allTerminals.length}`,
+    `Primary Terminal : ${primaryTerminal?.id ?? 'keins'}`,
+    `Primary Status   : ${primaryStatus}`,
+    'Terminal List    :',
+    ...activeTerminalLines.map((line) => `  ${line}`),
+    '',
+    '[Last Event]',
+    primaryEvent,
+    '',
+    '[Primary Terminal Snapshot]',
+    '--- BEGIN SNAPSHOT ---',
     primaryOutput,
+    '--- END SNAPSHOT ---',
     '',
-    '## Nutzer-Feedback',
-    feedback,
+    '[User Feedback]',
+    feedback.trim(),
     '',
-    '## WICHTIGE ORCHESTRIERUNGSREGELN',
-    '- Nutze die bestehende Session/Terminals weiter.',
-    '- Starte KEINE neue Session für dasselbe Projekt, außer der Nutzer fordert explizit eine neue Session.',
-    '- Wenn ein Terminal auf waiting_for_input steht, leite das Feedback mit send_session_input dorthin.',
-    '- Nur wenn es kein nutzbares Terminal gibt: erkläre das und starte dann gezielt eine neue Session.',
+    '[Orchestration Rules]',
+    '1) Reuse existing session/terminals.',
+    '2) Do NOT start a new session for the same project unless user explicitly asks.',
+    '3) If terminal is waiting_for_input, forward feedback via send_session_input with terminal_id.',
+    '4) If no usable terminal exists, explain why before starting a new session.',
   ].join('\n');
 }
 
@@ -376,10 +405,7 @@ export const checkSessionTool = tool<
       const allTerminals = getTerminalChildren(sessionsRepo, session.id);
       const activeTerminals = getActiveTerminalChildren(sessionsRepo, session.id);
       const { runtimeStatus, recentOutput } = await getTerminalRuntimeState(terminal);
-      const recentLines =
-        recentOutput.length > 0
-          ? recentOutput.join('\n')
-          : '(keine Ausgabe - interaktive Sessions können auf Eingabe warten)';
+      const recentLines = formatOutputBlock(recentOutput);
 
       // Get last webhook event for this session
       const recentEvents = eventsRepo.getBySession(terminal.id, 1);
@@ -387,16 +413,36 @@ export const checkSessionTool = tool<
       let lastWebhookInfo = '';
       if (lastEvent) {
         const eventMessage = parseEventPayload(lastEvent.payload);
-        lastWebhookInfo = `\n\nLetztes Event (${lastEvent.event_type}): ${eventMessage}`;
+        lastWebhookInfo = `\n[Last Event]\n[${lastEvent.event_type}] ${eventMessage}`;
       }
 
       const waitingHint =
         runtimeStatus === 'waiting_for_input' || terminal.status === 'waiting_for_input'
-          ? '\n\nHinweis: Claude wartet gerade auf Eingabe. Nutze send_session_feedback, um die Session weiterzuführen.'
+          ? '\n[Hint]\nClaude wartet auf Eingabe. Nutze send_session_feedback, um die Session weiterzuführen.'
           : '';
 
       const displayName = session.name!;
-      return `Session "${displayName}": ${session.status}\nTerminals: ${activeTerminals.length}/${allTerminals.length} aktiv\nPrimäres Terminal: ${terminal.id.slice(0, 8)} (${runtimeStatus})\nZiel: ${session.goal}\n\nLetzte Ausgabe:\n${recentLines}${lastWebhookInfo}${waitingHint}`;
+      return [
+        '=== SESSION STATUS ===',
+        '',
+        '[Session]',
+        `Name             : ${displayName}`,
+        `Status           : ${session.status}`,
+        `Goal             : ${clipText(session.goal, 140)}`,
+        '',
+        '[Terminals]',
+        `Active           : ${activeTerminals.length}/${allTerminals.length}`,
+        `Primary Terminal : ${terminal.id}`,
+        `Primary Status   : ${runtimeStatus}`,
+        '',
+        '[Primary Terminal Snapshot]',
+        '--- BEGIN SNAPSHOT ---',
+        recentLines,
+        '--- END SNAPSHOT ---',
+        `${lastWebhookInfo}${waitingHint}`.trim(),
+      ]
+        .filter(Boolean)
+        .join('\n');
     } else {
       // List all active named coding sessions
       const sessions = sessionsRepo
@@ -429,10 +475,18 @@ export const checkSessionTool = tool<
           : ', terminal=none';
         const waitingHint =
           primaryTerminal?.status === 'waiting_for_input' ? ' (wartet auf Eingabe)' : '';
-        return `${displayName}: ${s.goal?.substring(0, 50) ?? 'kein Ziel'} (${s.status}${terminalStatus})${waitingHint}${lastMessage}`;
+        const primaryId = primaryTerminal?.id ?? '-';
+        return `- ${displayName} | status=${s.status}${terminalStatus}${waitingHint} | primary=${primaryId} | goal="${clipText(s.goal ?? 'kein Ziel', 70)}"${lastMessage}`;
       });
 
-      return `${sessions.length} aktive Session${sessions.length > 1 ? 's' : ''}:\n${summaries.join('\n')}`;
+      return [
+        '=== AKTIVE CODING-SESSIONS ===',
+        `Anzahl: ${sessions.length}`,
+        '',
+        ...summaries,
+        '',
+        'Tipp: Nutze check_coding_session mit session_name für Details.',
+      ].join('\n');
     }
   },
 });

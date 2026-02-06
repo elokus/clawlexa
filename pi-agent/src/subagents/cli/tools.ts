@@ -34,6 +34,29 @@ function isActiveSessionStatus(status: string): boolean {
   return ACTIVE_SESSION_STATUSES.has(status);
 }
 
+function clipText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
+function normalizeOutputLine(line: string): string {
+  const trimmed = line.trimEnd();
+
+  if (/^[\-\u2500\s]+$/.test(trimmed) && trimmed.length > 30) {
+    return '----------------------------------------';
+  }
+
+  return clipText(trimmed, 160);
+}
+
+function formatOutputBlock(lines: string[]): string {
+  if (lines.length === 0) {
+    return '| (keine Ausgabe - interaktive Session wartet eventuell auf Eingabe)';
+  }
+
+  return lines.map((line) => `| ${normalizeOutputLine(line)}`).join('\n');
+}
+
 interface ResolvedTerminalTarget {
   terminalId: string | null;
   resolutionNote: string | null;
@@ -339,7 +362,14 @@ export const sendSessionInputTool = tool({
 
       const resolutionPrefix = resolved.resolutionNote ? `${resolved.resolutionNote}\n` : '';
       return result.success
-        ? `${resolutionPrefix}Eingabe an Terminal ${resolved.terminalId} gesendet.`
+        ? [
+            resolutionPrefix.trim(),
+            '=== INPUT GESENDET ===',
+            `Terminal : ${resolved.terminalId}`,
+            `Text     : ${clipText(input, 140)}`,
+          ]
+            .filter(Boolean)
+            .join('\n')
         : `Fehler: ${result.message}`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
@@ -375,16 +405,29 @@ export const checkSessionStatusTool = tool({
       const details = await macClient.getSessionDetails(resolved.terminalId);
       const runtimeStatus = details?.status || result.status;
 
-      const recentOutput = result.output.slice(-10).join('\n');
-      const outputSummary =
-        recentOutput || '(keine Ausgabe - interaktive Session wartet eventuell auf Eingabe)';
+      const recentOutput = formatOutputBlock(result.output.slice(-10));
       const waitingHint =
         runtimeStatus === 'waiting_for_input'
-          ? '\n\nHinweis: Session wartet auf Input. Nutze send_session_input.'
+          ? '\n[Hint]\nSession wartet auf Input. Nutze send_session_input.'
           : '';
 
       const resolutionPrefix = resolved.resolutionNote ? `${resolved.resolutionNote}\n` : '';
-      return `${resolutionPrefix}Terminal: ${resolved.terminalId}\nStatus: ${runtimeStatus}\n\nLetzte Ausgabe:\n${outputSummary}${waitingHint}`;
+      return [
+        resolutionPrefix.trim(),
+        '=== TERMINAL STATUS ===',
+        '',
+        '[Terminal]',
+        `ID     : ${resolved.terminalId}`,
+        `Status : ${runtimeStatus}`,
+        '',
+        '[Snapshot]',
+        '--- BEGIN SNAPSHOT ---',
+        recentOutput,
+        '--- END SNAPSHOT ---',
+        waitingHint.trim(),
+      ]
+        .filter(Boolean)
+        .join('\n');
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -416,12 +459,22 @@ export const listActiveSessionsTool = tool({
       }
 
       const summaries = activeTerminals.map(
-        (terminal) =>
-          `- ${terminal.id} (${terminal.status}) goal="${terminal.goal.substring(0, 100)}"`
+        (terminal) => {
+          const parent = terminal.parent_id ?? '-';
+          return [
+            `- ${terminal.id}`,
+            `  status : ${terminal.status}`,
+            `  parent : ${parent}`,
+            `  goal   : ${clipText(terminal.goal, 100)}`,
+          ].join('\n');
+        }
       );
 
       return [
-        `Aktive Terminals${orchestratorId ? ` für Orchestrator ${orchestratorId}` : ''}:`,
+        '=== AKTIVE TERMINALS ===',
+        `Scope: ${orchestratorId ? `orchestrator ${orchestratorId}` : 'global'}`,
+        `Count: ${activeTerminals.length}`,
+        '',
         ...summaries,
         '',
         'Nutze diese IDs als terminal_id in send_session_input/check_session_status/terminate_session.',
