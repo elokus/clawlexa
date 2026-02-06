@@ -35,3 +35,6 @@ export type { AgentRun, CreateAgentRunInput } from './repositories/agent-runs.js
 
 export { SessionMessagesRepository, PERSISTABLE_EVENT_TYPES } from './repositories/session-messages.js';
 export type { SessionMessage } from './repositories/session-messages.js';
+
+export { HandoffsRepository } from './repositories/handoffs.js';
+export type { HandoffRow } from './repositories/handoffs.js';

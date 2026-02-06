@@ -23,7 +23,7 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
 
-    "types": ["vite/client"],
+    "types": ["bun-types"],
 
     "baseUrl": ".",
     "paths": {

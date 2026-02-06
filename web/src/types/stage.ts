@@ -37,6 +37,7 @@ export interface SessionTreeNode {
   type: SessionType;
   status: SessionStatus;
   goal: string;
+  name: string | null; // Human-readable session name (e.g. "swift-falcon")
   profile: VoiceProfile | null; // For voice sessions: 'jarvis' | 'marvin'
   agent_name: AgentName | null;
   tool_call_id: string | null; // For terminals: links to the tool call that created them

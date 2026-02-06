@@ -16,11 +16,12 @@
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { streamText, stepCountIs, readUIMessageStream } from 'ai';
-import type { RealtimeItem } from '@openai/agents/realtime';
 import { wsBroadcast } from '../../api/websocket.js';
 import { loadAgentConfig } from '../loader.js';
 import { cliAgentTools } from './tools.js';
-import { CliSessionsRepository } from '../../db/index.js';
+import { CliSessionsRepository, HandoffsRepository } from '../../db/index.js';
+import { generateSessionName } from '../../utils/session-names.js';
+import { formatVoiceContext, formatActiveProcesses, type HandoffPacket } from '../../context/handoff.js';
 
 // Re-export for use by developer-session.ts
 export { isMacDaemonAvailable } from './tools.js';
@@ -73,25 +74,27 @@ export function consumePendingToolCall(orchestratorId: string): string | undefin
  * This function:
  * 1. Finds an existing running CLI subagent OR creates a new one
  * 2. Loads the subagent's conversation history from the database
- * 3. Runs the agent with full context
+ * 3. Runs the agent with full context from the HandoffPacket
  * 4. Emits stream_chunk events in AI SDK format
  * 5. Saves the updated conversation history back to the database
  *
- * @param request - The user's coding request
- * @param history - Conversation history from the realtime session (voice context)
+ * @param handoff - HandoffPacket with full voice context (anti-telephone)
  * @param voiceSessionId - Voice session ID to establish parent-child relationship
+ * @param sessionName - Optional pre-generated session name (used by ProcessManager for non-blocking tools)
  */
 export async function handleDeveloperRequest(
-  request: string,
-  history: RealtimeItem[],
-  voiceSessionId?: string
+  handoff: HandoffPacket,
+  voiceSessionId?: string,
+  sessionName?: string
 ): Promise<string> {
   const sessionsRepo = new CliSessionsRepository();
+  const request = handoff.request;
 
   console.log('\n========================================');
   console.log('[CliAgent] Handling developer request');
   console.log(`[CliAgent] Request: ${request}`);
-  console.log(`[CliAgent] Voice context items: ${history.length}`);
+  console.log(`[CliAgent] Voice context entries: ${handoff.voiceContext.length}`);
+  console.log(`[CliAgent] Active processes: ${handoff.activeProcesses.length}`);
   console.log(`[CliAgent] Voice session ID: ${voiceSessionId ?? 'none'}`);
 
   if (!OPENROUTER_API_KEY) {
@@ -108,13 +111,16 @@ export async function handleDeveloperRequest(
   if (subagent) {
     console.log(`[CliAgent] Resuming existing subagent: ${subagent.id} (parent: ${voiceSessionId ?? 'none'})`);
   } else {
+    const activeNames = sessionsRepo.getActiveSessionNames();
+    const name = sessionName ?? generateSessionName(activeNames);
     subagent = sessionsRepo.createSubagent({
       goal: request.substring(0, 100),
       agent_name: 'cli',
       model: config.model,
       parent_id: voiceSessionId, // Link to voice session for hierarchy
+      name,
     });
-    console.log(`[CliAgent] Created new subagent: ${subagent.id} (parent: ${voiceSessionId ?? 'none'})`);
+    console.log(`[CliAgent] Created new subagent: ${subagent.id} "${name}" (parent: ${voiceSessionId ?? 'none'})`);
 
     // Broadcast tree update - use voice session as root if available, otherwise subagent
     wsBroadcast.sessionTreeUpdate(voiceSessionId ?? subagent.id);
@@ -137,41 +143,28 @@ export async function handleDeveloperRequest(
     subagent.conversation_history || '[]'
   );
 
-  // Format voice conversation context (current session only)
-  const voiceContextText = history
-    .map((item) => {
-      if (item.type === 'message') {
-        const role = item.role ?? 'unknown';
-        const content = item.content
-          ?.map((c: { type: string; text?: string; transcript?: string }) => {
-            if (c.type === 'text' || c.type === 'input_text') {
-              return c.text;
-            }
-            if (c.type === 'audio' || c.type === 'input_audio') {
-              return c.transcript ?? '[audio]';
-            }
-            return '';
-          })
-          .filter(Boolean)
-          .join(' ');
-        return `${role}: ${content}`;
-      }
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n');
+  // Format voice context from HandoffPacket (anti-telephone: lossless context transfer)
+  const voiceContextText = formatVoiceContext(handoff);
+  const activeProcessesText = formatActiveProcesses(handoff);
 
   // Format subagent's own history (persistent across voice sessions)
   const subagentHistoryText = subagentHistory
     .map((msg) => `${msg.role}: ${msg.content}`)
     .join('\n');
 
+  // Update handoff packet with target session ID
+  const handoffsRepo = new HandoffsRepository();
+  handoffsRepo.setTargetSession(handoff.id, subagent.id);
+
   const userMessage = `
 ## Your Previous Conversation History (persistent)
 ${subagentHistoryText || '(this is a new session)'}
 
 ## Current Voice Context
-${voiceContextText || '(direct request, no voice context)'}
+${voiceContextText}
+
+## Active Background Tasks
+${activeProcessesText}
 
 ## Current Request
 ${request}

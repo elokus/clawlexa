@@ -5,7 +5,7 @@
  * Enables UI reconstruction with tool calls, reasoning, and full message structure.
  */
 
-import type Database from 'better-sqlite3';
+import type { Database } from 'bun:sqlite';
 import { getDatabase } from '../database.js';
 import type { AISDKStreamEvent } from '../../api/stream-types.js';
 
@@ -32,9 +32,9 @@ export interface SessionMessage {
 }
 
 export class SessionMessagesRepository {
-  private db: Database.Database;
+  private db: Database;
 
-  constructor(db?: Database.Database) {
+  constructor(db?: Database) {
     this.db = db ?? getDatabase();
   }
 
@@ -52,7 +52,7 @@ export class SessionMessagesRepository {
     const payload = JSON.stringify(event);
 
     const result = this.db
-      .prepare(
+      .query(
         `INSERT INTO session_messages (session_id, event_type, payload)
          VALUES (?, ?, ?)`
       )
@@ -67,7 +67,7 @@ export class SessionMessagesRepository {
   findById(id: number): SessionMessage | null {
     return (
       (this.db
-        .prepare('SELECT * FROM session_messages WHERE id = ?')
+        .query('SELECT * FROM session_messages WHERE id = ?')
         .get(id) as SessionMessage) ?? null
     );
   }
@@ -77,7 +77,7 @@ export class SessionMessagesRepository {
    */
   getBySession(sessionId: string): SessionMessage[] {
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM session_messages
          WHERE session_id = ?
          ORDER BY id ASC`
@@ -99,7 +99,7 @@ export class SessionMessagesRepository {
    */
   deleteBySession(sessionId: string): number {
     const result = this.db
-      .prepare('DELETE FROM session_messages WHERE session_id = ?')
+      .query('DELETE FROM session_messages WHERE session_id = ?')
       .run(sessionId);
     return result.changes;
   }
@@ -109,7 +109,7 @@ export class SessionMessagesRepository {
    */
   countBySession(sessionId: string): number {
     const result = this.db
-      .prepare('SELECT COUNT(*) as count FROM session_messages WHERE session_id = ?')
+      .query('SELECT COUNT(*) as count FROM session_messages WHERE session_id = ?')
       .get(sessionId) as { count: number };
     return result.count;
   }

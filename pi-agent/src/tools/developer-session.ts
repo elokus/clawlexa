@@ -11,9 +11,13 @@
  * that manages Mac CLI sessions.
  */
 
-import { tool, RealtimeContextData, RealtimeItem } from '@openai/agents/realtime';
+import { tool, RealtimeContextData } from '@openai/agents/realtime';
 import { z } from 'zod';
 import { handleDeveloperRequest, isMacDaemonAvailable } from '../subagents/cli/index.js';
+import { getProcessManager } from '../processes/manager.js';
+import { generateSessionName } from '../utils/session-names.js';
+import { CliSessionsRepository, HandoffsRepository } from '../db/index.js';
+import type { VoiceAgent } from '../agent/voice-agent.js';
 
 const developerSessionParameters = z.object({
   request: z
@@ -24,10 +28,14 @@ const developerSessionParameters = z.object({
 });
 
 /**
- * Factory function to create the developer_session tool with an injected session ID.
- * This avoids polluting the conversation context with the session ID.
+ * Factory function to create the developer_session tool with injected context.
+ * Uses the VoiceAgent to build a HandoffPacket with full conversation context,
+ * solving the "telephone effect" where subagents lose context.
+ *
+ * The tool is NON-BLOCKING: it spawns the work via ProcessManager and returns
+ * immediately with the session name so the voice agent can continue the conversation.
  */
-export function createDeveloperSessionTool(sessionId: string) {
+export function createDeveloperSessionTool(sessionId: string, voiceAgent?: VoiceAgent) {
   return tool<typeof developerSessionParameters, RealtimeContextData>({
     name: 'developer_session',
     description: `Start or manage a coding session on the Mac. Use this when the user wants to:
@@ -44,7 +52,7 @@ Examples:
 - "Fix the authentication bug in weka"
 - "Start a session for the BEGA project"`,
     parameters: developerSessionParameters,
-    async execute({ request }, details) {
+    async execute({ request }) {
       console.log('[DeveloperSession] Tool called with request:', request);
 
       // Check if Mac daemon is available
@@ -54,17 +62,46 @@ Examples:
         return 'Der Mac ist gerade nicht erreichbar. Bitte stelle sicher, dass der Mac Daemon läuft.';
       }
 
-      // Get conversation history from context
-      const history: RealtimeItem[] = details?.context?.history ?? [];
-      console.log('[DeveloperSession] Got history with', history.length, 'items');
-
       // Use the injected sessionId directly (no need to extract from history)
       console.log('[DeveloperSession] Using injected voice session ID:', sessionId);
 
-      // Delegate to the CLI orchestration agent
-      const result = await handleDeveloperRequest(request, history, sessionId);
+      // Build HandoffPacket with full voice context (anti-telephone)
+      // Falls back to minimal packet if voiceAgent not available
+      const handoff = voiceAgent
+        ? voiceAgent.createHandoffPacket(request)
+        : {
+            id: `hp-${Date.now()}`,
+            timestamp: Date.now(),
+            request,
+            voiceContext: [],
+            activeProcesses: [],
+            source: { sessionId, profile: 'unknown' },
+          };
 
-      return result;
+      console.log(`[DeveloperSession] HandoffPacket: ${handoff.voiceContext.length} context entries, ${handoff.activeProcesses.length} active processes`);
+
+      // Persist handoff for debugging/replay
+      const handoffsRepo = new HandoffsRepository();
+      handoffsRepo.save(handoff);
+
+      // Generate a session name upfront so we can return it immediately
+      const sessionsRepo = new CliSessionsRepository();
+      const activeNames = sessionsRepo.getActiveSessionNames();
+      const name = generateSessionName(activeNames);
+
+      // Spawn as background process via ProcessManager - returns immediately
+      const processManager = getProcessManager();
+      processManager.spawn({
+        name,
+        sessionId: `dev-${Date.now()}`, // Unique process ID
+        type: 'headless',
+        execute: async () => {
+          return await handleDeveloperRequest(handoff, sessionId, name);
+        },
+      });
+
+      console.log(`[DeveloperSession] Spawned non-blocking process "${name}"`);
+      return `Starte "${name}" für: ${request.substring(0, 100)}`;
     },
   });
 }

@@ -1,15 +1,15 @@
 # Web Dashboard - CLAUDE.md
 
-React + Vite + TypeScript web dashboard for the Voice Agent system.
+React + Bun + TypeScript web dashboard for the Voice Agent system.
 
 ## Quick Start
 
 ```bash
 cd web
-npm install
-npm run dev        # Dev server at http://localhost:5173
-npm run typecheck  # Type checking
-npm run build      # Production build
+bun install
+bun run dev        # Dev server at http://localhost:5173
+bun run typecheck  # Type checking
+bun run build      # Production build
 ```
 
 ## Architecture Overview
@@ -208,8 +208,8 @@ Access at `/dev` for isolated component testing with mock data.
 
 ```bash
 # Run both servers
-cd pi-agent && npm run dev &
-cd web && npm run dev
+cd pi-agent && bun run dev &
+cd web && bun run dev
 open http://localhost:5173/dev
 ```
 

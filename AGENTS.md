@@ -8,10 +8,10 @@ Real-time voice agent running on Raspberry Pi 5 using OpenAI's Realtime API with
 cd pi-agent
 
 # Install dependencies
-npm install
+bun install
 
 # Run in development mode
-npm run dev
+bun run dev
 
 # Say "Jarvis" or "Computer" to activate
 ```
@@ -28,10 +28,10 @@ npm run dev
 
 ## Project Setup
 
-- **Runtime**: Node.js 20.x
-- **Package Manager**: npm
+- **Runtime**: Bun 1.2+
+- **Package Manager**: bun
 - **Framework**: OpenAI Agents SDK (`@openai/agents`)
-- **Database**: SQLite (better-sqlite3)
+- **Database**: SQLite (bun:sqlite)
 - **Wake Word**: Porcupine (Picovoice)
 
 ## Development Workflow
@@ -548,8 +548,8 @@ Isolated component development with simulated agent streaming. Access at `/dev`.
 
 ```bash
 # Start both backend and frontend for dev mode
-cd pi-agent && npm run dev &
-cd web && npm run dev
+cd pi-agent && bun run dev &
+cd web && bun run dev
 
 # Open component lab
 open http://localhost:5173/dev
@@ -578,21 +578,21 @@ Quick setup:
 ```bash
 # Terminal 1: Backend (skip static server to avoid duplicate connections)
 cd pi-agent
-SKIP_STATIC_SERVER=true TRANSPORT_MODE=web npm run dev
+SKIP_STATIC_SERVER=true TRANSPORT_MODE=web bun run dev
 
-# Terminal 2: Frontend (Vite with HMR + proxy)
+# Terminal 2: Frontend (Bun dev server with HMR + proxy)
 cd web
-npm run dev
+bun run dev
 ```
 
-Access at `http://localhost:5173` - Vite proxies WebSocket and API to localhost.
+Access at `http://localhost:5173` - Bun dev server proxies WebSocket and API to localhost.
 
 ### Pi Deployment
 
 ```bash
 # On Pi: Run backend with local audio
 cd pi-agent
-TRANSPORT_MODE=local npm run dev
+TRANSPORT_MODE=local bun run dev
 
 # Web dashboard served at http://marlon.local:8080 (static build)
 ```
@@ -602,19 +602,22 @@ TRANSPORT_MODE=local npm run dev
 cd pi-agent
 
 # Run in development mode
-npm run dev
+bun run dev
+
+# Run tests
+bun test
 
 # Type check
-npm run typecheck
+bun run typecheck
 
-# Build for production
+# Build for production (Node.js)
 npm run build && npm start
 
 # Test database
-npm run test:db
+bun run test:db
 
 # Test timers
-npm run test:timer
+bun run test:timer
 ```
 
 ### Web Dashboard Commands
@@ -622,16 +625,19 @@ npm run test:timer
 cd web
 
 # Install dependencies
-npm install  # or bun install
+bun install
 
 # Run development server (accessible at http://localhost:5173)
-npm run dev
+bun run dev
 
 # Build for production
-npm run build
+bun run build
 
 # Preview production build
-npm run preview
+bun run preview
+
+# Type check
+bun run typecheck
 ```
 
 ## Configuration
@@ -691,7 +697,7 @@ The Mac daemon must be running for CLI session tools:
 ```bash
 # On Mac
 cd mac-daemon
-npm run dev  # Listens on port 3100
+bun run dev  # Listens on port 3100
 ```
 
 Test connection from Pi:
@@ -739,16 +745,16 @@ The web dashboard uses these env vars in `web/.env`:
 
 ```bash
 # Demo mode - shows mock data, disables real connections
-VITE_DEMO_MODE=true
+PUBLIC_DEMO_MODE=true
 
-# WebSocket URL (leave unset for local dev - uses Vite proxy)
-# VITE_WS_URL=ws://marlon.local:3001
+# WebSocket URL (leave unset for local dev - uses Bun dev server proxy)
+# PUBLIC_WS_URL=ws://marlon.local:3001
 
-# API URL (leave unset for local dev - uses Vite proxy)
-# VITE_API_URL=http://marlon.local:3000
+# API URL (leave unset for local dev - uses Bun dev server proxy)
+# PUBLIC_API_URL=http://marlon.local:3000
 ```
 
-**Important**: For local Mac development, comment out `VITE_WS_URL` and `VITE_API_URL` to use Vite's proxy. Only set them for Pi deployment.
+**Important**: For local Mac development, comment out `PUBLIC_WS_URL` and `PUBLIC_API_URL` to use Bun dev server's proxy. Only set them for Pi deployment. Bun uses `PUBLIC_` prefix (not `VITE_`) and `process.env.PUBLIC_*` (not `import.meta.env`).
 
 ## Code Patterns & Learnings
 
@@ -810,10 +816,10 @@ Always use explicit flag check, not absence of other vars:
 
 ```typescript
 // CORRECT - explicit flag
-const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true';
+const isDemoMode = process.env.PUBLIC_DEMO_MODE === 'true';
 
 // WRONG - breaks when env var is simply unset
-const isDemoMode = !import.meta.env.VITE_WS_URL;
+const isDemoMode = !process.env.PUBLIC_WS_URL;
 ```
 
 ### Web Audio Transport (Browser as Mic/Speaker)

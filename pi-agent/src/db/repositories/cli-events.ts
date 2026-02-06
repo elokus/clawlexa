@@ -4,7 +4,7 @@
  * Event log for CLI session activities.
  */
 
-import type Database from 'better-sqlite3';
+import type { Database } from 'bun:sqlite';
 import { getDatabase } from '../database.js';
 
 export type EventType =
@@ -31,9 +31,9 @@ export interface CreateEventInput {
 }
 
 export class CliEventsRepository {
-  private db: Database.Database;
+  private db: Database;
 
-  constructor(db?: Database.Database) {
+  constructor(db?: Database) {
     this.db = db ?? getDatabase();
   }
 
@@ -49,7 +49,7 @@ export class CliEventsRepository {
           : JSON.stringify(input.payload);
 
     const result = this.db
-      .prepare(
+      .query(
         `INSERT INTO cli_events (session_id, event_type, payload)
          VALUES (?, ?, ?)`
       )
@@ -62,7 +62,7 @@ export class CliEventsRepository {
    * Find an event by ID.
    */
   findById(id: number): CliEvent | null {
-    return (this.db.prepare('SELECT * FROM cli_events WHERE id = ?').get(id) as CliEvent) ?? null;
+    return (this.db.query('SELECT * FROM cli_events WHERE id = ?').get(id) as CliEvent) ?? null;
   }
 
   /**
@@ -71,7 +71,7 @@ export class CliEventsRepository {
   getBySession(sessionId: string, limit?: number): CliEvent[] {
     if (limit) {
       return this.db
-        .prepare(
+        .query(
           `SELECT * FROM cli_events
            WHERE session_id = ?
            ORDER BY created_at DESC
@@ -80,7 +80,7 @@ export class CliEventsRepository {
         .all(sessionId, limit) as CliEvent[];
     }
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM cli_events
          WHERE session_id = ?
          ORDER BY created_at ASC`
@@ -93,7 +93,7 @@ export class CliEventsRepository {
    */
   getRecent(limit: number = 100): CliEvent[] {
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM cli_events
          ORDER BY created_at DESC
          LIMIT ?`
@@ -106,7 +106,7 @@ export class CliEventsRepository {
    */
   getByType(sessionId: string, eventType: EventType): CliEvent[] {
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM cli_events
          WHERE session_id = ? AND event_type = ?
          ORDER BY created_at ASC`
@@ -119,7 +119,7 @@ export class CliEventsRepository {
    */
   deleteBySession(sessionId: string): number {
     const result = this.db
-      .prepare('DELETE FROM cli_events WHERE session_id = ?')
+      .query('DELETE FROM cli_events WHERE session_id = ?')
       .run(sessionId);
     return result.changes;
   }

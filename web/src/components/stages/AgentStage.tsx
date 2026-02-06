@@ -526,44 +526,42 @@ export function AgentStage({ stage }: AgentStageProps) {
         <ConversationScrollButton />
       </Conversation>
 
-      {/* Text input for subagent sessions */}
-      {!isVoiceSession && (
-        <div className="border-t border-white/5 bg-black/20 px-4 py-3">
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={inputRef}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`Message ${title}...`}
-              rows={1}
-              disabled={isSubmitting}
-              className={cn(
-                'flex-1 resize-none bg-surface/50 border border-white/10 rounded-lg px-3 py-2',
-                'text-sm font-mono text-foreground placeholder:text-muted-foreground/50',
-                'focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/30',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
-                'max-h-32 overflow-y-auto'
-              )}
-              style={{ minHeight: '40px' }}
-            />
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!inputValue.trim() || isSubmitting}
-              className={cn(
-                'px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider',
-                'border transition-all duration-200',
-                inputValue.trim() && !isSubmitting
-                  ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20'
-                  : 'bg-surface/30 border-white/5 text-muted-foreground cursor-not-allowed'
-              )}
-            >
-              Send
-            </button>
-          </div>
+      {/* Text input for all sessions (voice + subagent) */}
+      <div className="border-t border-white/5 bg-black/20 px-4 py-3">
+        <div className="flex items-end gap-2">
+          <textarea
+            ref={inputRef}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={isVoiceSession ? 'Message Realtime Agent...' : `Message ${title}...`}
+            rows={1}
+            disabled={isSubmitting}
+            className={cn(
+              'flex-1 resize-none bg-surface/50 border border-white/10 rounded-lg px-3 py-2',
+              'text-sm font-mono text-foreground placeholder:text-muted-foreground/50',
+              'focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/30',
+              'disabled:opacity-50 disabled:cursor-not-allowed',
+              'max-h-32 overflow-y-auto'
+            )}
+            style={{ minHeight: '40px' }}
+          />
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!inputValue.trim() || isSubmitting}
+            className={cn(
+              'px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider',
+              'border transition-all duration-200',
+              inputValue.trim() && !isSubmitting
+                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20'
+                : 'bg-surface/30 border-white/5 text-muted-foreground cursor-not-allowed'
+            )}
+          >
+            Send
+          </button>
         </div>
-      )}
+      </div>
     </motion.div>
   );
 }

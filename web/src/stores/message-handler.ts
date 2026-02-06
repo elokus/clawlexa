@@ -187,6 +187,18 @@ export function handleWebSocketMessage(msg: WSMessage): void {
       // Update session messages (works for all session types)
       store.handleStreamChunk(sessionId, event);
 
+      // Handle process-status events (toast notifications for completed/errored processes)
+      if (event.type === 'process-status') {
+        store.addToast({
+          id: `toast-${Date.now()}`,
+          sessionName: event.processName,
+          sessionId: event.sessionId || sessionId,
+          status: event.status,
+          summary: event.summary || (event.status === 'completed' ? 'Task finished' : 'Task failed'),
+          timestamp: Date.now(),
+        });
+      }
+
       // For voice sessions, also populate voiceTimeline for AgentStage compatibility
       // Detect voice session: it's the root of the current tree with type='voice'
       const { sessionTree, voiceActive } = store;

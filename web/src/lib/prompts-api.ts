@@ -4,7 +4,7 @@
  * API client for the prompt management system.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = process.env.PUBLIC_API_URL || '';
 
 export interface PromptConfig {
   name: string;

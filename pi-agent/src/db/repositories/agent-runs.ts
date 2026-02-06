@@ -4,7 +4,7 @@
  * Optional history of agent interactions for debugging and analytics.
  */
 
-import type Database from 'better-sqlite3';
+import type { Database } from 'bun:sqlite';
 import { getDatabase } from '../database.js';
 
 export interface AgentRun {
@@ -22,9 +22,9 @@ export interface CreateAgentRunInput {
 }
 
 export class AgentRunsRepository {
-  private db: Database.Database;
+  private db: Database;
 
-  constructor(db?: Database.Database) {
+  constructor(db?: Database) {
     this.db = db ?? getDatabase();
   }
 
@@ -40,7 +40,7 @@ export class AgentRunsRepository {
           : JSON.stringify(input.tool_calls);
 
     const result = this.db
-      .prepare(
+      .query(
         `INSERT INTO agent_runs (profile, transcript, tool_calls)
          VALUES (?, ?, ?)`
       )
@@ -53,7 +53,7 @@ export class AgentRunsRepository {
    * Find a run by ID.
    */
   findById(id: number): AgentRun | null {
-    return (this.db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(id) as AgentRun) ?? null;
+    return (this.db.query('SELECT * FROM agent_runs WHERE id = ?').get(id) as AgentRun) ?? null;
   }
 
   /**
@@ -61,7 +61,7 @@ export class AgentRunsRepository {
    */
   getRecent(limit: number = 50): AgentRun[] {
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM agent_runs
          ORDER BY created_at DESC
          LIMIT ?`
@@ -75,7 +75,7 @@ export class AgentRunsRepository {
   getByProfile(profile: string, limit?: number): AgentRun[] {
     if (limit) {
       return this.db
-        .prepare(
+        .query(
           `SELECT * FROM agent_runs
            WHERE profile = ?
            ORDER BY created_at DESC
@@ -84,7 +84,7 @@ export class AgentRunsRepository {
         .all(profile, limit) as AgentRun[];
     }
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM agent_runs
          WHERE profile = ?
          ORDER BY created_at DESC`
@@ -97,7 +97,7 @@ export class AgentRunsRepository {
    */
   cleanup(days: number = 30): number {
     const result = this.db
-      .prepare(
+      .query(
         `DELETE FROM agent_runs
          WHERE created_at < datetime('now', '-' || ? || ' days')`
       )
@@ -110,11 +110,11 @@ export class AgentRunsRepository {
    */
   getStats(): { total: number; by_profile: Record<string, number> } {
     const total = (
-      this.db.prepare('SELECT COUNT(*) as count FROM agent_runs').get() as { count: number }
+      this.db.query('SELECT COUNT(*) as count FROM agent_runs').get() as { count: number }
     ).count;
 
     const byProfile = this.db
-      .prepare(
+      .query(
         `SELECT profile, COUNT(*) as count FROM agent_runs
          WHERE profile IS NOT NULL
          GROUP BY profile`

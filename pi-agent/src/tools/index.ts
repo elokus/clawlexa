@@ -78,9 +78,9 @@ export function getToolsForSession(names: ToolName[], options: ToolCreationOptio
     : options;
 
   return names.map((name) => {
-    // Factory tool: developer_session needs sessionId injected
+    // Factory tool: developer_session needs sessionId + voiceAgent for HandoffPacket
     if (name === 'developer_session') {
-      return createDeveloperSessionTool(sessionId);
+      return createDeveloperSessionTool(sessionId, voiceAgent);
     }
     // Factory tool: background_task needs sessionId AND voiceAgent
     if (name === 'background_task') {

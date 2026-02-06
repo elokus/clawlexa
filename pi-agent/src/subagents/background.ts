@@ -11,12 +11,13 @@
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { streamText, stepCountIs, readUIMessageStream } from 'ai';
-import type { RealtimeItem } from '@openai/agents/realtime';
 import { wsBroadcast } from '../api/websocket.js';
 import { loadAgentConfig } from './loader.js';
 import { cliAgentTools } from './cli/tools.js';
 import { CliSessionsRepository } from '../db/index.js';
+import { generateSessionName } from '../utils/session-names.js';
 import type { VoiceAgent } from '../agent/voice-agent.js';
+import { formatVoiceContext, type HandoffPacket } from '../context/handoff.js';
 
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
 
@@ -25,8 +26,8 @@ export interface BackgroundTaskOptions {
   task: string;
   /** Voice session ID for parent-child relationship */
   voiceSessionId: string;
-  /** Voice conversation history for context */
-  voiceHistory?: RealtimeItem[];
+  /** HandoffPacket with structured voice context (anti-telephone) */
+  handoff?: HandoffPacket;
   /** Reference to voice agent for completion notification */
   voiceAgent?: VoiceAgent;
   /** Custom completion message (default: summarizes result) */
@@ -58,26 +59,29 @@ export interface BackgroundTaskResult {
  * ```
  */
 export function spawnBackgroundSubagent(options: BackgroundTaskOptions): BackgroundTaskResult {
-  const { task, voiceSessionId, voiceHistory = [], voiceAgent, completionMessage } = options;
+  const { task, voiceSessionId, handoff, voiceAgent, completionMessage } = options;
 
   const sessionsRepo = new CliSessionsRepository();
 
   // Create subagent session with background=true
+  const activeNames = sessionsRepo.getActiveSessionNames();
+  const sessionName = generateSessionName(activeNames);
   const subagent = sessionsRepo.createSubagent({
     goal: task.substring(0, 100),
     agent_name: 'cli',
     model: 'x-ai/grok-code-fast-1', // Will be overridden by config
     parent_id: voiceSessionId,
     background: true,
+    name: sessionName,
   });
 
-  console.log(`[Background] Spawned background subagent: ${subagent.id} (parent: ${voiceSessionId})`);
+  console.log(`[Background] Spawned background subagent: ${subagent.id} "${sessionName}" (parent: ${voiceSessionId})`);
 
   // Broadcast tree update immediately so UI shows the new session
   wsBroadcast.sessionTreeUpdate(voiceSessionId);
 
   // Start the async execution (fire-and-forget)
-  const completion = runBackgroundAgent(subagent.id, task, voiceHistory).then((result) => {
+  const completion = runBackgroundAgent(subagent.id, task, handoff).then((result) => {
     // Notify voice agent if still active and callback provided
     if (voiceAgent?.isActive()) {
       const message = completionMessage
@@ -104,7 +108,7 @@ export function spawnBackgroundSubagent(options: BackgroundTaskOptions): Backgro
 async function runBackgroundAgent(
   sessionId: string,
   task: string,
-  voiceHistory: RealtimeItem[]
+  handoff?: HandoffPacket
 ): Promise<string> {
   const sessionsRepo = new CliSessionsRepository();
 
@@ -123,32 +127,15 @@ async function runBackgroundAgent(
     const openrouter = createOpenRouter({ apiKey: OPENROUTER_API_KEY });
     const model = openrouter.chat(config.model);
 
-    // Format voice context
-    const voiceContextText = voiceHistory
-      .map((item) => {
-        if (item.type === 'message') {
-          const role = item.role ?? 'unknown';
-          const content = item.content
-            ?.map((c: { type: string; text?: string; transcript?: string }) => {
-              if (c.type === 'text' || c.type === 'input_text') return c.text;
-              if (c.type === 'audio' || c.type === 'input_audio') return c.transcript ?? '[audio]';
-              return '';
-            })
-            .filter(Boolean)
-            .join(' ');
-          return `${role}: ${content}`;
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n');
+    // Format voice context from HandoffPacket (anti-telephone: lossless context transfer)
+    const voiceContextText = handoff ? formatVoiceContext(handoff) : '(no voice context)';
 
     const userMessage = `
 ## Background Task
 This is a BACKGROUND task running independently. Complete it thoroughly.
 
 ## Voice Context (for reference)
-${voiceContextText || '(no voice context)'}
+${voiceContextText}
 
 ## Task
 ${task}

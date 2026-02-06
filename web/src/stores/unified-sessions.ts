@@ -26,6 +26,7 @@ import type {
   OverlayType,
 } from '../types';
 import type { TimelineItem, TranscriptItem, ToolItem } from '../types/timeline';
+import type { ToastItem } from '../components/overlays/Toast';
 import type { PromptInfo } from '../lib/prompts-api';
 import * as promptsApi from '../lib/prompts-api';
 import * as sessionsApi from '../lib/sessions-api';
@@ -87,11 +88,13 @@ export type AISDKStreamEvent =
   | { type: 'start-step' }
   | { type: 'finish-step'; finishReason?: string; usage?: Record<string, number> }
   | { type: 'finish'; finishReason: string }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  | { type: 'process-status'; processName: string; sessionId: string; status: 'completed' | 'error'; summary?: string };
 
 /** Re-export timeline types for message-handler compatibility */
 export type { TimelineItem, TranscriptItem, ToolItem };
 export type { SessionTreeNode, OverlayType };
+export type { ToastItem };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Store Interface
@@ -156,6 +159,11 @@ interface UnifiedSessionsStore {
   // View State (Prompts vs Sessions)
   // ─────────────────────────────────────────────────────────────────────────
   activeView: 'sessions' | 'prompts';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Toast Notifications
+  // ─────────────────────────────────────────────────────────────────────────
+  toasts: ToastItem[];
 
   // ─────────────────────────────────────────────────────────────────────────
   // Prompts State
@@ -235,6 +243,12 @@ interface UnifiedSessionsStore {
   addEvent: (type: string, payload: unknown) => void;
   clearEvents: () => void;
   setActiveOverlay: (overlay: OverlayType) => void;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Toast Actions
+  // ─────────────────────────────────────────────────────────────────────────
+  addToast: (toast: ToastItem) => void;
+  dismissToast: (id: string) => void;
 
   // ─────────────────────────────────────────────────────────────────────────
   // View & Prompts Actions
@@ -379,6 +393,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
   // View
   activeView: 'sessions',
+
+  // Toasts
+  toasts: [],
 
   // Prompts
   prompts: [],
@@ -951,6 +968,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         case 'finish-step':
         case 'reasoning-start':
         case 'reasoning-end':
+        case 'process-status':
           break;
       }
 
@@ -1099,6 +1117,14 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Toast Actions
+  // ─────────────────────────────────────────────────────────────────────────
+
+  addToast: (toast) => set((s) => ({ toasts: [...s.toasts, toast] })),
+
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  // ─────────────────────────────────────────────────────────────────────────
   // View & Prompts Actions
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1230,6 +1256,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       subagentActive: false,
       events: [],
       activeOverlay: null,
+      toasts: [],
       activeView: 'sessions',
       prompts: [],
       selectedPromptId: null,
@@ -1374,6 +1401,11 @@ export function usePromptsState() {
       promptDirty: s.promptDirty,
     }))
   );
+}
+
+/** Get toast notifications */
+export function useToasts() {
+  return useUnifiedSessionsStore(useShallow((s) => s.toasts));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

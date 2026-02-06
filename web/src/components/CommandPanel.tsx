@@ -21,7 +21,7 @@ function useCliSessions() {
     setLoading(true);
     setError(null);
     try {
-      const baseUrl = import.meta.env.VITE_API_URL || '';
+      const baseUrl = process.env.PUBLIC_API_URL || '';
       const res = await fetch(`${baseUrl}/api/sessions`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();

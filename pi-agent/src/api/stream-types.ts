@@ -56,7 +56,10 @@ export type AISDKStreamEvent =
   | { type: 'finish'; finishReason: string }
 
   // Errors
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+
+  // Process lifecycle notifications (background tasks)
+  | { type: 'process-status'; processName: string; sessionId: string; status: 'completed' | 'error'; summary?: string };
 
 /**
  * Unified stream chunk message sent via WebSocket.

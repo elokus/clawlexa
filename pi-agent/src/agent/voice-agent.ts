@@ -23,6 +23,9 @@ import type { VoiceProfile } from '../db/index.js';
 import type { IAudioTransport } from '../transport/types.js';
 import { wsBroadcast } from '../api/websocket.js';
 import { createVoiceAdapter, type VoiceAdapter } from '../realtime/ai-sdk-adapter.js';
+import type { ManagedProcess } from '../processes/manager.js';
+import { buildHandoffPacket, type HandoffPacket, type VoiceContextEntry } from '../context/handoff.js';
+import { getProcessManager } from '../processes/manager.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
@@ -45,6 +48,9 @@ export class VoiceAgent {
   private transport: IAudioTransport | null = null;
   private currentSessionId: string | null = null; // Track current voice session ID for DB
   private adapter: VoiceAdapter | null = null; // AI SDK adapter for unified stream_chunk events
+  private pendingNotifications: ManagedProcess[] = [];
+  private voiceContext: VoiceContextEntry[] = []; // Accumulated voice context for HandoffPacket
+  private readonly MAX_CONTEXT_ENTRIES = 30;
 
   /**
    * Create a VoiceAgent.
@@ -215,6 +221,8 @@ export class VoiceAgent {
     this.session.on('transcript', (text, role, itemId) => {
       // Collect transcripts for logging
       this.transcriptBuffer.push(`${role}: ${text}`);
+      // Accumulate voice context for HandoffPacket (anti-telephone)
+      this.addVoiceContext(role, text);
       // Emit stream_chunk via AI SDK adapter (unified protocol)
       // Only emit for user messages - assistant messages are streamed via transcriptDelta
       if (role === 'user') {
@@ -242,6 +250,8 @@ export class VoiceAgent {
     });
 
     this.session.on('toolEnd', (name, result) => {
+      // Accumulate tool result in voice context for HandoffPacket
+      this.addVoiceContext('system', `[Tool: ${name}] ${result}`, { name, result });
       // Emit stream_chunk tool-result via adapter
       this.adapter?.toolEnd(name, result);
     });
@@ -354,6 +364,57 @@ export class VoiceAgent {
 
   isActive(): boolean {
     return this.session?.isConnected() ?? false;
+  }
+
+  /**
+   * Queue a process completion notification for the next voice session.
+   * Used when a background process completes while the voice agent is idle.
+   */
+  addPendingNotification(process: ManagedProcess): void {
+    this.pendingNotifications.push(process);
+  }
+
+  /**
+   * Get and clear pending notification prompt text.
+   * Called when activating a new voice session to prepend background task results.
+   */
+  getPendingNotificationsPrompt(): string {
+    if (this.pendingNotifications.length === 0) return '';
+    const notifications = this.pendingNotifications.map(p =>
+      `- "${p.name}" ${p.status}: ${p.result || p.error || 'No details'}`
+    ).join('\n');
+    this.pendingNotifications = [];
+    return `\n\nPending notifications from background tasks:\n${notifications}\nPlease inform the user about these completed tasks.`;
+  }
+
+  /**
+   * Add an entry to the accumulated voice context.
+   * Called on each transcript and tool result for HandoffPacket building.
+   */
+  private addVoiceContext(
+    role: 'user' | 'assistant' | 'system',
+    content: string,
+    toolInfo?: { name: string; args?: unknown; result?: string }
+  ): void {
+    this.voiceContext.push({ role, content, timestamp: Date.now(), toolInfo });
+    if (this.voiceContext.length > this.MAX_CONTEXT_ENTRIES) {
+      this.voiceContext.shift();
+    }
+  }
+
+  /**
+   * Build a HandoffPacket for transferring context to a subagent.
+   * Contains the full recent voice conversation + active process state.
+   */
+  createHandoffPacket(request: string): HandoffPacket {
+    const pm = getProcessManager();
+    return buildHandoffPacket({
+      request,
+      voiceContext: this.voiceContext,
+      activeProcesses: [...pm.getRunning()],
+      sessionId: this.currentSessionId ?? 'unknown',
+      profile: this.currentProfile?.name ?? 'unknown',
+    });
   }
 
   /**

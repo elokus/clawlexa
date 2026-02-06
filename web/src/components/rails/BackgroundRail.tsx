@@ -339,7 +339,7 @@ export function BackgroundRail() {
             {rootSessions.map((session) => {
               const isActive = hasRunningDescendant(session);
               const isCurrent = session.id === currentRootId;
-              const preview = session.goal?.substring(0, 28) || 'Voice session';
+              const preview = session.name || session.goal?.substring(0, 28) || 'Voice session';
               const time = formatTime(session.created_at);
 
               return (

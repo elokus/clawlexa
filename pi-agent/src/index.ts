@@ -18,6 +18,8 @@ import {
 import { handleDirectInput } from './subagents/direct-input.js';
 import { startStaticServer, stopStaticServer } from './api/static.js';
 import { LocalTransport, WebSocketTransport } from './transport/index.js';
+import { getProcessManager, type ManagedProcess } from './processes/manager.js';
+import { CliSessionsRepository } from './db/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Service State Machine
@@ -137,6 +139,59 @@ async function main() {
 
   // Initialize agent WITHOUT a transport (will be set via updateServiceState)
   agent = new VoiceAgent();
+
+  // Initialize ProcessManager for background task tracking
+  const processManager = getProcessManager();
+
+  processManager.on('process:completed', (process: ManagedProcess) => {
+    console.log(`[ProcessManager] Process "${process.name}" completed`);
+
+    // Broadcast process-status to frontend on the voice session
+    const sessionsRepo = new CliSessionsRepository();
+    const session = sessionsRepo.findById(process.sessionId);
+    const voiceSessionId = session?.parent_id || process.sessionId;
+
+    wsBroadcast.streamChunk(voiceSessionId, {
+      type: 'process-status',
+      processName: process.name,
+      sessionId: process.sessionId,
+      status: 'completed',
+      summary: process.result?.substring(0, 200),
+    });
+
+    // Notify voice agent or queue for next session
+    if (agent.isActive()) {
+      agent.sendMessage(
+        `[Background task "${process.name}" completed] ${process.result?.substring(0, 500) || 'Task finished.'}`
+      );
+    } else {
+      agent.addPendingNotification(process);
+    }
+  });
+
+  processManager.on('process:error', (process: ManagedProcess) => {
+    console.error(`[ProcessManager] Process "${process.name}" failed: ${process.error}`);
+
+    const sessionsRepo = new CliSessionsRepository();
+    const session = sessionsRepo.findById(process.sessionId);
+    const voiceSessionId = session?.parent_id || process.sessionId;
+
+    wsBroadcast.streamChunk(voiceSessionId, {
+      type: 'process-status',
+      processName: process.name,
+      sessionId: process.sessionId,
+      status: 'error',
+      summary: process.error,
+    });
+
+    if (agent.isActive()) {
+      agent.sendMessage(
+        `[Background task "${process.name}" failed] ${process.error || 'Unknown error'}`
+      );
+    } else {
+      agent.addPendingNotification(process);
+    }
+  });
 
   // Initialize wakeword detector (but don't start yet)
   try {

@@ -12,7 +12,7 @@
  * - Any task where the user wants to queue work and continue talking
  */
 
-import { tool, RealtimeContextData, RealtimeItem } from '@openai/agents/realtime';
+import { tool, RealtimeContextData } from '@openai/agents/realtime';
 import { z } from 'zod';
 import { spawnBackgroundSubagent } from '../subagents/background.js';
 import type { VoiceAgent } from '../agent/voice-agent.js';
@@ -51,17 +51,17 @@ Examples:
 - "Start implementing dark mode while I think about the API"
 - "Run the tests in the background and tell me when done"`,
     parameters: backgroundTaskParameters,
-    async execute({ task, notify_on_completion }, details) {
+    async execute({ task, notify_on_completion }) {
       console.log('[BackgroundTask] Spawning background task:', task);
 
-      // Get voice history for context
-      const history: RealtimeItem[] = details?.context?.history ?? [];
+      // Build HandoffPacket with full voice context (anti-telephone)
+      const handoff = voiceAgent?.createHandoffPacket(task);
 
       // Spawn the background subagent
       const { sessionId: bgSessionId } = spawnBackgroundSubagent({
         task,
         voiceSessionId: sessionId,
-        voiceHistory: history,
+        handoff,
         voiceAgent: notify_on_completion ? voiceAgent : undefined,
         completionMessage: (result) =>
           `Deine Hintergrund-Aufgabe ist fertig: ${result.substring(0, 200)}${result.length > 200 ? '...' : ''}`,

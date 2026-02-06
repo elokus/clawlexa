@@ -4,7 +4,7 @@
  * CRUD operations for timers and reminders.
  */
 
-import type Database from 'better-sqlite3';
+import type { Database } from 'bun:sqlite';
 import { getDatabase } from '../database.js';
 
 export type TimerMode = 'tts' | 'agent';
@@ -26,9 +26,9 @@ export interface CreateTimerInput {
 }
 
 export class TimersRepository {
-  private db: Database.Database;
+  private db: Database;
 
-  constructor(db?: Database.Database) {
+  constructor(db?: Database) {
     this.db = db ?? getDatabase();
   }
 
@@ -41,7 +41,7 @@ export class TimersRepository {
     const mode = input.mode ?? 'tts';
 
     const result = this.db
-      .prepare(
+      .query(
         `INSERT INTO timers (fire_at, mode, message, status)
          VALUES (?, ?, ?, 'pending')`
       )
@@ -54,7 +54,7 @@ export class TimersRepository {
    * Find a timer by ID.
    */
   findById(id: number): Timer | null {
-    return (this.db.prepare('SELECT * FROM timers WHERE id = ?').get(id) as Timer) ?? null;
+    return (this.db.query('SELECT * FROM timers WHERE id = ?').get(id) as Timer) ?? null;
   }
 
   /**
@@ -63,10 +63,10 @@ export class TimersRepository {
   list(status?: TimerStatus): Timer[] {
     if (status) {
       return this.db
-        .prepare('SELECT * FROM timers WHERE status = ? ORDER BY fire_at ASC')
+        .query('SELECT * FROM timers WHERE status = ? ORDER BY fire_at ASC')
         .all(status) as Timer[];
     }
-    return this.db.prepare('SELECT * FROM timers ORDER BY fire_at ASC').all() as Timer[];
+    return this.db.query('SELECT * FROM timers ORDER BY fire_at ASC').all() as Timer[];
   }
 
   /**
@@ -76,7 +76,7 @@ export class TimersRepository {
     // Compare against current ISO timestamp to handle both ISO and SQLite datetime formats
     const now = new Date().toISOString();
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM timers
          WHERE status = 'pending' AND fire_at <= ?
          ORDER BY fire_at ASC`
@@ -90,7 +90,7 @@ export class TimersRepository {
   getNext(): Timer | null {
     return (
       (this.db
-        .prepare(
+        .query(
           `SELECT * FROM timers
            WHERE status = 'pending'
            ORDER BY fire_at ASC
@@ -105,7 +105,7 @@ export class TimersRepository {
    */
   markFired(id: number): boolean {
     const result = this.db
-      .prepare(`UPDATE timers SET status = 'fired' WHERE id = ?`)
+      .query(`UPDATE timers SET status = 'fired' WHERE id = ?`)
       .run(id);
     return result.changes > 0;
   }
@@ -115,7 +115,7 @@ export class TimersRepository {
    */
   cancel(id: number): boolean {
     const result = this.db
-      .prepare(`UPDATE timers SET status = 'cancelled' WHERE id = ? AND status = 'pending'`)
+      .query(`UPDATE timers SET status = 'cancelled' WHERE id = ? AND status = 'pending'`)
       .run(id);
     return result.changes > 0;
   }
@@ -124,7 +124,7 @@ export class TimersRepository {
    * Delete a timer.
    */
   delete(id: number): boolean {
-    const result = this.db.prepare('DELETE FROM timers WHERE id = ?').run(id);
+    const result = this.db.query('DELETE FROM timers WHERE id = ?').run(id);
     return result.changes > 0;
   }
 
@@ -133,7 +133,7 @@ export class TimersRepository {
    */
   getPending(): Timer[] {
     return this.db
-      .prepare(
+      .query(
         `SELECT * FROM timers
          WHERE status = 'pending'
          ORDER BY fire_at ASC`
@@ -146,7 +146,7 @@ export class TimersRepository {
    */
   cleanup(days: number = 7): number {
     const result = this.db
-      .prepare(
+      .query(
         `DELETE FROM timers
          WHERE status IN ('fired', 'cancelled')
          AND created_at < datetime('now', '-' || ? || ' days')`
