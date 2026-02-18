@@ -186,24 +186,9 @@ export function useAudioSession(): AudioSessionState {
         if (audioControllerRef.current) {
           // Set up audio callback to send via shared WebSocket
           let audioChunkCount = 0;
-          let skippedChunkCount = 0;
           audioControllerRef.current.setOnAudio((data) => {
-            // Don't send audio while agent is speaking/thinking (prevents echo feedback)
-            const currentState = stateRef.current;
-            if (currentState === 'speaking' || currentState === 'thinking') {
-              skippedChunkCount++;
-              if (skippedChunkCount === 1 || skippedChunkCount % 50 === 0) {
-                console.log(`[AudioSession] Skipping audio (state: ${currentState}), skipped: ${skippedChunkCount}`);
-              }
-              return;
-            }
-
-            // Reset skip count when we start sending again
-            if (skippedChunkCount > 0) {
-              console.log(`[AudioSession] Resuming audio send after skipping ${skippedChunkCount} chunks`);
-              skippedChunkCount = 0;
-            }
-
+            // Keep streaming microphone audio even while agent is speaking/thinking.
+            // This enables fast barge-in and provider-native turn detection.
             audioChunkCount++;
             if (audioChunkCount <= 3 || audioChunkCount % 50 === 0) {
               console.log(`[AudioSession] Sending audio chunk #${audioChunkCount}, size: ${data.byteLength}`);

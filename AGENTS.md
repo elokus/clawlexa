@@ -1,6 +1,6 @@
-# Voice Agent - OpenAI Realtime API
+# Voice Agent - Configurable Voice Runtime
 
-Real-time voice agent running on Raspberry Pi 5 using OpenAI's Realtime API with wake word detection and tool support.
+Real-time voice agent with pluggable voice backends, wake word detection, tool support, and decomposed STT/LLM/TTS pipelines.
 
 ## Quick Start
 
@@ -19,6 +19,7 @@ bun run dev
 | [`docs/TOOLS_AND_SUBAGENTS.md`](docs/TOOLS_AND_SUBAGENTS.md) | Tools, subagents, CLI flow, prompt management |
 | [`docs/CODE_PATTERNS.md`](docs/CODE_PATTERNS.md) | Hard-won patterns & bug fixes |
 | [`docs/COMPONENT_DEV.md`](docs/COMPONENT_DEV.md) | Component development environment |
+| [`docs/VOICE_PROVIDER_INTEGRATION.md`](docs/VOICE_PROVIDER_INTEGRATION.md) | Voice provider config, endpoint map, and scratch testing |
 | [`web/CLAUDE.md`](web/CLAUDE.md) | Web dashboard architecture |
 
 ## Project Setup
@@ -63,8 +64,9 @@ Store architecture decisions, refactoring guides, and feature specs in `.plan/`.
 │                    │                                                    │
 │            ┌───────┴───────┐                                           │
 │            ▼               ▼                                           │
-│     RealtimeSession    Scheduler                                       │
-│     (OpenAI RT)        (Timers)                                        │
+│     VoiceRuntime       Scheduler                                       │
+│ (OpenAI/Ultravox/      (Timers)                                        │
+│  Decomposed STT+LLM+TTS)                                               │
 │            │                                                           │
 │     ┌──────┴──────┐                                                    │
 │     ▼              ▼                                                   │
@@ -84,7 +86,7 @@ Store architecture decisions, refactoring guides, and feature specs in `.plan/`.
 
 | Type | Description | Parent | Protocol |
 |------|-------------|--------|----------|
-| `voice` | Root conversation (OpenAI Realtime API) | none | AI SDK via adapter |
+| `voice` | Root conversation (provider via VoiceRuntime) | none | AI SDK via adapter |
 | `subagent` | Delegated agent (CLI, web_search) | voice or subagent | AI SDK native |
 | `terminal` | PTY process (tmux + Claude Code) | subagent | Binary PTY stream |
 
@@ -159,6 +161,8 @@ TRANSPORT_MODE=local bun run dev
 bun run dev          # Development
 bun test             # Run tests (26 tests)
 bun run typecheck    # TypeScript check
+bun run scratch:voice [auth|ultravox|deepgram|decomposed|all]  # Voice API smoke lab
+bun run scratch:provider <openai|openrouter|google|deepgram|ultravox>  # Provider contract check
 
 # web
 bun run dev          # Dev server with HMR
@@ -176,6 +180,8 @@ PICOVOICE_ACCESS_KEY=...       # Required
 GOVEE_API_KEY=...              # Optional
 MAC_DAEMON_URL=http://MacBook-Pro-von-Lukasz.local:3100
 OPEN_ROUTER_API_KEY=...        # For subagents (Grok)
+DEEPGRAM_API_KEY=...           # Optional (decomposed STT/TTS)
+ULTRAVOX_API_KEY=...           # Optional (ultravox voice-to-voice)
 ```
 
 ### Web Environment (web/.env)
@@ -187,6 +193,24 @@ PUBLIC_DEMO_MODE=true           # Mock data mode
 ```
 
 Uses `PUBLIC_*` prefix with `process.env.PUBLIC_*` (Bun convention, not Vite's `import.meta.env`).
+
+### JSON Runtime Config (`.voiceclaw/`)
+
+Voice runtime config is now JSON-backed:
+
+- `.voiceclaw/voice.config.json`
+- `.voiceclaw/auth-profiles.json`
+
+Templates:
+
+- `.voiceclaw/voice.config.example.json`
+- `.voiceclaw/auth-profiles.example.json`
+
+`voice.config.json` controls mode/provider/model/turn settings.  
+`auth-profiles.json` controls API credentials and provider default mappings.
+
+The web dashboard includes a **Voice Runtime** panel (above the control bar) to edit/save core mode/provider/model settings without touching files manually.
+It uses provider-native catalogs from `/api/config/voice/catalog` and shows resolved per-profile runtime via `/api/config/voice/effective`.
 
 ### Profile Configuration
 
@@ -234,4 +258,6 @@ curl http://MacBook-Pro-von-Lukasz.local:3100/health
 - Conversation timeout: 60 seconds of silence
 - Default model: gpt-4o-mini-realtime (cost-effective)
 - Webhook server on Pi: port 3000
+- OpenAI realtime dedupe guard: assistant `delta` + final `agent_end` (without `itemId`) must not both be forwarded.
+- Ultravox stream contract: assistant role may arrive as `agent`; client tools require `client_tool_invocation` -> local execute -> `client_tool_result`.
 - See `/home/elokus/CLAUDE.md` for device-level docs

@@ -208,3 +208,58 @@ When using shadcn/ui with a dark theme, you MUST apply `class="dark"` to the HTM
 **Fix**: Add `user-transcript` event type. Adapter sends user transcripts as `user-transcript` and assistant transcripts as `text-delta`. Frontend creates separate messages for each.
 
 See `pi-agent/src/realtime/ai-sdk-adapter.ts` and `web/src/stores/unified-sessions.ts`.
+
+## Assistant Transcript Double-Emit Guard (OpenAI Realtime)
+
+**Bug**: Assistant messages appeared twice in UI (one completed + one pending duplicate).
+
+**Root Cause**: OpenAI realtime can emit both:
+- streamed assistant deltas (`response.output_audio_transcript.delta`, with `item_id`)
+- final `agent_end` transcript (without `itemId`)
+
+If both are forwarded as assistant text events, the frontend creates duplicate assistant blocks.
+
+**Fix**: In `VoiceAgent`, treat assistant final transcript without `itemId` as fallback-only:
+- if any assistant deltas were already seen in the current turn, drop the final transcript
+- reset the delta flag only when a new assistant item starts (`assistantItemCreated`)
+
+**Ordering caveat**: final assistant transcript can arrive after `speaking -> listening`.
+Do **not** reset dedupe state on state transition alone.
+
+See `pi-agent/src/agent/voice-agent.ts`.
+
+## Ultravox Transcript + Client Tool Contract
+
+**Bug**: Ultravox assistant speech was audible, but no assistant transcript/tool execution appeared in stream.
+
+**Root Cause**:
+- Ultravox uses `role: "agent"` for assistant transcript events (not always `assistant`)
+- partial transcript text is often in `delta`, not `text`
+- client tools must be registered via `selectedTools.temporaryTool` and executed by the client after `client_tool_invocation`
+
+**Fix**:
+- map `role: "agent"` to assistant
+- consume `delta` and final `text` transcript forms
+- register local tools on call creation and round-trip `client_tool_result` with `invocationId`
+
+See `pi-agent/src/voice/ultravox-realtime-runtime.ts`.
+
+## Realtime Barge-In and Turn-Lag
+
+**Bug**: Voice runtime feels laggy and interruptions/turn detection do not behave naturally.
+
+**Root Cause**:
+- mic audio was suppressed in frontend while `speaking`/`thinking`
+- capture chunk size was 100ms, adding extra upstream latency per turn
+
+**Fix**:
+- always stream mic audio while session is active (provider handles interruption)
+- reduce capture chunk size to 40ms for faster turn feedback
+- for Ultravox websocket calls, set `clientBufferSizeMs` and support `playback_clear_buffer` interrupts
+- request Ultravox websocket at `inputSampleRate=48000` and `outputSampleRate=48000`
+- use negotiated sample rates from `create call` response (`medium.serverWebSocket`) instead of hardcoding
+- normalize for transport by resampling:
+  - uplink: 24k transport PCM16 -> Ultravox input sample rate
+  - downlink: Ultravox output sample rate -> 24k transport playback
+
+See `web/src/hooks/useAudioSession.ts`, `web/public/audio-processor.js`, `pi-agent/src/voice/ultravox-realtime-runtime.ts`.

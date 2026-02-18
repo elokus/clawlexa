@@ -14,7 +14,7 @@ class AudioProcessor extends AudioWorkletProcessor {
 
     // Buffer for accumulating samples before sending
     this.buffer = [];
-    this.bufferSize = 2400; // 100ms at 24kHz
+    this.bufferSize = 960; // 40ms at 24kHz for lower round-trip latency
   }
 
   /**

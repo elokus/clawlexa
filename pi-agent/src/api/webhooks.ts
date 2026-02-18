@@ -39,6 +39,18 @@ import {
   getActivePromptRaw,
   type PromptConfig,
 } from '../prompts/index.js';
+import { profiles } from '../agent/profiles.js';
+import { resolveVoiceRuntimeConfig } from '../voice/config.js';
+import {
+  loadVoiceConfig,
+  saveVoiceConfig,
+  loadAuthProfiles,
+  saveAuthProfiles,
+  redactAuthProfiles,
+  resolveApiKey,
+  getVoiceConfigPath,
+  getAuthProfilesPath,
+} from '../voice/settings.js';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
 const OPEN_ROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY ?? '';
@@ -46,6 +58,8 @@ const OPEN_ROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY ?? '';
 // OpenRouter models cache
 let modelsCache: { data: unknown[]; timestamp: number } | null = null;
 const MODELS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+let voiceCatalogCache: { data: unknown; timestamp: number } | null = null;
+const VOICE_CATALOG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 interface WebhookPayload {
   sessionId: string;
@@ -115,6 +129,256 @@ function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
+async function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      try {
+        resolve((body ? JSON.parse(body) : {}) as T);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function testProviderAuth(
+  provider: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox',
+  apiKey: string
+): Promise<{ ok: boolean; status: number; message: string }> {
+  const headers = (contentType?: string) => ({
+    Authorization: `Bearer ${apiKey}`,
+    ...(contentType ? { 'Content-Type': contentType } : {}),
+  });
+
+  try {
+    switch (provider) {
+      case 'openai': {
+        const res = await fetch('https://api.openai.com/v1/models', {
+          headers: headers(),
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'OpenAI credentials valid' : await res.text(),
+        };
+      }
+      case 'openrouter': {
+        const res = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: headers(),
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'OpenRouter credentials valid' : await res.text(),
+        };
+      }
+      case 'google': {
+        const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
+        url.searchParams.set('key', apiKey);
+        const res = await fetch(url);
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'Google credentials valid' : await res.text(),
+        };
+      }
+      case 'deepgram': {
+        const res = await fetch('https://api.deepgram.com/v1/projects', {
+          headers: {
+            Authorization: `Token ${apiKey}`,
+          },
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'Deepgram credentials valid' : await res.text(),
+        };
+      }
+      case 'ultravox': {
+        const res = await fetch('https://api.ultravox.ai/api/models', {
+          headers: {
+            'X-API-Key': apiKey,
+          },
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'Ultravox credentials valid' : await res.text(),
+        };
+      }
+      default:
+        return {
+          ok: false,
+          status: 400,
+          message: `Unsupported provider: ${String(provider)}`,
+        };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 500,
+      message: (error as Error).message,
+    };
+  }
+}
+
+function maskKey(value: string): string {
+  if (!value) return '';
+  if (value.length <= 8) return '********';
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+async function fetchOpenAIVoiceCatalog(apiKey: string): Promise<{
+  realtimeModels: string[];
+  textModels: string[];
+  voices: string[];
+}> {
+  const fallback = {
+    realtimeModels: ['gpt-realtime-mini-2025-10-06', 'gpt-realtime'],
+    textModels: ['gpt-4.1', 'gpt-4o-mini'],
+    voices: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'],
+  };
+
+  if (!apiKey) {
+    return fallback;
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) return fallback;
+
+    const payload = (await response.json()) as { data?: Array<{ id?: string }> };
+    const ids = (payload.data ?? []).map((m) => m.id ?? '').filter(Boolean);
+
+    const realtimeModels = ids
+      .filter((id) => id.includes('realtime'))
+      .sort();
+    const textModels = ids
+      .filter((id) => id.startsWith('gpt-4') || id.startsWith('gpt-5'))
+      .slice(0, 80)
+      .sort();
+
+    return {
+      realtimeModels: realtimeModels.length > 0 ? realtimeModels : fallback.realtimeModels,
+      textModels: textModels.length > 0 ? textModels : fallback.textModels,
+      voices: fallback.voices,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function fetchDeepgramVoiceCatalog(apiKey: string): Promise<{
+  sttModels: string[];
+  ttsVoices: string[];
+}> {
+  const fallback = {
+    sttModels: ['nova-3', 'nova-2'],
+    ttsVoices: ['aura-2-thalia-en', 'aura-2-luna-en', 'aura-2-cora-en'],
+  };
+
+  if (!apiKey) {
+    return fallback;
+  }
+
+  try {
+    const response = await fetch('https://api.deepgram.com/v1/models', {
+      headers: { Authorization: `Token ${apiKey}` },
+    });
+    if (!response.ok) return fallback;
+    const payload = (await response.json()) as {
+      stt?: Array<{ canonical_name?: string; streaming?: boolean }>;
+      tts?: Array<{ canonical_name?: string }>;
+    };
+
+    const sttModels = Array.from(
+      new Set(
+        (payload.stt ?? [])
+          .filter((model) => model.streaming)
+          .map((model) => model.canonical_name ?? '')
+          .filter(Boolean)
+      )
+    ).sort();
+
+    const ttsVoices = Array.from(
+      new Set(
+        (payload.tts ?? [])
+          .map((model) => model.canonical_name ?? '')
+          .filter(Boolean)
+      )
+    ).sort();
+
+    return {
+      sttModels: sttModels.length > 0 ? sttModels : fallback.sttModels,
+      ttsVoices: ttsVoices.length > 0 ? ttsVoices : fallback.ttsVoices,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function fetchUltravoxVoiceCatalog(apiKey: string): Promise<{
+  models: string[];
+  voices: Array<{ voiceId: string; name: string; primaryLanguage?: string }>;
+}> {
+  const fallback = {
+    models: ['ultravox-v0.7'],
+    voices: [],
+  };
+
+  if (!apiKey) {
+    return fallback;
+  }
+
+  try {
+    const modelRes = await fetch('https://api.ultravox.ai/api/models', {
+      headers: { 'X-API-Key': apiKey },
+    });
+    const voiceRes = await fetch('https://api.ultravox.ai/api/voices', {
+      headers: { 'X-API-Key': apiKey },
+    });
+
+    let models = fallback.models;
+    if (modelRes.ok) {
+      const modelPayload = (await modelRes.json()) as {
+        results?: Array<{ name?: string }>;
+      };
+      const discovered = (modelPayload.results ?? [])
+        .map((entry) => entry.name ?? '')
+        .filter(Boolean)
+        .sort();
+      if (discovered.length > 0) {
+        models = discovered;
+      }
+    }
+
+    let voices: Array<{ voiceId: string; name: string; primaryLanguage?: string }> = [];
+    if (voiceRes.ok) {
+      const voicePayload = (await voiceRes.json()) as {
+        results?: Array<{ voiceId?: string; name?: string; primaryLanguage?: string }>;
+      };
+      voices = (voicePayload.results ?? [])
+        .filter((voice) => voice.voiceId && voice.name)
+        .map((voice) => ({
+          voiceId: voice.voiceId as string,
+          name: voice.name as string,
+          primaryLanguage: voice.primaryLanguage,
+        }));
+    }
+
+    return { models, voices };
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -562,6 +826,197 @@ async function handleWebhook(
       console.error('[API] Error fetching models:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to fetch models' }));
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/config/voice/catalog') {
+    try {
+      const now = Date.now();
+      if (!voiceCatalogCache || now - voiceCatalogCache.timestamp > VOICE_CATALOG_CACHE_TTL) {
+        const authProfiles = loadAuthProfiles();
+        const openaiKey = resolveApiKey('openai', { authProfiles });
+        const deepgramKey = resolveApiKey('deepgram', { authProfiles });
+        const ultravoxKey = resolveApiKey('ultravox', { authProfiles });
+
+        const [openai, deepgram, ultravox] = await Promise.all([
+          fetchOpenAIVoiceCatalog(openaiKey),
+          fetchDeepgramVoiceCatalog(deepgramKey),
+          fetchUltravoxVoiceCatalog(ultravoxKey),
+        ]);
+
+        voiceCatalogCache = {
+          data: {
+            openai,
+            deepgram,
+            ultravox,
+            gemini: {
+              models: ['gemini-2.5-flash-native-audio-preview'],
+              voices: ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Leda', 'Orus', 'Zephyr'],
+            },
+          },
+          timestamp: now,
+        };
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(voiceCatalogCache.data));
+    } catch (error) {
+      console.error('[API] Error fetching voice catalog:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch voice catalog' }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Voice Config API (JSON-backed runtime config + auth profiles)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (req.method === 'GET' && req.url?.startsWith('/api/config/voice/effective')) {
+    try {
+      const requestUrl = new URL(req.url, 'http://localhost');
+      const profileName = (requestUrl.searchParams.get('profile') ?? '').toLowerCase();
+
+      const profile = profiles[profileName] ?? profiles[`hey_${profileName}`];
+      if (!profile) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unknown profile. Use profile=jarvis|marvin|computer|hey_jarvis' }));
+        return;
+      }
+
+      const runtime = resolveVoiceRuntimeConfig(profile);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          profile: profile.name,
+          mode: runtime.mode,
+          provider: runtime.provider,
+          language: runtime.language,
+          voice: runtime.voice,
+          model: runtime.model,
+          decomposed: {
+            stt: `${runtime.decomposedSttProvider}/${runtime.decomposedSttModel}`,
+            llm: `${runtime.decomposedLlmProvider}/${runtime.decomposedLlmModel}`,
+            tts: `${runtime.decomposedTtsProvider}/${runtime.decomposedTtsModel}`,
+          },
+          auth: {
+            openai: maskKey(runtime.auth.openaiApiKey),
+            openrouter: maskKey(runtime.auth.openrouterApiKey),
+            google: maskKey(runtime.auth.googleApiKey),
+            deepgram: maskKey(runtime.auth.deepgramApiKey),
+            ultravox: maskKey(runtime.auth.ultravoxApiKey),
+          },
+          turn: runtime.turn,
+        })
+      );
+    } catch (error) {
+      console.error('[API] Error resolving effective voice config:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to resolve effective voice config' }));
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/config/voice') {
+    try {
+      const voiceConfig = loadVoiceConfig();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: getVoiceConfigPath(), config: voiceConfig }));
+    } catch (error) {
+      console.error('[API] Error loading voice config:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to load voice config' }));
+    }
+    return;
+  }
+
+  if (req.method === 'PUT' && req.url === '/api/config/voice') {
+    try {
+      const body = await readJsonBody<{ config: unknown }>(req);
+      const next = saveVoiceConfig(body.config as never);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: getVoiceConfigPath(), config: next }));
+    } catch (error) {
+      console.error('[API] Error saving voice config:', error);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url?.startsWith('/api/config/auth-profiles')) {
+    try {
+      const requestUrl = new URL(req.url, 'http://localhost');
+      const redacted = requestUrl.searchParams.get('redacted') === 'true';
+      const authProfiles = loadAuthProfiles();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          path: getAuthProfilesPath(),
+          config: redacted ? redactAuthProfiles(authProfiles) : authProfiles,
+        })
+      );
+    } catch (error) {
+      console.error('[API] Error loading auth profiles:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to load auth profiles' }));
+    }
+    return;
+  }
+
+  if (req.method === 'PUT' && req.url === '/api/config/auth-profiles') {
+    try {
+      const body = await readJsonBody<{ config: unknown }>(req);
+      const next = saveAuthProfiles(body.config as never);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: getAuthProfilesPath(), config: redactAuthProfiles(next) }));
+    } catch (error) {
+      console.error('[API] Error saving auth profiles:', error);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/config/auth-profiles/test') {
+    try {
+      const body = await readJsonBody<{
+        provider?: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox';
+        authProfileId?: string;
+      }>(req);
+
+      const authProfiles = loadAuthProfiles();
+
+      let provider = body.provider;
+      if (!provider && body.authProfileId) {
+        provider = authProfiles.profiles[body.authProfileId]?.provider;
+      }
+
+      if (!provider) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'provider or authProfileId is required' }));
+        return;
+      }
+
+      const apiKey = resolveApiKey(provider, {
+        authProfileId: body.authProfileId,
+        authProfiles,
+      });
+
+      if (!apiKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `No API key resolved for provider: ${provider}` }));
+        return;
+      }
+
+      const result = await testProviderAuth(provider, apiKey);
+      res.writeHead(result.ok ? 200 : 502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ provider, ...result }));
+    } catch (error) {
+      console.error('[API] Error testing auth profile:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
     }
     return;
   }

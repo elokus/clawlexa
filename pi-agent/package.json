@@ -12,6 +12,8 @@
     "test:text": "bun run src/test-text.ts",
     "test:db": "bun run src/test-db.ts",
     "test:timer": "bun run src/test-timer.ts",
+    "scratch:voice": "bun run src/scratch-voice-pipeline.ts",
+    "scratch:provider": "bun run src/scratch-provider-contract.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "bun run tsc --noEmit"
   },

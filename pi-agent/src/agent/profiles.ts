@@ -21,8 +21,8 @@ export interface AgentProfile {
   wakeWord: string;
   /** System prompt / instructions for the agent */
   instructions: string;
-  /** Voice to use (alloy, ash, ballad, coral, echo, sage, shimmer, verse) */
-  voice: 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | 'shimmer' | 'verse';
+  /** Provider-specific voice ID/name (e.g. "echo", "ash", "Puck", custom voice UUID) */
+  voice: string;
   /** List of tool names enabled for this profile */
   tools: ToolName[];
   /** Message sent to trigger the assistant's greeting after wake word */
