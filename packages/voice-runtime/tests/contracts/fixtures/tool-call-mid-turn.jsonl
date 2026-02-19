@@ -1,0 +1,11 @@
+{"atMs":0,"type":"state","state":"thinking"}
+{"atMs":1,"type":"turn_started"}
+{"atMs":3,"type":"assistant_item","itemId":"assistant-2"}
+{"atMs":5,"type":"transcript_delta","role":"assistant","text":"Checking weather ","itemId":"assistant-2"}
+{"atMs":25,"type":"tool_start","name":"lookup_weather","callId":"call-1","args":{"city":"Berlin"}}
+{"atMs":45,"type":"tool_end","name":"lookup_weather","callId":"call-1","result":"{\"tempC\":22}"}
+{"atMs":70,"type":"transcript_delta","role":"assistant","text":"for Berlin.","itemId":"assistant-2"}
+{"atMs":120,"type":"audio","durationMs":180,"sampleRate":24000}
+{"atMs":310,"type":"transcript_final","role":"assistant","text":"Checking weather for Berlin.","itemId":"assistant-2"}
+{"atMs":330,"type":"turn_complete"}
+{"atMs":331,"type":"state","state":"listening"}

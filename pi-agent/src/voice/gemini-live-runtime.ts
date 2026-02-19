@@ -1,10 +1,10 @@
-import type { RealtimeItem } from '@openai/agents/realtime';
 import type { AgentProfile } from '../agent/profiles.js';
 import type {
   AgentState,
   VoiceRuntime,
   VoiceRuntimeConfig,
   VoiceRuntimeEvents,
+  VoiceRuntimeHistoryItem,
 } from './types.js';
 
 /**
@@ -66,7 +66,7 @@ export class GeminiLiveRuntime implements VoiceRuntime {
     return this.state;
   }
 
-  getHistory(): RealtimeItem[] {
+  getHistory(): VoiceRuntimeHistoryItem[] {
     return [];
   }
 

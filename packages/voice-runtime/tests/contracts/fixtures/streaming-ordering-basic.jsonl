@@ -1,0 +1,10 @@
+{"atMs":0,"type":"state","state":"thinking"}
+{"atMs":1,"type":"turn_started"}
+{"atMs":2,"type":"assistant_item","itemId":"assistant-1"}
+{"atMs":4,"type":"transcript_delta","role":"assistant","text":"Hello","itemId":"assistant-1"}
+{"atMs":30,"type":"audio","durationMs":120,"sampleRate":24000}
+{"atMs":70,"type":"transcript_delta","role":"assistant","text":" world","itemId":"assistant-1"}
+{"atMs":140,"type":"audio","durationMs":120,"sampleRate":24000}
+{"atMs":260,"type":"transcript_final","role":"assistant","text":"Hello world","itemId":"assistant-1"}
+{"atMs":280,"type":"turn_complete"}
+{"atMs":281,"type":"state","state":"listening"}

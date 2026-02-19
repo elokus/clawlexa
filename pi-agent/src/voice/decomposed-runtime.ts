@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto';
 import OpenAI from 'openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { streamText, type CoreMessage } from 'ai';
-import type { TransportLayerAudio, RealtimeItem } from '@openai/agents/realtime';
 import type { AgentProfile } from '../agent/profiles.js';
 import { config } from '../config.js';
 import {
@@ -14,8 +13,10 @@ import {
 import type {
   AgentState,
   VoiceRuntime,
+  VoiceRuntimeAudio,
   VoiceRuntimeConfig,
   VoiceRuntimeEvents,
+  VoiceRuntimeHistoryItem,
 } from './types.js';
 
 const AUDIO_SAMPLE_RATE = 24000;
@@ -161,13 +162,13 @@ export class DecomposedRuntime implements VoiceRuntime {
     return this.state;
   }
 
-  getHistory(): RealtimeItem[] {
+  getHistory(): VoiceRuntimeHistoryItem[] {
     return this.history.map((entry) => ({
       id: entry.id,
       type: 'message',
       role: entry.role,
       content: [{ type: 'text', text: entry.content }],
-    })) as unknown as RealtimeItem[];
+    }));
   }
 
   private emit<K extends keyof VoiceRuntimeEvents>(
@@ -531,7 +532,7 @@ export class DecomposedRuntime implements VoiceRuntime {
         chunk.byteOffset,
         chunk.byteOffset + chunk.byteLength
       );
-      this.emit('audio', { data: arrayBuffer } as TransportLayerAudio);
+      this.emit('audio', { data: arrayBuffer } as VoiceRuntimeAudio);
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
 

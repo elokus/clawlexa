@@ -19,7 +19,9 @@ bun run dev
 | [`docs/TOOLS_AND_SUBAGENTS.md`](docs/TOOLS_AND_SUBAGENTS.md) | Tools, subagents, CLI flow, prompt management |
 | [`docs/CODE_PATTERNS.md`](docs/CODE_PATTERNS.md) | Hard-won patterns & bug fixes |
 | [`docs/COMPONENT_DEV.md`](docs/COMPONENT_DEV.md) | Component development environment |
-| [`docs/VOICE_PROVIDER_INTEGRATION.md`](docs/VOICE_PROVIDER_INTEGRATION.md) | Voice provider config, endpoint map, and scratch testing |
+| [`docs/VOICE_PROVIDER_INTEGRATION.md`](docs/VOICE_PROVIDER_INTEGRATION.md) | App-level voice config, control APIs, and scratch operations |
+| [`docs/PIPECAT_RTVI_PROVIDER.md`](docs/PIPECAT_RTVI_PROVIDER.md) | Pipecat RTVI adapter handshake/events/config |
+| [`docs/VOICE_BENCHMARKS.md`](docs/VOICE_BENCHMARKS.md) | Runtime benchmark capture and PASS/FAIL gating |
 | [`web/CLAUDE.md`](web/CLAUDE.md) | Web dashboard architecture |
 
 ## Project Setup
@@ -163,6 +165,7 @@ bun test             # Run tests (26 tests)
 bun run typecheck    # TypeScript check
 bun run scratch:voice [auth|ultravox|deepgram|decomposed|all]  # Voice API smoke lab
 bun run scratch:provider <openai|openrouter|google|deepgram|ultravox>  # Provider contract check
+bun run scratch:benchmark [list|latest|<report.json>]  # Inspect benchmark reports
 
 # web
 bun run dev          # Dev server with HMR

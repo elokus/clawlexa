@@ -1,4 +1,4 @@
-import type { RealtimeItem, TransportLayerAudio } from '@openai/agents/realtime';
+import type { IAudioTransport } from '../transport/types.js';
 
 export type AgentState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
@@ -7,24 +7,38 @@ export type VoiceProviderName =
   | 'openai-realtime'
   | 'gemini-live'
   | 'ultravox-realtime'
+  | 'pipecat-rtvi'
   | 'decomposed';
+
+export interface VoiceRuntimeAudio {
+  data: ArrayBuffer;
+  sampleRate?: number;
+  format?: 'pcm16';
+}
+
+export interface VoiceRuntimeHistoryItem {
+  id: string;
+  type: 'message';
+  role: 'user' | 'assistant' | 'system';
+  content: Array<{ type: 'text'; text: string }>;
+}
 
 export interface VoiceRuntimeEvents {
   stateChange: (state: AgentState) => void;
-  audio: (audio: TransportLayerAudio) => void;
+  audio: (audio: VoiceRuntimeAudio) => void;
   audioInterrupted: () => void;
   transcript: (text: string, role: 'user' | 'assistant', itemId?: string) => void;
   transcriptDelta: (delta: string, role: 'user' | 'assistant', itemId?: string) => void;
   userItemCreated: (itemId: string) => void;
   assistantItemCreated: (itemId: string, previousItemId?: string) => void;
-  historyUpdated: (history: RealtimeItem[]) => void;
+  historyUpdated: (history: VoiceRuntimeHistoryItem[]) => void;
   error: (error: Error) => void;
   connected: () => void;
   disconnected: () => void;
   toolStart: (name: string, args: Record<string, unknown>, callId?: string) => void;
   toolEnd: (name: string, result: string, callId?: string) => void;
   latency: (metric: {
-    stage: 'stt' | 'llm' | 'tts' | 'turn';
+    stage: 'stt' | 'llm' | 'tts' | 'turn' | 'tool' | 'connection';
     durationMs: number;
     provider?: string;
     model?: string;
@@ -45,7 +59,10 @@ export interface VoiceRuntime {
   interrupt(): void;
 
   getState(): AgentState;
-  getHistory(): RealtimeItem[];
+  getHistory(): VoiceRuntimeHistoryItem[];
+  attachAudioTransport?(transport: IAudioTransport): Promise<void>;
+  detachAudioTransport?(): Promise<void>;
+  usesInternalTransport?(): boolean;
 
   on<K extends keyof VoiceRuntimeEvents>(event: K, handler: VoiceRuntimeEvents[K]): void;
 }
@@ -75,6 +92,9 @@ export interface VoiceRuntimeConfig {
   geminiModel: string;
   geminiVoice: string;
   ultravoxModel: string;
+  pipecatServerUrl: string;
+  pipecatTransport: 'websocket' | 'webrtc';
+  pipecatBotId?: string;
 
   // Decomposed providers
   decomposedSttProvider: 'deepgram' | 'openai';

@@ -15,7 +15,6 @@ import {
   getProfileByWakeword,
   type AgentProfile,
 } from './profiles.js';
-import type { TransportLayerAudio, RealtimeItem } from '@openai/agents/realtime';
 import { getDatabase, AgentRunsRepository, CliSessionsRepository } from '../db/index.js';
 import type { VoiceProfile } from '../db/index.js';
 import type { IAudioTransport } from '../transport/types.js';
@@ -25,11 +24,21 @@ import type { ManagedProcess } from '../processes/manager.js';
 import { buildHandoffPacket, type HandoffPacket, type VoiceContextEntry } from '../context/handoff.js';
 import { getProcessManager } from '../processes/manager.js';
 import { getSessionLogger, removeSessionLogger } from '../logging/session-logger.js';
-import { createVoiceRuntime, type AgentState, type VoiceRuntime } from '../voice/index.js';
+import {
+  createVoiceRuntime,
+  type AgentState,
+  type VoiceRuntime,
+  type VoiceRuntimeAudio,
+  type VoiceRuntimeHistoryItem,
+} from '../voice/index.js';
+import {
+  createVoiceSessionBenchmark,
+  type VoiceSessionBenchmark,
+} from '../voice/benchmark-recorder.js';
 
 export interface VoiceAgentEvents {
   stateChange: (state: AgentState, profile: string | null) => void;
-  audio: (audio: TransportLayerAudio) => void;
+  audio: (audio: VoiceRuntimeAudio) => void;
   transcript: (text: string, role: 'user' | 'assistant') => void;
   transcriptDelta: (delta: string, role: 'user' | 'assistant') => void;
   error: (error: Error) => void;
@@ -69,6 +78,7 @@ export class VoiceAgent {
   private readonly MAX_CONTEXT_ENTRIES = 30;
   private assistantDeltaItemIds = new Set<string>();
   private assistantDeltaSeenThisTurn = false;
+  private benchmark: VoiceSessionBenchmark | null = null;
 
   /**
    * Create a VoiceAgent.
@@ -96,6 +106,9 @@ export class VoiceAgent {
 
     // Route incoming audio from transport to session
     this.transport.on('audio', (chunk: ArrayBuffer) => {
+      if (this.runtime?.usesInternalTransport?.()) {
+        return;
+      }
       if (this.runtime) {
         this.runtime.sendAudio(chunk);
       }
@@ -191,6 +204,15 @@ export class VoiceAgent {
 
     // Create runtime FIRST so it can buffer/process audio during connect
     this.runtime = createVoiceRuntime(profile, sessionId, this);
+    this.benchmark = createVoiceSessionBenchmark({
+      sessionId,
+      profile: profile.name,
+      provider: this.runtime.provider,
+    });
+
+    if (this.transport && this.runtime.attachAudioTransport) {
+      await this.runtime.attachAudioTransport(this.transport);
+    }
 
     // Create AI SDK adapter for unified stream_chunk events
     // This replaces the legacy wsBroadcast.transcript/toolStart/toolEnd calls
@@ -198,13 +220,14 @@ export class VoiceAgent {
 
     // Start transport AFTER session exists so audio can be buffered
     // This is critical for web mode where audio capture starts immediately
-    if (this.transport && !this.transport.isActive()) {
+    if (this.transport && !this.transport.isActive() && !this.runtime.usesInternalTransport?.()) {
       console.log('[Agent] Starting transport early for audio capture');
       this.transport.start();
     }
 
     // Wire up events
     this.runtime.on('stateChange', (state) => {
+      this.benchmark?.onStateChange(state);
       this.state = state;
       // Emit state change for UI (listening/thinking/speaking indicator)
       this.emit('stateChange', state, this.currentProfile?.name ?? null);
@@ -233,8 +256,9 @@ export class VoiceAgent {
     });
 
     this.runtime.on('audio', (audio) => {
+      this.benchmark?.onAudio(audio);
       // Route to transport if available, otherwise emit for external handling
-      if (this.transport && audio.data) {
+      if (this.transport && audio.data && !this.runtime?.usesInternalTransport?.()) {
         this.transport.play(audio.data);
       }
       this.emit('audio', audio);
@@ -247,12 +271,14 @@ export class VoiceAgent {
     });
 
     this.runtime.on('assistantItemCreated', (itemId, previousItemId) => {
+      this.benchmark?.onAssistantItemCreated(itemId);
       this.assistantDeltaSeenThisTurn = false;
       this.assistantDeltaItemIds.delete(itemId);
       this.adapter?.assistantPlaceholder(itemId, previousItemId);
     });
 
     this.runtime.on('transcript', (text, role, itemId) => {
+      this.benchmark?.onTranscriptFinal(text, role, itemId);
       // Collect transcripts for logging
       this.transcriptBuffer.push(`${role}: ${text}`);
       // Accumulate voice context for HandoffPacket (anti-telephone)
@@ -277,6 +303,7 @@ export class VoiceAgent {
     });
 
     this.runtime.on('transcriptDelta', (delta, role, itemId) => {
+      this.benchmark?.onTranscriptDelta(delta, role, itemId);
       // Stream assistant transcript deltas in real-time
       // User transcripts don't have deltas (they arrive complete)
       if (role === 'assistant') {
@@ -330,12 +357,14 @@ export class VoiceAgent {
     // When audio is interrupted (user speaks over agent), stop local playback
     // This is critical for WebSocket transport where we manage audio playback ourselves
     this.runtime.on('audioInterrupted', () => {
-      if (this.transport) {
+      this.benchmark?.markInterruptionStopped();
+      if (this.transport && !this.runtime?.usesInternalTransport?.()) {
         this.transport.interrupt();
       }
     });
 
     this.runtime.on('disconnected', () => {
+      this.finalizeBenchmark('disconnected');
       // Log the agent run to database before resetting state
       this.logAgentRun();
 
@@ -361,6 +390,7 @@ export class VoiceAgent {
       await this.runtime.connect();
       return true;
     } catch (error) {
+      this.finalizeBenchmark('connect-failed');
       console.error('Failed to connect session:', error);
       this.emit('error', error as Error);
       return false;
@@ -376,15 +406,17 @@ export class VoiceAgent {
   }
 
   interrupt(): void {
+    this.benchmark?.markInterruptionRequested();
     this.runtime?.interrupt();
   }
 
-  getHistory(): RealtimeItem[] {
+  getHistory(): VoiceRuntimeHistoryItem[] {
     return this.runtime?.getHistory() ?? [];
   }
 
   deactivate(): void {
     if (this.runtime) {
+      this.finalizeBenchmark('deactivate');
       // Log the agent run before disconnecting
       this.logAgentRun();
 
@@ -411,10 +443,26 @@ export class VoiceAgent {
 
     this.currentProfile = null;
     this.adapter = null;
+    this.benchmark = null;
     this.assistantDeltaItemIds.clear();
     this.assistantDeltaSeenThisTurn = false;
     this.state = 'idle';
     this.emit('stateChange', 'idle', null);
+  }
+
+  private finalizeBenchmark(reason: 'disconnected' | 'deactivate' | 'connect-failed'): void {
+    const result = this.benchmark?.finalize(reason);
+    if (!result) return;
+
+    const status = result.report.pass ? 'PASS' : 'FAIL';
+    const reportPath = result.outputPath ? ` report=${result.outputPath}` : '';
+    console.log(`[VoiceBenchmark] ${status}${reportPath}`);
+    if (!result.report.pass) {
+      for (const violation of result.report.violations) {
+        console.warn(`[VoiceBenchmark] violation: ${violation}`);
+      }
+    }
+    this.benchmark = null;
   }
 
   /**
@@ -523,10 +571,16 @@ export class VoiceAgent {
     this.transport = transport;
     this.setupTransport();
 
+    if (this.runtime?.attachAudioTransport) {
+      void this.runtime.attachAudioTransport(transport);
+    }
+
     // If agent is active, start the new transport immediately
     if (this.isActive()) {
       console.log('[VoiceAgent] Hot-swapping transport while active, starting new transport');
-      this.transport.start();
+      if (!this.runtime?.usesInternalTransport?.()) {
+        this.transport.start();
+      }
     }
   }
 

@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
 import WebSocket from 'ws';
-import type { RealtimeItem, TransportLayerAudio } from '@openai/agents/realtime';
 import type { FunctionTool } from '@openai/agents-core';
 import { RunContext } from '@openai/agents-core';
 import type { AgentProfile } from '../agent/profiles.js';
@@ -10,8 +9,10 @@ import { resamplePcm16Mono } from './audio-utils.js';
 import type {
   AgentState,
   VoiceRuntime,
+  VoiceRuntimeAudio,
   VoiceRuntimeConfig,
   VoiceRuntimeEvents,
+  VoiceRuntimeHistoryItem,
 } from './types.js';
 
 interface UltravoxCallResponse {
@@ -69,7 +70,7 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
   private static readonly TRANSPORT_SAMPLE_RATE_HZ = 24000;
   private static readonly DEFAULT_ULTRAVOX_INPUT_SAMPLE_RATE_HZ = 48000;
   private static readonly DEFAULT_ULTRAVOX_OUTPUT_SAMPLE_RATE_HZ = 48000;
-  private static readonly CLIENT_BUFFER_SIZE_MS = 60;
+  private static readonly CLIENT_BUFFER_SIZE_MS = 30000;
 
   private readonly profile: AgentProfile;
   private readonly runtimeConfig: VoiceRuntimeConfig;
@@ -82,6 +83,8 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
   private history: HistoryEntry[] = [];
   private ultravoxInputSampleRateHz = UltravoxRealtimeRuntime.DEFAULT_ULTRAVOX_INPUT_SAMPLE_RATE_HZ;
   private ultravoxOutputSampleRateHz = UltravoxRealtimeRuntime.DEFAULT_ULTRAVOX_OUTPUT_SAMPLE_RATE_HZ;
+  /** Ordinal-indexed transcript accumulation (matches Ultravox SDK pattern) */
+  private transcriptsByOrdinal = new Map<number, { text: string; role: 'user' | 'assistant'; announced: boolean; final: boolean }>();
 
   constructor(
     profile: AgentProfile,
@@ -178,7 +181,10 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
       throw new Error('Ultravox API response did not include joinUrl/websocketUrl');
     }
 
-    this.ws = new WebSocket(joinUrl);
+    // Append apiVersion parameter (matches official SDKs)
+    const wsUrl = new URL(joinUrl);
+    wsUrl.searchParams.set('apiVersion', '1');
+    this.ws = new WebSocket(wsUrl.toString());
 
     await new Promise<void>((resolve, reject) => {
       if (!this.ws) {
@@ -240,6 +246,7 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
     this.ws.close();
     this.ws = null;
     this.connected = false;
+    this.transcriptsByOrdinal.clear();
     this.setState('idle');
     this.emit('disconnected');
   }
@@ -261,10 +268,10 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
   sendMessage(text: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    // Ultravox data message for text user input.
+    // Ultravox data message for text user input (SDK convention).
     this.ws.send(
       JSON.stringify({
-        type: 'user_text_message',
+        type: 'input_text_message',
         text,
       })
     );
@@ -278,13 +285,13 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
     return this.state;
   }
 
-  getHistory(): RealtimeItem[] {
+  getHistory(): VoiceRuntimeHistoryItem[] {
     return this.history.map((entry) => ({
       id: entry.id,
       type: 'message',
       role: entry.role,
       content: [{ type: 'text', text: entry.text }],
-    })) as unknown as RealtimeItem[];
+    }));
   }
 
   private setupMessageHandlers(): void {
@@ -302,7 +309,7 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
           transportPcm.byteOffset,
           transportPcm.byteOffset + transportPcm.byteLength
         );
-        this.emit('audio', { data: arrayBuffer } as TransportLayerAudio);
+        this.emit('audio', { data: arrayBuffer } as VoiceRuntimeAudio);
         return;
       }
 
@@ -338,23 +345,67 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
       const role = this.mapRole(message);
       if (!role) return;
 
-      const itemId = `${role}-${message.ordinal ?? randomUUID()}`;
+      const ordinal = typeof message.ordinal === 'number' ? message.ordinal : -1;
+      const itemId = ordinal >= 0 ? `${role}-${ordinal}` : `${role}-${randomUUID()}`;
       const delta = typeof message.delta === 'string' ? message.delta : '';
       const text = typeof message.text === 'string' ? message.text : '';
 
-      if (role === 'assistant') {
-        if (delta) {
-          this.emit('transcriptDelta', delta, role, itemId);
-        } else if (message.final === false && text) {
-          // Some Ultravox events use `text` for partial chunks instead of `delta`.
-          this.emit('transcriptDelta', text, role, itemId);
+      // Emit placeholder on first encounter of a new ordinal (ordering anchor for frontend)
+      if (ordinal >= 0) {
+        const existing = this.transcriptsByOrdinal.get(ordinal);
+        if (!existing) {
+          this.transcriptsByOrdinal.set(ordinal, { text: '', role, announced: true, final: false });
+          if (role === 'user') {
+            this.emit('userItemCreated', itemId);
+          } else {
+            this.emit('assistantItemCreated', itemId);
+          }
         }
       }
 
-      if (message.final === true && text.trim()) {
-        this.history.push({ id: itemId, role, text });
-        this.emit('historyUpdated', this.getHistory());
-        this.emit('transcript', text, role, itemId);
+      // Accumulate text using ordinal-indexed model:
+      // - `text` field = full accumulated text at this ordinal (replace)
+      // - `delta` field = incremental text to append at this ordinal
+      // These are mutually exclusive per message.
+      const entry = this.transcriptsByOrdinal.get(ordinal);
+      const previousText = entry?.text ?? '';
+
+      if (delta) {
+        // Delta: append to existing accumulated text
+        const newText = previousText + delta;
+        if (ordinal >= 0 && entry) {
+          entry.text = newText;
+        }
+        if (role === 'assistant') {
+          this.emit('transcriptDelta', delta, role, itemId);
+        }
+      } else if (text) {
+        // Text: full accumulated text — compute real delta from previous
+        if (ordinal >= 0 && entry) {
+          entry.text = text;
+        }
+        if (role === 'assistant' && message.final !== true) {
+          // Compute the incremental part that is new
+          const computedDelta = text.length > previousText.length
+            ? text.slice(previousText.length)
+            : text;
+          if (computedDelta) {
+            this.emit('transcriptDelta', computedDelta, role, itemId);
+          }
+        }
+      }
+
+      // On final: emit the complete transcript and add to history
+      if (message.final === true) {
+        const finalText = entry?.text || text;
+        if (ordinal >= 0 && entry) {
+          entry.final = true;
+        }
+        if (finalText.trim()) {
+          this.history.push({ id: itemId, role, text: finalText });
+          this.emit('historyUpdated', this.getHistory());
+          this.emit('transcript', finalText, role, itemId);
+        }
       }
       return;
     }
@@ -511,7 +562,7 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
     const tool = this.localTools.get(toolName);
     if (!tool) {
       const missing = `Tool ${toolName} is not available in this profile.`;
-      this.sendClientToolResult(invocationId, missing);
+      this.sendClientToolResult(invocationId, missing, true);
       this.emit('toolEnd', toolName, missing, invocationId);
       return;
     }
@@ -525,25 +576,28 @@ export class UltravoxRealtimeRuntime implements VoiceRuntime {
         JSON.stringify(args)
       );
       const resultText = this.stringifyToolOutput(output);
-      this.sendClientToolResult(invocationId, output ?? resultText);
+      this.sendClientToolResult(invocationId, resultText, false);
       this.emit('toolEnd', toolName, resultText, invocationId);
     } catch (error) {
       const message = (error as Error).message;
       const resultText = `Tool ${toolName} failed: ${message}`;
-      this.sendClientToolResult(invocationId, resultText);
+      this.sendClientToolResult(invocationId, resultText, true);
       this.emit('toolEnd', toolName, resultText, invocationId);
       this.emit('error', error as Error);
     }
   }
 
-  private sendClientToolResult(invocationId: string, result: unknown): void {
+  private sendClientToolResult(invocationId: string, result: string, isError: boolean): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(
-      JSON.stringify({
-        type: 'client_tool_result',
-        invocationId,
-        result,
-      })
-    );
+    const payload: Record<string, unknown> = {
+      type: 'client_tool_result',
+      invocationId,
+      result,
+      responseType: 'tool-response',
+    };
+    if (isError) {
+      payload.responseType = 'tool-error';
+    }
+    this.ws.send(JSON.stringify(payload));
   }
 }

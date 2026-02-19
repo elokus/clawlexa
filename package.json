@@ -1,0 +1,13 @@
+{
+  "name": "voice-agent-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "pi-agent",
+    "web",
+    "mac-daemon"
+  ],
+  "scripts": {
+    "typecheck:voice-runtime": "bunx tsc -p packages/voice-runtime/tsconfig.json --noEmit"
+  }
+}

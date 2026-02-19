@@ -6,6 +6,7 @@ import type {
   VoiceRuntime,
   VoiceRuntimeConfig,
   VoiceRuntimeEvents,
+  VoiceRuntimeHistoryItem,
 } from './types.js';
 
 /**
@@ -60,8 +61,8 @@ export class OpenAIRealtimeRuntime implements VoiceRuntime {
     return this.session.getState();
   }
 
-  getHistory() {
-    return this.session.getHistory();
+  getHistory(): VoiceRuntimeHistoryItem[] {
+    return this.session.getHistory() as unknown as VoiceRuntimeHistoryItem[];
   }
 
   on<K extends keyof VoiceRuntimeEvents>(event: K, handler: VoiceRuntimeEvents[K]): void {

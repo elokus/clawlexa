@@ -13,6 +13,7 @@
     "test:db": "bun run src/test-db.ts",
     "test:timer": "bun run src/test-timer.ts",
     "scratch:voice": "bun run src/scratch-voice-pipeline.ts",
+    "scratch:benchmark": "bun run src/scratch-voice-benchmark.ts",
     "scratch:provider": "bun run src/scratch-provider-contract.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "bun run tsc --noEmit"
@@ -29,6 +30,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@voiceclaw/voice-runtime": "workspace:*",
     "@openai/agents": "^0.3.4",
     "@openrouter/ai-sdk-provider": "^1.4.1",
     "@picovoice/porcupine-node": "^3.0.6",

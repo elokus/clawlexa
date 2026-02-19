@@ -10,7 +10,10 @@
       "authProfile": "ultravox-main",
       "ultravoxModel": "fixie-ai/ultravox-70B",
       "geminiModel": "gemini-2.5-flash-native-audio-preview",
-      "geminiVoice": "Puck"
+      "geminiVoice": "Puck",
+      "pipecatServerUrl": "ws://localhost:7860",
+      "pipecatTransport": "websocket",
+      "pipecatBotId": ""
     },
     "decomposed": {
       "stt": {

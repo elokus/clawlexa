@@ -4,7 +4,11 @@ import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 export type VoiceMode = 'voice-to-voice' | 'decomposed';
-export type VoiceToVoiceProvider = 'openai-realtime' | 'gemini-live' | 'ultravox-realtime';
+export type VoiceToVoiceProvider =
+  | 'openai-realtime'
+  | 'gemini-live'
+  | 'ultravox-realtime'
+  | 'pipecat-rtvi';
 export type SttProvider = 'deepgram' | 'openai';
 export type LlmProvider = 'openai' | 'openrouter';
 export type TtsProvider = 'deepgram' | 'openai';
@@ -27,6 +31,9 @@ export interface VoiceConfigDocument {
       ultravoxModel: string;
       geminiModel: string;
       geminiVoice: string;
+      pipecatServerUrl: string;
+      pipecatTransport: 'websocket' | 'webrtc';
+      pipecatBotId?: string;
     };
     decomposed: {
       stt: {
@@ -90,17 +97,22 @@ const voiceConfigSchema: z.ZodType<VoiceConfigDocument> = z.object({
       z.object({
         mode: z.enum(['voice-to-voice', 'decomposed']).optional(),
         voice: z.string().optional(),
-        provider: z.enum(['openai-realtime', 'gemini-live', 'ultravox-realtime']).optional(),
+        provider: z
+          .enum(['openai-realtime', 'gemini-live', 'ultravox-realtime', 'pipecat-rtvi'])
+          .optional(),
       })
     ),
     voiceToVoice: z.object({
-      provider: z.enum(['openai-realtime', 'gemini-live', 'ultravox-realtime']),
+      provider: z.enum(['openai-realtime', 'gemini-live', 'ultravox-realtime', 'pipecat-rtvi']),
       model: z.string(),
       voice: z.string(),
       authProfile: z.string().optional(),
       ultravoxModel: z.string(),
       geminiModel: z.string(),
       geminiVoice: z.string(),
+      pipecatServerUrl: z.string(),
+      pipecatTransport: z.enum(['websocket', 'webrtc']),
+      pipecatBotId: z.string().optional(),
     }),
     decomposed: z.object({
       stt: z.object({
@@ -178,6 +190,9 @@ const DEFAULT_VOICE_CONFIG: VoiceConfigDocument = {
       ultravoxModel: process.env.ULTRAVOX_MODEL ?? 'fixie-ai/ultravox-70B',
       geminiModel: process.env.GEMINI_LIVE_MODEL ?? 'gemini-2.5-flash-native-audio-preview',
       geminiVoice: process.env.GEMINI_VOICE ?? 'Puck',
+      pipecatServerUrl: process.env.PIPECAT_RTVI_SERVER_URL ?? 'ws://localhost:7860',
+      pipecatTransport: process.env.PIPECAT_RTVI_TRANSPORT === 'webrtc' ? 'webrtc' : 'websocket',
+      pipecatBotId: process.env.PIPECAT_BOT_ID,
     },
     decomposed: {
       stt: {

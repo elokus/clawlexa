@@ -1,44 +1,49 @@
 # Codebase Inspection
 
-**Request:** Assess monorepo extraction plan for voice runtime layering package, ensure compatibility with current architecture and support adapter pattern for different voice APIs including configurable sample rates/transport constraints.
+**Request:** Map files and flows for extracting voice runtime into package with provider adapters and pluggable GUI/TUI transports
 
 ---
 
-This analysis maps the existing system to prepare for extracting a voice runtime package with a pluggable adapter pattern.
+This analysis maps the current voice architecture and data flows to prepare for the extraction of `@voiceclaw/voice-runtime`.
 
 ### 1) System Architecture Map
-*   **Orchestration Layer**: The `VoiceAgent` manages the lifecycle of voice sessions, profile switching (Jarvis/Marvin), and the integration between real-time audio and delegated subagent tasks.
-*   **Real-time Voice Interface**: `VoiceSession` wraps the `@openai/agents/realtime` SDK, handling the WebSocket handshake, event state machine (idle/listening/thinking/speaking), and server-side VAD.
-*   **Transport Abstraction**: `IAudioTransport` provides a common interface for hardware-level audio (`LocalTransport` via PipeWire/sox) and browser-level audio (`WebSocketTransport`).
-*   **Protocol Adapter**: `VoiceAdapter` transforms provider-specific events (OpenAI Realtime) into a unified **AI SDK Data Stream Protocol** format used across the entire monorepo for UI consistency.
-*   **Context Management**: `HandoffPacket` serves as the data boundary, capturing voice transcripts and tool results to maintain context when delegating to text-based subagents.
+*   **Orchestration Layer (`VoiceAgent`)**: Resides in `pi-agent`; manages profile switching, session tree hierarchy, and maps high-level intents to the voice runtime.
+*   **Voice Runtime Interface (`VoiceRuntime`)**: A provider-agnostic boundary in `src/voice` that abstracts specific API protocols into a unified set of events (transcripts, state, audio, tools).
+*   **Provider Adapters**: Concrete implementations (OpenAI SDK, Ultravox WebSocket, Decomposed Pipeline) that handle specific wire encodings, auth headers, and VAD quirks.
+*   **Media Plane (`IAudioTransport`)**: Separates hardware-level I/O (`PipeWire`, `sox`) and network-level I/O (`WebSocket`) from the agent logic, allowing for pluggable transports.
+*   **Configuration Hub**: JSON-backed system (`voice.config.json` and `auth-profiles.json`) for resolving API keys and effective runtime settings per profile.
 
 ### 2) Existing Flow
-*   **Activation**: The flow begins via wake word detection (`WakewordDetector`) or a `start_session` command from the web dashboard.
-*   **Session Initialization**: `VoiceAgent` resolves a profile and instantiates a `VoiceSession`, which establishes a WebSocket connection to the OpenAI Realtime API.
-*   **Audio Routing**: Incoming audio from the selected `IAudioTransport` is resampled (if necessary) and streamed to the Realtime API; assistant audio is received and routed back to the transport's playback sink.
-*   **Turn Management**: Server-side VAD detects speech boundaries, triggering state transitions between `listening` and `thinking`.
-*   **Tool Execution**: Real-time tool calls (e.g., `developer_session`) are intercepted, packaged into a `HandoffPacket`, and executed asynchronously via the `ProcessManager`.
-*   **Event Propagation**: All transcription and tool events are adapted by `VoiceAdapter` and broadcast via the central WebSocket server to connected dashboard clients.
+*   **Activation**: Starts at `VoiceAgent.activateProfile()`, which resolves effective config by merging global defaults with profile-specific overrides.
+*   **Provider Instantiation**: The `createVoiceRuntime` factory selects an adapter; for OpenAI, it currently wraps a legacy `VoiceSession` that tightly couples the `@openai/agents` SDK.
+*   **Handshake & Negotiation**: The runtime performs the provider-specific connection (e.g., Ultravox's REST create → WebSocket join) and determines the negotiated audio sample rates.
+*   **Bidirectional Streaming**: Audio flows from `IAudioTransport` through the `VoiceRuntime` to the provider; provider events (deltas) flow back through an adapter to be normalized.
+*   **Event Normalization**: The `VoiceAdapter` (specifically `ai-sdk-adapter.ts`) transforms provider events into the **AI SDK Data Stream Protocol** for UI consumption.
+*   **Handoffs**: On tool calls, a `HandoffPacket` captures current conversation state to allow subagents to resume the task without context loss.
 
 ### 3) Relevant Code Locations
 
 **Entrypoints & Orchestration**
-*   `pi-agent/src/agent/voice-agent.ts`: The primary controller for session lifecycles and transport hotswapping.
-*   `pi-agent/src/index.ts`: The main service entry point that coordinates the state machine between dormant and running states.
+*   `pi-agent/src/agent/voice-agent.ts`: Central orchestrator; controls session lifecycle and transport hotswapping.
+*   `pi-agent/src/voice/factory.ts`: Current provider selection logic; target for the new runtime host.
 
-**Voice & Adapter Logic**
-*   `pi-agent/src/realtime/session.ts`: Current implementation of the voice session; contains the core OpenAI-specific logic to be abstracted.
-*   `pi-agent/src/realtime/ai-sdk-adapter.ts`: Defines how voice events map to the unified stream protocol; critical for maintaining compatibility after extraction.
-*   `.plan/orchestration-plan-claude.md`: Section 3 specifically outlines the proposed `IVoiceProvider` interface and adapter factory pattern.
+**Domain & Adapter Logic**
+*   `pi-agent/src/voice/types.ts`: Contains the primary interface definitions; currently suffers from OpenAI SDK type leaks.
+*   `pi-agent/src/voice/openai-realtime-runtime.ts`: The current OpenAI adapter implementation.
+*   `pi-agent/src/voice/ultravox-realtime-runtime.ts`: A protocol-based (non-SDK) adapter with complex transcript accumulation logic.
+*   `pi-agent/src/voice/decomposed-runtime.ts`: Orchestrates a multi-provider pipeline (STT + LLM + TTS).
+*   `pi-agent/src/realtime/ai-sdk-adapter.ts`: The bridge that normalizes voice events into the unified stream protocol.
 
-**Audio & Transport**
-*   `pi-agent/src/transport/types.ts`: Defines `IAudioTransport` and `AUDIO_CONFIG` (sample rates, channels, bit depth).
-*   `pi-agent/src/transport/local.ts`: Hardware-specific audio I/O using `pw-cat` (Pi) and `sox` (Mac).
-*   `pi-agent/src/transport/websocket.ts`: Manages binary audio streaming between the server and web clients.
-*   `pi-agent/src/audio/resample.ts`: Contains linear interpolation logic for sample rate conversion (16kHz ↔ 24kHz).
+**Integration & Config**
+*   `pi-agent/src/voice/settings.ts`: JSON loading and Zod validation for runtime and auth profiles.
+*   `pi-agent/src/voice/config.ts`: Effective config resolver (Cascading: Env -> Profile -> File -> Default).
+*   `pi-agent/src/context/handoff.ts`: Defines the data structure for cross-agent context transfer.
 
-**Context & Integration**
-*   `pi-agent/src/context/handoff.ts`: Defines the `HandoffPacket` structure for context persistence during provider transitions.
-*   `pi-agent/src/api/websocket.ts`: Central hub for broadcasting stream chunks and managing client `Master/Replica` audio roles.
-*   `pi-agent/src/db/repositories/cli-sessions.ts`: Persists session metadata, essential for tracking the tree hierarchy (Voice → Subagent → Terminal).
+**Media & Transports**
+*   `pi-agent/src/transport/types.ts`: Defines the audio transport contract and hardcoded 24kHz constants.
+*   `pi-agent/src/voice/audio-utils.ts`: Audio processing helpers including PCM resampling and WAV encoding.
+*   `web/public/audio-processor.js`: Browser-side AudioWorklet handling 48k to 24k downsampling.
+
+**Tests**
+*   `pi-agent/tests/ultravox-runtime.test.ts`: Unit tests for transcript role mapping and tool invocation sequences.
+*   `pi-agent/tests/audio-utils.test.ts`: Tests for resampling accuracy across different sample rates.

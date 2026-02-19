@@ -1,0 +1,43 @@
+{
+  "name": "@voiceclaw/voice-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Provider-agnostic realtime voice runtime with pluggable adapters and client transports",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@openai/agents": "^0.3.4",
+    "@openai/agents-core": "^0.3.4"
+  },
+  "peerDependenciesMeta": {
+    "@openai/agents": {
+      "optional": true
+    },
+    "@openai/agents-core": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "voice",
+    "realtime",
+    "audio",
+    "adapters"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

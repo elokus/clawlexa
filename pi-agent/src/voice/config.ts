@@ -13,6 +13,7 @@ function normalizeProvider(
 ): VoiceRuntimeConfig['provider'] {
   if (value === 'gemini-live') return 'gemini-live';
   if (value === 'ultravox-realtime') return 'ultravox-realtime';
+  if (value === 'pipecat-rtvi') return 'pipecat-rtvi';
   if (value === 'decomposed') return 'decomposed';
   return 'openai-realtime';
 }
@@ -55,6 +56,8 @@ export function resolveVoiceRuntimeConfig(profile: AgentProfile): VoiceRuntimeCo
     voice = override.voice ?? voiceDoc.voice.voiceToVoice.voice;
   } else if (provider === 'gemini-live') {
     voice = override.voice ?? voiceDoc.voice.voiceToVoice.geminiVoice;
+  } else if (provider === 'pipecat-rtvi') {
+    voice = override.voice ?? voiceDoc.voice.voiceToVoice.voice ?? profile.voice;
   } else {
     voice = override.voice ?? voiceDoc.voice.voiceToVoice.voice ?? profile.voice;
   }
@@ -74,6 +77,9 @@ export function resolveVoiceRuntimeConfig(profile: AgentProfile): VoiceRuntimeCo
     geminiModel: voiceDoc.voice.voiceToVoice.geminiModel,
     geminiVoice: voiceDoc.voice.voiceToVoice.geminiVoice,
     ultravoxModel: voiceDoc.voice.voiceToVoice.ultravoxModel,
+    pipecatServerUrl: voiceDoc.voice.voiceToVoice.pipecatServerUrl,
+    pipecatTransport: voiceDoc.voice.voiceToVoice.pipecatTransport,
+    pipecatBotId: voiceDoc.voice.voiceToVoice.pipecatBotId,
 
     // Decomposed
     decomposedSttProvider: voiceDoc.voice.decomposed.stt.provider,
