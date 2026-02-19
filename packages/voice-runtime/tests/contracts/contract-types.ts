@@ -61,6 +61,8 @@ export interface ProviderContractCase {
     assistantFinals: string[];
   };
   thresholds?: VoiceBenchmarkThresholds;
+  expectedBenchmarkPass?: boolean;
+  expectedBenchmarkViolations?: string[];
   timeoutMs?: number;
 }
 

@@ -57,6 +57,7 @@ export interface Message {
   role: MessageRole;
   parts: MessagePart[];
   createdAt: number;
+  itemId?: string;
 }
 
 /** Session state in the unified model */
@@ -77,7 +78,7 @@ export type AISDKStreamEvent =
   | { type: 'text-delta'; textDelta: string; itemId?: string }
   | { type: 'user-transcript'; text: string; itemId?: string } // Custom extension for voice user messages
   // Placeholders for message ordering (custom extension for voice sessions)
-  | { type: 'user-placeholder'; itemId: string }
+  | { type: 'user-placeholder'; itemId: string; previousItemId?: string }
   | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string }
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
   | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
@@ -195,7 +196,7 @@ interface UnifiedSessionsStore {
   setVoiceState: (state: AgentState, profile?: string | null) => void;
   setVoiceActive: (active: boolean) => void;
   clearVoiceTimeline: () => void;
-  addVoiceTimelineItem: (item: TimelineItem) => void;
+  addVoiceTimelineItem: (item: TimelineItem, index?: number) => void;
   updateVoiceTimelineItem: (id: string, updates: Partial<TimelineItem>) => void;
   setCurrentTool: (tool: { name: string; args?: Record<string, unknown> } | null) => void;
 
@@ -345,11 +346,45 @@ function getAllTreeIds(node: SessionTreeNode): Set<string> {
   return ids;
 }
 
+function parseConversationItemOrder(itemId?: string): number | null {
+  if (!itemId) return null;
+  const uvxMatch = itemId.match(/^(?:assistant|user)-(\d+)$/);
+  if (uvxMatch?.[1]) {
+    const parsed = Number.parseInt(uvxMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  const decomposedMatch = itemId.match(/^decomp-(?:assistant|user|context)-(\d+)-[a-z0-9]+$/i);
+  if (decomposedMatch?.[1]) {
+    const parsed = Number.parseInt(decomposedMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  // Unknown provider-native IDs are treated as unsortable to avoid false reordering.
+  return null;
+}
+
 function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
   const timeline: TimelineItem[] = [];
   const toolIndexByCallId = new Map<string, number>();
+  const orderedMessages = messages
+    .map((message, index) => ({
+      message,
+      index,
+      order: parseConversationItemOrder(message.itemId),
+    }))
+    .sort((a, b) => {
+      if (a.order === null || b.order === null) {
+        return a.index - b.index;
+      }
+      if (a.order !== b.order) {
+        return a.order - b.order;
+      }
+      return a.index - b.index;
+    })
+    .map((entry) => entry.message);
 
-  for (const message of messages) {
+  for (const message of orderedMessages) {
     for (const part of message.parts) {
       if (part.type === 'text') {
         timeline.push({
@@ -359,6 +394,7 @@ function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
           content: part.text,
           timestamp: message.createdAt,
           pending: false,
+          itemId: message.itemId,
         });
         continue;
       }
@@ -510,8 +546,20 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
   clearVoiceTimeline: () => set({ voiceTimeline: [], currentTool: null }),
 
-  addVoiceTimelineItem: (item) =>
-    set((s) => ({ voiceTimeline: [...s.voiceTimeline, item] })),
+  addVoiceTimelineItem: (item, index) =>
+    set((s) => {
+      if (
+        typeof index !== 'number' ||
+        Number.isNaN(index) ||
+        index < 0 ||
+        index >= s.voiceTimeline.length
+      ) {
+        return { voiceTimeline: [...s.voiceTimeline, item] };
+      }
+      const voiceTimeline = [...s.voiceTimeline];
+      voiceTimeline.splice(index, 0, item);
+      return { voiceTimeline };
+    }),
 
   updateVoiceTimelineItem: (id, updates) =>
     set((s) => ({
@@ -920,27 +968,90 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       const messages = [...session.messages];
       const lastMessage = messages[messages.length - 1];
       const isAssistantMessage = lastMessage?.role === 'assistant';
+      const findMessageInsertIndexByItemOrder = (itemId?: string): number | null => {
+        const targetOrder = parseConversationItemOrder(itemId);
+        if (targetOrder === null) return null;
+        for (let idx = 0; idx < messages.length; idx += 1) {
+          const current = messages[idx];
+          if (!current) continue;
+          const currentOrder = parseConversationItemOrder(current.itemId);
+          if (currentOrder === null) continue;
+          if (currentOrder > targetOrder) {
+            return idx;
+          }
+        }
+        return messages.length;
+      };
+      const insertMessage = (message: Message, insertIndex: number | null): void => {
+        if (typeof insertIndex === 'number' && insertIndex >= 0 && insertIndex < messages.length) {
+          messages.splice(insertIndex, 0, message);
+          return;
+        }
+        messages.push(message);
+      };
+      const findMessageIndexByItemId = (
+        role: MessageRole,
+        itemId: string
+      ): number => {
+        for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+          const message = messages[idx];
+          if (message?.role !== role) continue;
+          if (message.itemId !== itemId) continue;
+          return idx;
+        }
+        return -1;
+      };
+      const appendTextToMessage = (index: number, text: string): void => {
+        const target = messages[index];
+        if (!target) return;
+        const targetParts = [...target.parts];
+        const lastPart = targetParts[targetParts.length - 1];
+        if (lastPart?.type === 'text') {
+          targetParts[targetParts.length - 1] = {
+            type: 'text',
+            text: lastPart.text + text,
+          };
+        } else {
+          targetParts.push({ type: 'text', text });
+        }
+        messages[index] = { ...target, parts: targetParts };
+      };
 
       switch (event.type) {
         case 'text-delta': {
-          if (isAssistantMessage) {
-            // Append to existing message
-            const lastPart = lastMessage.parts[lastMessage.parts.length - 1];
-            if (lastPart?.type === 'text') {
-              lastMessage.parts[lastMessage.parts.length - 1] = {
-                type: 'text',
-                text: lastPart.text + event.textDelta,
-              };
-            } else {
-              lastMessage.parts.push({ type: 'text', text: event.textDelta });
+          const deltaText = event.textDelta ?? '';
+
+          if (event.itemId) {
+            const messageIdx = findMessageIndexByItemId('assistant', event.itemId);
+            if (messageIdx >= 0) {
+              appendTextToMessage(messageIdx, deltaText);
+              break;
             }
-            messages[messages.length - 1] = { ...lastMessage };
+
+            // Ignore scaffold-only deltas that do not yet map to a concrete assistant item.
+            if (deltaText.trim().length === 0) {
+              break;
+            }
+
+            const created: Message = {
+              id: generateId(),
+              role: 'assistant',
+              parts: [{ type: 'text', text: deltaText }],
+              createdAt: Date.now(),
+              itemId: event.itemId,
+            };
+            insertMessage(created, findMessageInsertIndexByItemOrder(event.itemId));
+            break;
+          }
+
+          if (isAssistantMessage) {
+            appendTextToMessage(messages.length - 1, deltaText);
           } else {
             // Create new assistant message
             messages.push({
               id: generateId(),
               role: 'assistant',
-              parts: [{ type: 'text', text: event.textDelta }],
+              parts: [{ type: 'text', text: deltaText }],
               createdAt: Date.now(),
             });
           }
@@ -948,13 +1059,26 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         }
 
         case 'user-transcript': {
-          // User transcripts always create a new user message
-          messages.push({
+          if (event.itemId) {
+            const messageIdx = findMessageIndexByItemId('user', event.itemId);
+            if (messageIdx >= 0) {
+              messages[messageIdx] = {
+                ...messages[messageIdx]!,
+                parts: [{ type: 'text', text: event.text }],
+              };
+              break;
+            }
+          }
+
+          // User transcripts create a dedicated user message.
+          const created: Message = {
             id: generateId(),
             role: 'user',
             parts: [{ type: 'text', text: event.text }],
             createdAt: Date.now(),
-          });
+            itemId: event.itemId,
+          };
+          insertMessage(created, findMessageInsertIndexByItemOrder(event.itemId));
           break;
         }
 

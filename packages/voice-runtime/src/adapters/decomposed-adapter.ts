@@ -1,7 +1,10 @@
+import { parseDecomposedProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
+import { createClient, LiveTTSEvents, type SpeakLiveClient } from '@deepgram/sdk';
 import type {
   AudioFrame,
   AudioNegotiation,
+  DecomposedProviderConfig,
   EventHandler,
   ProviderAdapter,
   ProviderCapabilities,
@@ -19,33 +22,6 @@ const TURN_MARKERS = ['✓', '○', '◐'] as const;
 type TurnMarker = (typeof TURN_MARKERS)[number];
 type ConversationRole = 'user' | 'assistant' | 'system';
 
-interface DecomposedProviderConfig {
-  openaiApiKey?: string;
-  openrouterApiKey?: string;
-  deepgramApiKey?: string;
-
-  sttProvider?: 'openai' | 'deepgram';
-  sttModel?: string;
-
-  llmProvider?: 'openai' | 'openrouter';
-  llmModel?: string;
-
-  ttsProvider?: 'openai' | 'deepgram';
-  ttsModel?: string;
-  ttsVoice?: string;
-
-  turn?: {
-    silenceMs?: number;
-    minSpeechMs?: number;
-    minRms?: number;
-    llmCompletionEnabled?: boolean;
-    llmShortTimeoutMs?: number;
-    llmLongTimeoutMs?: number;
-    llmShortReprompt?: string;
-    llmLongReprompt?: string;
-  };
-}
-
 interface DecomposedOptions {
   sttProvider: 'openai' | 'deepgram';
   sttModel: string;
@@ -54,6 +30,8 @@ interface DecomposedOptions {
   ttsProvider: 'openai' | 'deepgram';
   ttsModel: string;
   ttsVoice: string;
+  deepgramTtsTransport: 'websocket';
+  deepgramTtsWsUrl: string;
   silenceMs: number;
   minSpeechMs: number;
   minRms: number;
@@ -86,6 +64,14 @@ interface ChatCompletionResponse {
   }>;
 }
 
+interface ChatCompletionStreamChunk {
+  choices?: Array<{
+    delta?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
+}
+
 const TURN_COMPLETION_PROMPT = [
   'You must start every response with exactly one marker character:',
   '✓ when the user turn is complete and you should answer now.',
@@ -100,7 +86,7 @@ const DECOMPOSED_CAPABILITIES: ProviderCapabilities = {
   transcriptDeltas: true,
   interruption: true,
 
-  providerTransportKinds: ['http'],
+  providerTransportKinds: ['http', 'websocket'],
   audioNegotiation: false,
   vadModes: ['manual'],
   interruptionModes: ['barge-in'],
@@ -154,6 +140,10 @@ export class DecomposedAdapter implements ProviderAdapter {
   private completionTimer: ReturnType<typeof setTimeout> | null = null;
   private processingTurn = false;
   private interrupted = false;
+  private assistantTurnQueue: Promise<void> = Promise.resolve();
+  private deepgramTtsConnection: SpeakLiveClient | null = null;
+  private deepgramTtsConnectionReady: Promise<SpeakLiveClient> | null = null;
+  private deepgramTtsRequestQueue: Promise<void> = Promise.resolve();
 
   capabilities(): ProviderCapabilities {
     return DECOMPOSED_CAPABILITIES;
@@ -167,6 +157,9 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.speechStartedAtMs = null;
     this.processingTurn = false;
     this.interrupted = false;
+    this.assistantTurnQueue = Promise.resolve();
+    this.deepgramTtsRequestQueue = Promise.resolve();
+    this.closeDeepgramTtsConnection();
     this.connected = true;
 
     this.setState('listening');
@@ -189,6 +182,9 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.speechStartedAtMs = null;
     this.processingTurn = false;
     this.interrupted = false;
+    this.assistantTurnQueue = Promise.resolve();
+    this.deepgramTtsRequestQueue = Promise.resolve();
+    this.closeDeepgramTtsConnection();
     this.setState('idle');
     this.events.emit('disconnected');
   }
@@ -226,7 +222,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (!this.connected) return;
     const trimmed = text.trim();
     if (!trimmed) return;
-    void this.runAssistantTurn(trimmed, {
+    void this.enqueueAssistantTurn(trimmed, {
       emitUserTranscript: false,
     });
   }
@@ -322,8 +318,9 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.events.emit('userItemCreated', userItemId);
       this.events.emit('transcript', transcript, 'user', userItemId);
 
-      await this.runAssistantTurn(transcript, {
+      await this.enqueueAssistantTurn(transcript, {
         emitUserTranscript: true,
+        previousItemId: userItemId,
       });
 
       this.emitLatency({
@@ -421,11 +418,14 @@ export class DecomposedAdapter implements ProviderAdapter {
 
   private async runAssistantTurn(
     text: string,
-    options: { emitUserTranscript: boolean }
+    options: { emitUserTranscript: boolean; previousItemId?: string }
   ): Promise<void> {
     if (!this.options || !this.input) return;
 
-    const userId = makeItemId('decomp-context');
+    const userId =
+      options.emitUserTranscript && options.previousItemId
+        ? options.previousItemId
+        : makeItemId('decomp-context');
     const assistantId = makeItemId('decomp-assistant');
 
     if (options.emitUserTranscript) {
@@ -436,39 +436,49 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.events.emit('historyUpdated', this.getHistoryItems());
 
     this.setState('thinking');
-    this.events.emit('assistantItemCreated', assistantId);
+    this.events.emit('assistantItemCreated', assistantId, options.previousItemId);
     this.events.emit('turnStarted');
 
-    const llmStartMs = Date.now();
     const systemPrompt = this.options.llmCompletionEnabled
       ? `${this.input.instructions}\n\n${TURN_COMPLETION_PROMPT}`
       : this.input.instructions;
 
     let marker: TurnMarker = '✓';
     let assistantText = '';
+    let spokeWhileStreaming = false;
+    let llmDurationMs = 0;
 
     try {
-      const responseText = await this.generateAssistantText(systemPrompt);
-      const parsed = parseMarker(responseText, this.options.llmCompletionEnabled);
-      marker = parsed.marker;
-      assistantText = parsed.text;
-
-      if (assistantText) {
-        this.events.emit('transcriptDelta', assistantText, 'assistant', assistantId);
+      const llmStartMs = Date.now();
+      if (this.options.llmCompletionEnabled) {
+        const responseText = await this.generateAssistantText(systemPrompt);
+        const parsed = parseMarker(responseText, this.options.llmCompletionEnabled);
+        marker = parsed.marker;
+        assistantText = parsed.text;
+        if (assistantText) {
+          this.events.emit('transcriptDelta', assistantText, 'assistant', assistantId);
+        }
+        llmDurationMs = Date.now() - llmStartMs;
+      } else {
+        const streamed = await this.generateAssistantResponseStreaming(systemPrompt, assistantId);
+        assistantText = streamed.text;
+        marker = streamed.marker;
+        spokeWhileStreaming = streamed.spokeAudio;
+        llmDurationMs = streamed.llmDurationMs;
       }
-
-      this.emitLatency({
-        stage: 'llm',
-        durationMs: Date.now() - llmStartMs,
-        provider: this.options.llmProvider,
-        model: this.options.llmModel,
-        details: { responseChars: assistantText.length },
-      });
     } catch (error) {
       this.events.emit('error', error as Error);
       this.setState('listening');
       return;
     }
+
+    this.emitLatency({
+      stage: 'llm',
+      durationMs: llmDurationMs,
+      provider: this.options.llmProvider,
+      model: this.options.llmModel,
+      details: { responseChars: assistantText.length },
+    });
 
     if (this.options.llmCompletionEnabled && marker !== '✓') {
       this.scheduleIncompleteTurnReprompt(marker);
@@ -486,8 +496,345 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.events.emit('historyUpdated', this.getHistoryItems());
     this.events.emit('transcript', finalText, 'assistant', assistantId);
 
-    await this.speak(finalText);
+    if (!spokeWhileStreaming && !this.interrupted) {
+      await this.speak(finalText);
+    }
     this.events.emit('turnComplete');
+  }
+
+  private enqueueAssistantTurn(
+    text: string,
+    options: { emitUserTranscript: boolean; previousItemId?: string }
+  ): Promise<void> {
+    const next = this.assistantTurnQueue.then(async () => {
+      if (!this.connected) return;
+      await this.runAssistantTurn(text, options);
+    });
+    this.assistantTurnQueue = next.catch(() => {});
+    return next;
+  }
+
+  private async generateAssistantResponseStreaming(
+    systemPrompt: string,
+    assistantId: string
+  ): Promise<{ marker: TurnMarker; text: string; spokeAudio: boolean; llmDurationMs: number }> {
+    if (!this.options) {
+      return {
+        marker: '✓',
+        text: '',
+        spokeAudio: false,
+        llmDurationMs: 0,
+      };
+    }
+
+    if (this.options.ttsProvider === 'deepgram') {
+      const request = this.deepgramTtsRequestQueue.then(() =>
+        this.generateAssistantResponseStreamingWithDeepgram(systemPrompt, assistantId)
+      );
+      this.deepgramTtsRequestQueue = request.then(() => undefined).catch(() => undefined);
+      return request;
+    }
+
+    const llmStartedAtMs = Date.now();
+    let assistantText = '';
+    let speechBuffer = '';
+    let segmentIndex = 0;
+    let speaking = false;
+    let spokeAudio = false;
+    this.interrupted = false;
+
+    let speakQueue: Promise<void> = Promise.resolve();
+    const queueSegment = (segmentText: string): void => {
+      const normalized = segmentText.trim();
+      if (!normalized) return;
+      const currentIndex = ++segmentIndex;
+      speakQueue = speakQueue.then(async () => {
+        if (this.interrupted || !this.connected) return;
+        spokeAudio = true;
+        await this.speakSegment(normalized, {
+          segmentIndex: currentIndex,
+          onFirstAudio: () => {
+            if (!speaking) {
+              this.setState('speaking');
+              speaking = true;
+            }
+          },
+        });
+      });
+    };
+
+    for await (const delta of this.generateAssistantTextStream(systemPrompt)) {
+      if (!delta) continue;
+      assistantText += delta;
+      this.events.emit('transcriptDelta', delta, 'assistant', assistantId);
+      speechBuffer += delta;
+      const split = splitSpeakableText(speechBuffer);
+      speechBuffer = split.remainder;
+      for (const segment of split.segments) {
+        queueSegment(segment);
+      }
+    }
+
+    const trailing = speechBuffer.trim();
+    if (trailing) {
+      queueSegment(trailing);
+    }
+
+    const llmDurationMs = Date.now() - llmStartedAtMs;
+    await speakQueue;
+
+    if (speaking && !this.interrupted) {
+      this.setState('listening');
+    }
+
+    return {
+      marker: '✓',
+      text: assistantText,
+      spokeAudio,
+      llmDurationMs,
+    };
+  }
+
+  private async generateAssistantResponseStreamingWithDeepgram(
+    systemPrompt: string,
+    assistantId: string
+  ): Promise<{ marker: TurnMarker; text: string; spokeAudio: boolean; llmDurationMs: number }> {
+    if (!this.options) {
+      return {
+        marker: '✓',
+        text: '',
+        spokeAudio: false,
+        llmDurationMs: 0,
+      };
+    }
+
+    const connection = await this.ensureDeepgramTtsConnection();
+    if (this.interrupted || !this.connected) {
+      return {
+        marker: '✓',
+        text: '',
+        spokeAudio: false,
+        llmDurationMs: 0,
+      };
+    }
+
+    const llmStartedAtMs = Date.now();
+    const ttsStartedAtMs = Date.now();
+    let llmDurationMs = 0;
+    let assistantText = '';
+    let speaking = false;
+    let spokeAudio = false;
+    let pendingChars = 0;
+    let expectedFlushes = 0;
+    let receivedFlushes = 0;
+    let sendingComplete = false;
+    let settled = false;
+    let aborted = false;
+    let emittedAudioBytes = 0;
+    let emittedChunks = 0;
+    let firstAudioAtMs: number | null = null;
+    let audioPipeline: Promise<void> = Promise.resolve();
+    this.interrupted = false;
+
+    await new Promise<void>((resolve, reject) => {
+      const streamingTimeout = setTimeout(() => {
+        this.closeDeepgramTtsConnection();
+        rejectOnce(new Error('Deepgram websocket TTS streaming turn timed out'));
+      }, 30000);
+
+      const cleanup = (): void => {
+        clearTimeout(streamingTimeout);
+        connection.off(LiveTTSEvents.Audio, onAudio);
+        connection.off(LiveTTSEvents.Flushed, onFlushed);
+        connection.off(LiveTTSEvents.Warning, onWarning);
+        connection.off(LiveTTSEvents.Close, onClose);
+        connection.off(LiveTTSEvents.Error, onError);
+      };
+
+      const resolveOnce = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const rejectOnce = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      const maybeResolve = (): void => {
+        if (settled) return;
+        if (aborted) {
+          resolveOnce();
+          return;
+        }
+        if (!sendingComplete) {
+          return;
+        }
+        if (receivedFlushes < expectedFlushes) {
+          return;
+        }
+        void audioPipeline.then(() => resolveOnce()).catch((error) => {
+          rejectOnce(error as Error);
+        });
+      };
+
+      const emitChunk = async (chunk: ArrayBuffer): Promise<boolean> => {
+        if (this.interrupted || !this.connected) {
+          return false;
+        }
+
+        emittedAudioBytes += chunk.byteLength;
+        emittedChunks += 1;
+        if (firstAudioAtMs === null) {
+          firstAudioAtMs = Date.now();
+          if (!speaking) {
+            this.setState('speaking');
+            speaking = true;
+          }
+        }
+
+        this.events.emit('audio', {
+          data: chunk,
+          sampleRate: AUDIO_SAMPLE_RATE,
+          format: 'pcm16',
+        });
+        await sleep(20);
+        return true;
+      };
+
+      const enqueueAudio = (payload: Uint8Array | ArrayBuffer): void => {
+        audioPipeline = audioPipeline.then(async () => {
+          const bytes =
+            payload instanceof ArrayBuffer
+              ? new Uint8Array(payload)
+              : new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+          const copied = new Uint8Array(bytes.byteLength);
+          copied.set(bytes);
+          const chunks = chunkArrayBuffer(copied.buffer, PCM_BYTES_PER_100MS);
+          for (const chunk of chunks) {
+            if (aborted) return;
+            const keepGoing = await emitChunk(chunk);
+            if (!keepGoing) {
+              aborted = true;
+              this.closeDeepgramTtsConnection();
+              return;
+            }
+          }
+        });
+      };
+
+      const requestFlush = (): void => {
+        if (pendingChars <= 0) return;
+        pendingChars = 0;
+        expectedFlushes += 1;
+        connection.flush();
+      };
+
+      const onAudio = (payload: unknown): void => {
+        const binary = toRawDataUint8Array(payload);
+        if (!binary || binary.byteLength === 0) return;
+        enqueueAudio(binary);
+      };
+
+      const onFlushed = (): void => {
+        receivedFlushes += 1;
+        maybeResolve();
+      };
+
+      const onWarning = (event: unknown): void => {
+        const warning = this.toDeepgramLiveError(event, 'Deepgram websocket TTS warning');
+        this.events.emit('error', warning);
+      };
+
+      const onClose = (): void => {
+        if (settled) return;
+        if (this.interrupted || !this.connected) {
+          resolveOnce();
+          return;
+        }
+        rejectOnce(new Error('Deepgram websocket TTS closed before flush completed'));
+      };
+
+      const onError = (event: unknown): void => {
+        if (settled) return;
+        const error = this.toDeepgramLiveError(event, 'Deepgram websocket TTS error');
+        this.closeDeepgramTtsConnection();
+        rejectOnce(error);
+      };
+
+      connection.on(LiveTTSEvents.Audio, onAudio);
+      connection.on(LiveTTSEvents.Flushed, onFlushed);
+      connection.on(LiveTTSEvents.Warning, onWarning);
+      connection.on(LiveTTSEvents.Close, onClose);
+      connection.on(LiveTTSEvents.Error, onError);
+
+      void (async () => {
+        try {
+          for await (const delta of this.generateAssistantTextStream(systemPrompt)) {
+            if (!delta) continue;
+            assistantText += delta;
+            this.events.emit('transcriptDelta', delta, 'assistant', assistantId);
+
+            if (this.interrupted || !this.connected) {
+              aborted = true;
+              this.closeDeepgramTtsConnection();
+              break;
+            }
+
+            connection.sendText(delta);
+            spokeAudio = true;
+            pendingChars += delta.length;
+
+            if (shouldFlushDeepgramStream(delta, pendingChars, expectedFlushes)) {
+              requestFlush();
+            }
+          }
+
+          llmDurationMs = Date.now() - llmStartedAtMs;
+          sendingComplete = true;
+
+          if (!aborted && (pendingChars > 0 || expectedFlushes === 0)) {
+            requestFlush();
+          }
+
+          maybeResolve();
+        } catch (error) {
+          this.closeDeepgramTtsConnection();
+          rejectOnce(this.toDeepgramLiveError(error, 'Deepgram websocket TTS stream failed'));
+        }
+      })();
+    });
+
+    this.emitLatency({
+      stage: 'tts',
+      durationMs: Date.now() - ttsStartedAtMs,
+      provider: this.options.ttsProvider,
+      model: this.options.ttsModel || this.options.ttsVoice,
+      details: {
+        textChars: assistantText.length,
+        audioBytes: emittedAudioBytes,
+        chunks: emittedChunks,
+        firstAudioLatencyMs:
+          firstAudioAtMs === null ? null : Math.max(0, firstAudioAtMs - ttsStartedAtMs),
+        streaming: true,
+        flushes: expectedFlushes,
+      },
+    });
+
+    if (!this.interrupted) {
+      this.setState('listening');
+    }
+
+    return {
+      marker: '✓',
+      text: assistantText,
+      spokeAudio,
+      llmDurationMs,
+    };
   }
 
   private async generateAssistantText(systemPrompt: string): Promise<string> {
@@ -501,18 +848,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       })),
     ];
 
-    const endpoint =
-      this.options.llmProvider === 'openrouter'
-        ? 'https://openrouter.ai/api/v1/chat/completions'
-        : 'https://api.openai.com/v1/chat/completions';
-    const apiKey =
-      this.options.llmProvider === 'openrouter'
-        ? this.options.openrouterApiKey
-        : this.options.openaiApiKey;
-
-    if (!apiKey) {
-      throw new Error(`Missing API key for ${this.options.llmProvider} decomposed LLM provider`);
-    }
+    const { endpoint, apiKey } = this.resolveLlmEndpointAndKey();
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -534,14 +870,105 @@ export class DecomposedAdapter implements ProviderAdapter {
     }
 
     const payload = (await response.json()) as ChatCompletionResponse;
-    const content = payload.choices?.[0]?.message?.content;
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return '';
+    return extractChatCompletionText(payload);
+  }
 
-    return content
-      .map((part) => (typeof part.text === 'string' ? part.text : ''))
-      .join('')
-      .trim();
+  private async *generateAssistantTextStream(systemPrompt: string): AsyncGenerator<string> {
+    if (!this.options) return;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...this.history.map((entry) => ({
+        role: entry.role === 'system' ? 'user' : entry.role,
+        content: entry.content,
+      })),
+    ];
+
+    const { endpoint, apiKey } = this.resolveLlmEndpointAndKey();
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.options.llmModel,
+        messages,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `${this.options.llmProvider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} LLM failed (${response.status}): ${errorText}`
+      );
+    }
+
+    if (!response.body) {
+      const payload = (await response.json()) as ChatCompletionResponse;
+      const fallback = extractChatCompletionText(payload);
+      if (fallback) {
+        yield fallback;
+      }
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line || line.startsWith(':')) continue;
+          if (!line.startsWith('data:')) continue;
+          const payloadText = line.slice(5).trim();
+          if (!payloadText || payloadText === '[DONE]') return;
+
+          let chunk: ChatCompletionStreamChunk;
+          try {
+            chunk = JSON.parse(payloadText) as ChatCompletionStreamChunk;
+          } catch {
+            continue;
+          }
+
+          const deltaText = extractChatCompletionDeltaText(chunk);
+          if (deltaText) {
+            yield deltaText;
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private resolveLlmEndpointAndKey(): { endpoint: string; apiKey: string } {
+    if (!this.options) {
+      throw new Error('Decomposed LLM options are unavailable');
+    }
+    const endpoint =
+      this.options.llmProvider === 'openrouter'
+        ? 'https://openrouter.ai/api/v1/chat/completions'
+        : 'https://api.openai.com/v1/chat/completions';
+    const apiKey =
+      this.options.llmProvider === 'openrouter'
+        ? this.options.openrouterApiKey
+        : this.options.openaiApiKey;
+
+    if (!apiKey) {
+      throw new Error(`Missing API key for ${this.options.llmProvider} decomposed LLM provider`);
+    }
+
+    return { endpoint, apiKey };
   }
 
   private scheduleIncompleteTurnReprompt(marker: TurnMarker): void {
@@ -563,16 +990,52 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (!this.options) return;
     this.interrupted = false;
     this.setState('speaking');
-    const ttsStartMs = Date.now();
+    await this.speakSegment(text);
 
-    let audio: ArrayBuffer;
+    if (!this.interrupted) {
+      this.setState('listening');
+    }
+  }
+
+  private async speakSegment(
+    text: string,
+    details?: {
+      segmentIndex?: number;
+      onFirstAudio?: () => void;
+    }
+  ): Promise<void> {
+    if (!this.options) return;
+    const ttsStartMs = Date.now();
+    const { onFirstAudio, ...latencyDetails } = details ?? {};
+    let emittedAudioBytes = 0;
+    let emittedChunks = 0;
+    let firstAudioAtMs: number | null = null;
+
+    const emitChunk = async (chunk: ArrayBuffer): Promise<boolean> => {
+      if (this.interrupted || !this.connected) {
+        return false;
+      }
+      emittedAudioBytes += chunk.byteLength;
+      emittedChunks += 1;
+      if (firstAudioAtMs === null) {
+        firstAudioAtMs = Date.now();
+        onFirstAudio?.();
+      }
+      this.events.emit('audio', {
+        data: chunk,
+        sampleRate: AUDIO_SAMPLE_RATE,
+        format: 'pcm16',
+      });
+      await sleep(20);
+      return true;
+    };
+
     if (this.options.ttsProvider === 'deepgram') {
-      audio = await this.speakWithDeepgram(text);
+      await this.speakWithDeepgram(text, emitChunk);
     } else {
-      audio = await this.speakWithOpenAI(text);
+      await this.speakWithOpenAI(text, emitChunk);
     }
 
-    const chunks = chunkArrayBuffer(audio, PCM_BYTES_PER_100MS);
     this.emitLatency({
       stage: 'tts',
       durationMs: Date.now() - ttsStartMs,
@@ -580,27 +1043,19 @@ export class DecomposedAdapter implements ProviderAdapter {
       model: this.options.ttsModel || this.options.ttsVoice,
       details: {
         textChars: text.length,
-        audioBytes: audio.byteLength,
-        chunks: chunks.length,
+        audioBytes: emittedAudioBytes,
+        chunks: emittedChunks,
+        firstAudioLatencyMs:
+          firstAudioAtMs === null ? null : Math.max(0, firstAudioAtMs - ttsStartMs),
+        ...latencyDetails,
       },
     });
-
-    for (const chunk of chunks) {
-      if (this.interrupted || !this.connected) break;
-      this.events.emit('audio', {
-        data: chunk,
-        sampleRate: AUDIO_SAMPLE_RATE,
-        format: 'pcm16',
-      });
-      await sleep(20);
-    }
-
-    if (!this.interrupted) {
-      this.setState('listening');
-    }
   }
 
-  private async speakWithOpenAI(text: string): Promise<ArrayBuffer> {
+  private async speakWithOpenAI(
+    text: string,
+    emitChunk: (chunk: ArrayBuffer) => Promise<boolean>
+  ): Promise<void> {
     if (!this.options?.openaiApiKey) {
       throw new Error('OpenAI API key is missing for decomposed TTS');
     }
@@ -624,49 +1079,397 @@ export class DecomposedAdapter implements ProviderAdapter {
       throw new Error(`OpenAI TTS failed (${response.status}): ${errorText}`);
     }
 
-    return response.arrayBuffer();
+    await this.streamTtsPcmResponse(response, emitChunk);
   }
 
-  private async speakWithDeepgram(text: string): Promise<ArrayBuffer> {
+  private async speakWithDeepgram(
+    text: string,
+    emitChunk: (chunk: ArrayBuffer) => Promise<boolean>
+  ): Promise<void> {
+    if (!this.options) {
+      return;
+    }
+    if (!this.options.deepgramApiKey) {
+      throw new Error('Deepgram API key is missing for decomposed TTS');
+    }
+    if (this.options.deepgramTtsTransport !== 'websocket') {
+      throw new Error('Decomposed Deepgram TTS requires websocket transport (no HTTP fallback).');
+    }
+
+    const request = this.deepgramTtsRequestQueue.then(async () => {
+      await this.speakWithDeepgramLiveSegment(text, emitChunk);
+    });
+    this.deepgramTtsRequestQueue = request.catch(() => {});
+    await request;
+  }
+
+  private async streamTtsPcmResponse(
+    response: Response,
+    emitChunk: (chunk: ArrayBuffer) => Promise<boolean>
+  ): Promise<void> {
+    if (!response.body) {
+      const audio = await response.arrayBuffer();
+      const chunks = chunkArrayBuffer(audio, PCM_BYTES_PER_100MS);
+      for (const chunk of chunks) {
+        const keepGoing = await emitChunk(chunk);
+        if (!keepGoing) {
+          break;
+        }
+      }
+      return;
+    }
+
+    const reader = response.body.getReader();
+    let pending = new Uint8Array(0);
+
+    const appendPending = (value: Uint8Array): void => {
+      if (value.byteLength === 0) return;
+      if (pending.byteLength === 0) {
+        pending = value.slice();
+        return;
+      }
+      const merged = new Uint8Array(pending.byteLength + value.byteLength);
+      merged.set(pending, 0);
+      merged.set(value, pending.byteLength);
+      pending = merged;
+    };
+
+    const flushPending = async (force: boolean): Promise<boolean> => {
+      while (pending.byteLength >= PCM_BYTES_PER_100MS || (force && pending.byteLength > 0)) {
+        const chunkSize =
+          pending.byteLength >= PCM_BYTES_PER_100MS
+            ? PCM_BYTES_PER_100MS
+            : pending.byteLength;
+        const chunk = pending.slice(0, chunkSize);
+        pending = pending.slice(chunkSize);
+        const keepGoing = await emitChunk(chunk.buffer);
+        if (!keepGoing) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (!value || value.byteLength === 0) {
+          continue;
+        }
+        appendPending(value);
+        const keepGoing = await flushPending(false);
+        if (!keepGoing) {
+          await reader.cancel();
+          break;
+        }
+      }
+      await flushPending(true);
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private async speakWithDeepgramLiveSegment(
+    text: string,
+    emitChunk: (chunk: ArrayBuffer) => Promise<boolean>
+  ): Promise<void> {
+    const connection = await this.ensureDeepgramTtsConnection();
+    if (this.interrupted || !this.connected) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let flushReceived = false;
+      let aborted = false;
+      let audioPipeline: Promise<void> = Promise.resolve();
+      const segmentTimeout = setTimeout(() => {
+        this.closeDeepgramTtsConnection();
+        rejectOnce(new Error('Deepgram websocket TTS segment timed out waiting for flush'));
+      }, 10000);
+
+      const cleanup = (): void => {
+        clearTimeout(segmentTimeout);
+        connection.off(LiveTTSEvents.Audio, onAudio);
+        connection.off(LiveTTSEvents.Flushed, onFlushed);
+        connection.off(LiveTTSEvents.Warning, onWarning);
+        connection.off(LiveTTSEvents.Close, onClose);
+        connection.off(LiveTTSEvents.Error, onError);
+      };
+
+      const resolveOnce = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const rejectOnce = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      const maybeResolve = (): void => {
+        if (settled) return;
+        if (aborted) {
+          resolveOnce();
+          return;
+        }
+        if (!flushReceived) {
+          return;
+        }
+        void audioPipeline.then(() => resolveOnce()).catch((error) => {
+          rejectOnce(error as Error);
+        });
+      };
+
+      const enqueueAudio = (payload: ArrayBuffer | Uint8Array): void => {
+        audioPipeline = audioPipeline.then(async () => {
+          const bytes =
+            payload instanceof ArrayBuffer
+              ? new Uint8Array(payload)
+              : new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+          const copied = new Uint8Array(bytes.byteLength);
+          copied.set(bytes);
+          const audioBuffer = copied.buffer;
+
+          const chunks = chunkArrayBuffer(audioBuffer, PCM_BYTES_PER_100MS);
+          for (const chunk of chunks) {
+            if (aborted) return;
+            const keepGoing = await emitChunk(chunk);
+            if (!keepGoing) {
+              aborted = true;
+              this.closeDeepgramTtsConnection();
+              return;
+            }
+          }
+        });
+      };
+
+      const onAudio = (payload: unknown): void => {
+        const binary = toRawDataUint8Array(payload);
+        if (binary) {
+          enqueueAudio(binary);
+        }
+      };
+
+      const onFlushed = (): void => {
+        flushReceived = true;
+        maybeResolve();
+      };
+
+      const onWarning = (event: unknown): void => {
+        if (settled) return;
+        const error = this.toDeepgramLiveError(event, 'Deepgram websocket TTS warning');
+        this.closeDeepgramTtsConnection();
+        rejectOnce(error);
+      };
+
+      const onClose = (): void => {
+        if (settled) return;
+        if (this.interrupted || !this.connected) {
+          resolveOnce();
+          return;
+        }
+        rejectOnce(new Error('Deepgram websocket TTS closed before flush completed'));
+      };
+
+      const onError = (event: unknown): void => {
+        if (settled) return;
+        const error = this.toDeepgramLiveError(event, 'Deepgram websocket TTS error');
+        this.closeDeepgramTtsConnection();
+        rejectOnce(error);
+      };
+
+      connection.on(LiveTTSEvents.Audio, onAudio);
+      connection.on(LiveTTSEvents.Flushed, onFlushed);
+      connection.on(LiveTTSEvents.Warning, onWarning);
+      connection.on(LiveTTSEvents.Close, onClose);
+      connection.on(LiveTTSEvents.Error, onError);
+
+      try {
+        connection.sendText(text);
+        connection.flush();
+      } catch (error) {
+        this.closeDeepgramTtsConnection();
+        rejectOnce(this.toDeepgramLiveError(error, 'Deepgram websocket TTS send failed'));
+        return;
+      }
+    });
+  }
+
+  private async ensureDeepgramTtsConnection(): Promise<SpeakLiveClient> {
     if (!this.options?.deepgramApiKey) {
       throw new Error('Deepgram API key is missing for decomposed TTS');
     }
 
-    const model = this.options.ttsModel || this.options.ttsVoice;
-    const url = new URL('https://api.deepgram.com/v1/speak');
-    url.searchParams.set('model', model);
-    url.searchParams.set('encoding', 'linear16');
-    url.searchParams.set('sample_rate', String(AUDIO_SAMPLE_RATE));
-    url.searchParams.set('container', 'none');
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Token ${this.options.deepgramApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ text }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Deepgram TTS failed (${response.status}): ${errorText}`);
+    if (this.deepgramTtsConnection && this.deepgramTtsConnection.isConnected()) {
+      return this.deepgramTtsConnection;
     }
 
-    return response.arrayBuffer();
+    if (this.deepgramTtsConnectionReady) {
+      return this.deepgramTtsConnectionReady;
+    }
+
+    const connectPromise = new Promise<SpeakLiveClient>((resolve, reject) => {
+      if (!this.options?.deepgramApiKey) {
+        reject(new Error('Deepgram API key is missing for decomposed TTS'));
+        return;
+      }
+
+      const connectionTimeout = setTimeout(() => {
+        this.closeDeepgramTtsConnection();
+        rejectOnce(new Error('Deepgram websocket TTS connect timed out'));
+      }, 10000);
+
+      const model = this.options.ttsModel || this.options.ttsVoice;
+      const connection = this.createDeepgramTtsConnection(
+        this.options.deepgramApiKey,
+        model,
+        this.options.deepgramTtsWsUrl
+      );
+
+      let settled = false;
+      const cleanup = (): void => {
+        clearTimeout(connectionTimeout);
+        connection.off(LiveTTSEvents.Open, onOpen);
+        connection.off(LiveTTSEvents.Error, onError);
+        connection.off(LiveTTSEvents.Close, onCloseBeforeOpen);
+      };
+
+      const resolveOnce = (client: SpeakLiveClient): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(client);
+      };
+
+      const rejectOnce = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      const onOpen = (): void => {
+        this.deepgramTtsConnection = connection;
+
+        connection.on(LiveTTSEvents.Close, () => {
+          if (this.deepgramTtsConnection === connection) {
+            this.deepgramTtsConnection = null;
+          }
+        });
+
+        resolveOnce(connection);
+      };
+
+      const onError = (event: unknown): void => {
+        rejectOnce(this.toDeepgramLiveError(event, 'Deepgram websocket TTS connect failed'));
+      };
+
+      const onCloseBeforeOpen = (): void => {
+        rejectOnce(new Error('Deepgram websocket TTS closed before open'));
+      };
+
+      connection.once(LiveTTSEvents.Open, onOpen);
+      connection.once(LiveTTSEvents.Error, onError);
+      connection.once(LiveTTSEvents.Close, onCloseBeforeOpen);
+    });
+
+    this.deepgramTtsConnectionReady = connectPromise;
+    try {
+      return await connectPromise;
+    } finally {
+      if (this.deepgramTtsConnectionReady === connectPromise) {
+        this.deepgramTtsConnectionReady = null;
+      }
+    }
+  }
+
+  private closeDeepgramTtsConnection(): void {
+    const connection = this.deepgramTtsConnection;
+    this.deepgramTtsConnection = null;
+    this.deepgramTtsConnectionReady = null;
+    if (!connection) return;
+    try {
+      connection.requestClose();
+    } catch {
+      // ignore close-send failures
+    }
+    try {
+      connection.disconnect();
+    } catch {
+      // ignore close failures
+    }
+  }
+
+  private createDeepgramTtsConnection(
+    apiKey: string,
+    model: string,
+    endpoint: string
+  ): SpeakLiveClient {
+    const deepgram = createClient({
+      key: apiKey,
+    });
+    return deepgram.speak.live(
+      {
+        model,
+        encoding: 'linear16',
+        sample_rate: AUDIO_SAMPLE_RATE,
+        container: 'none',
+      },
+      endpoint
+    );
+  }
+
+  private toDeepgramLiveError(event: unknown, fallback: string): Error {
+    if (event instanceof Error) {
+      return event;
+    }
+
+    const object = event as { message?: unknown; description?: unknown; code?: unknown } | null;
+    if (object && typeof object === 'object') {
+      const message =
+        typeof object.message === 'string'
+          ? object.message
+          : typeof object.description === 'string'
+            ? object.description
+            : null;
+      const code = typeof object.code === 'string' ? object.code : null;
+      if (message && code) {
+        return new Error(`${message} (code: ${code})`);
+      }
+      if (message) {
+        return new Error(message);
+      }
+    }
+
+    return new Error(fallback);
   }
 
   private resolveOptions(input: SessionInput): DecomposedOptions {
-    const providerConfig = (input.providerConfig as DecomposedProviderConfig | undefined) ?? {};
+    const providerConfig: DecomposedProviderConfig = parseDecomposedProviderConfig(
+      input.providerConfig
+    );
+    const ttsProvider = providerConfig.ttsProvider ?? 'openai';
+    const ttsModel =
+      providerConfig.ttsModel ?? (ttsProvider === 'deepgram' ? 'aura-2-thalia-en' : 'gpt-4o-mini-tts');
 
     return {
       sttProvider: providerConfig.sttProvider ?? 'openai',
       sttModel: providerConfig.sttModel ?? 'gpt-4o-mini-transcribe',
       llmProvider: providerConfig.llmProvider ?? 'openai',
       llmModel: providerConfig.llmModel ?? input.model,
-      ttsProvider: providerConfig.ttsProvider ?? 'openai',
-      ttsModel: providerConfig.ttsModel ?? 'gpt-4o-mini-tts',
+      ttsProvider,
+      ttsModel,
       ttsVoice: providerConfig.ttsVoice ?? input.voice,
+      deepgramTtsTransport: providerConfig.deepgramTtsTransport ?? 'websocket',
+      deepgramTtsWsUrl: providerConfig.deepgramTtsWsUrl ?? 'wss://api.deepgram.com/v1/speak',
       silenceMs: providerConfig.turn?.silenceMs ?? 700,
       minSpeechMs: providerConfig.turn?.minSpeechMs ?? 350,
       minRms: providerConfig.turn?.minRms ?? 0.015,
@@ -685,6 +1488,42 @@ export class DecomposedAdapter implements ProviderAdapter {
       deepgramApiKey: providerConfig.deepgramApiKey,
     };
   }
+}
+
+function toRawDataUint8Array(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (Array.isArray(value)) {
+    const views: Uint8Array[] = [];
+    let total = 0;
+    for (const part of value) {
+      if (part instanceof Uint8Array) {
+        views.push(part);
+        total += part.byteLength;
+      } else if (ArrayBuffer.isView(part)) {
+        const view = new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+        views.push(view);
+        total += view.byteLength;
+      } else if (part instanceof ArrayBuffer) {
+        const view = new Uint8Array(part);
+        views.push(view);
+        total += view.byteLength;
+      }
+    }
+    if (views.length === 0) return null;
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const view of views) {
+      merged.set(view, offset);
+      offset += view.byteLength;
+    }
+    return merged;
+  }
+  return null;
 }
 
 function parseMarker(
@@ -785,4 +1624,108 @@ function chunkArrayBuffer(input: ArrayBuffer, chunkSize: number): ArrayBuffer[] 
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractChatCompletionText(payload: ChatCompletionResponse): string {
+  const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+  return content
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('')
+    .trim();
+}
+
+function extractChatCompletionDeltaText(chunk: ChatCompletionStreamChunk): string {
+  const content = chunk.choices?.[0]?.delta?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+  return content
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('');
+}
+
+function splitSpeakableText(buffer: string): { segments: string[]; remainder: string } {
+  if (!buffer) {
+    return { segments: [], remainder: '' };
+  }
+
+  const segments: string[] = [];
+  let start = 0;
+  let candidate = -1;
+  const minSegmentChars = 16;
+  const earlySegmentChars = 8;
+  const whitespaceSegmentChars = 18;
+  const forceFlushChars = 72;
+  const firstSegmentForceFlushChars = 28;
+
+  const pushSegment = (endExclusive: number): void => {
+    const raw = buffer.slice(start, endExclusive).trim();
+    if (raw.length > 0) {
+      segments.push(raw);
+    }
+    start = endExclusive;
+    candidate = -1;
+  };
+
+  for (let i = 0; i < buffer.length; i += 1) {
+    const char = buffer[i];
+    if (char === '.' || char === '!' || char === '?' || char === ';' || char === '\n') {
+      candidate = i + 1;
+    } else if ((char === ',' || char === ':') && i + 1 - start >= 28) {
+      candidate = i + 1;
+    } else if (char === ' ' && i + 1 - start >= whitespaceSegmentChars) {
+      candidate = i + 1;
+    }
+
+    const minCharsForSplit = segments.length === 0 ? earlySegmentChars : minSegmentChars;
+    if (candidate > start && candidate - start >= minCharsForSplit) {
+      pushSegment(candidate);
+      continue;
+    }
+
+    const forceLimit = segments.length === 0 ? firstSegmentForceFlushChars : forceFlushChars;
+    if (i + 1 - start >= forceLimit) {
+      let splitAt = buffer.lastIndexOf(' ', i);
+      if (splitAt <= start) {
+        splitAt = i;
+      }
+      pushSegment(splitAt + 1);
+    }
+  }
+
+  const remainder = buffer.slice(start);
+  return { segments, remainder };
+}
+
+function shouldFlushDeepgramStream(
+  delta: string,
+  pendingChars: number,
+  completedFlushes: number
+): boolean {
+  if (pendingChars <= 0) return false;
+
+  const hasSentenceBoundary = /[.!?;\n]/.test(delta);
+  const hasMinorBoundary = /[,]/.test(delta);
+  const boundaryThreshold = completedFlushes === 0 ? 24 : 64;
+
+  if (hasSentenceBoundary && pendingChars >= boundaryThreshold) {
+    return true;
+  }
+  if (hasMinorBoundary && pendingChars >= 96) {
+    return true;
+  }
+  if (pendingChars >= 180) {
+    return true;
+  }
+
+  return false;
 }

@@ -235,9 +235,22 @@ export function VoiceRuntimePanel({
     });
   };
 
+  const realtimeSummary = (() => {
+    if (provider === 'openai-realtime') {
+      return `${provider} • model ${realtimeModel} • voice ${realtimeVoice}`;
+    }
+    if (provider === 'ultravox-realtime') {
+      return `${provider} • model ${config.voice.voiceToVoice.ultravoxModel} • voice ${realtimeVoice}`;
+    }
+    if (provider === 'gemini-live') {
+      return `${provider} • model ${config.voice.voiceToVoice.geminiModel} • voice ${config.voice.voiceToVoice.geminiVoice}`;
+    }
+    return `${provider} • server ${config.voice.voiceToVoice.pipecatServerUrl} • transport ${config.voice.voiceToVoice.pipecatTransport}`;
+  })();
+
   const runtimeSummary = isDecomposed
     ? `Decomposed • STT ${config.voice.decomposed.stt.provider}:${config.voice.decomposed.stt.model} -> LLM ${config.voice.decomposed.llm.provider}:${config.voice.decomposed.llm.model} -> TTS ${config.voice.decomposed.tts.provider}:${config.voice.decomposed.tts.model}`
-    : `Realtime • ${provider} • model ${provider === 'openai-realtime' ? realtimeModel : provider === 'ultravox-realtime' ? config.voice.voiceToVoice.ultravoxModel : config.voice.voiceToVoice.geminiModel} • voice ${realtimeVoice}`;
+    : `Realtime • ${realtimeSummary}`;
 
   const handleProviderChange = (
     nextProvider: VoiceConfigDocument['voice']['voiceToVoice']['provider']
@@ -266,6 +279,17 @@ export function VoiceRuntimePanel({
           currentVoiceToVoice.ultravoxModel
         ),
         voice: pickMatchingOrFirst(ultravoxVoiceIds, currentVoiceToVoice.voice, ultravoxVoiceIds[0] ?? ''),
+      });
+      return;
+    }
+
+    if (nextProvider === 'pipecat-rtvi') {
+      const openAiModels = catalog?.openai.realtimeModels ?? [];
+      const openAiVoices = catalog?.openai.voices ?? [];
+      updateVoiceToVoice({
+        provider: nextProvider,
+        model: pickMatchingOrFirst(openAiModels, currentVoiceToVoice.model, currentVoiceToVoice.model),
+        voice: pickMatchingOrFirst(openAiVoices, currentVoiceToVoice.voice, currentVoiceToVoice.voice),
       });
       return;
     }
@@ -442,6 +466,7 @@ export function VoiceRuntimePanel({
                 <option value="openai-realtime">openai-realtime</option>
                 <option value="ultravox-realtime">ultravox-realtime</option>
                 <option value="gemini-live">gemini-live</option>
+                <option value="pipecat-rtvi">pipecat-rtvi</option>
               </select>
             </ConfigField>
           ) : (
@@ -587,6 +612,61 @@ export function VoiceRuntimePanel({
                     value={config.voice.voiceToVoice.authProfile || ''}
                     placeholder="google-default"
                     onChange={(event) => updateVoiceToVoice({ authProfile: event.target.value || undefined })}
+                  />
+                </ConfigField>
+              </>
+            )}
+
+            {provider === 'pipecat-rtvi' && (
+              <>
+                <ConfigField label="Pipecat Server URL">
+                  <input
+                    value={config.voice.voiceToVoice.pipecatServerUrl}
+                    onChange={(event) => updateVoiceToVoice({ pipecatServerUrl: event.target.value })}
+                    placeholder="ws://localhost:7860"
+                  />
+                </ConfigField>
+
+                <ConfigField label="Pipecat Transport">
+                  <select
+                    value={config.voice.voiceToVoice.pipecatTransport}
+                    onChange={(event) =>
+                      updateVoiceToVoice({
+                        pipecatTransport: event.target.value as VoiceConfigDocument['voice']['voiceToVoice']['pipecatTransport'],
+                      })
+                    }
+                  >
+                    <option value="websocket">websocket</option>
+                    <option value="webrtc">webrtc</option>
+                  </select>
+                </ConfigField>
+
+                <ConfigField label="Pipecat Bot ID" hint="Optional bot selector for RTVI server.">
+                  <input
+                    value={config.voice.voiceToVoice.pipecatBotId || ''}
+                    onChange={(event) => updateVoiceToVoice({ pipecatBotId: event.target.value || undefined })}
+                    placeholder="voice-bot-1"
+                  />
+                </ConfigField>
+
+                <ConfigField label="Bootstrap Model">
+                  <select
+                    value={config.voice.voiceToVoice.model}
+                    onChange={(event) => updateVoiceToVoice({ model: event.target.value })}
+                  >
+                    {openAIRealtimeModels.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                </ConfigField>
+
+                <ConfigField label="Bootstrap Voice">
+                  <input
+                    value={config.voice.voiceToVoice.voice}
+                    onChange={(event) => updateVoiceToVoice({ voice: event.target.value })}
+                    placeholder="echo"
                   />
                 </ConfigField>
               </>
@@ -874,7 +954,7 @@ export function VoiceRuntimePanel({
             {overridesText ? `Profile overrides: ${overridesText}` : 'Profile overrides: none'}
           </p>
           <p className="voice-runtime-info">
-            OpenAI realtime model is used only when provider is <code>openai-realtime</code>.
+            Realtime provider configuration maps to adapter providerConfig at session creation time.
           </p>
         </ConfigSection>
       </ConfigDialog>

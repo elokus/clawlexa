@@ -39,7 +39,9 @@ export interface VoiceBenchmarkThresholds {
   minRealtimeFactor?: number;
   maxRealtimeFactor?: number;
   maxDuplicateAssistantFinals?: number;
+  maxOutOfOrderConversationItems?: number;
   maxOutOfOrderAssistantItems?: number;
+  maxOrphanAssistantItems?: number;
   maxInterruptionP95Ms?: number;
 }
 
@@ -56,7 +58,9 @@ export interface VoiceBenchmarkReport {
   realtimeFactor?: number;
   transcriptOrdering: {
     duplicateAssistantFinals: number;
+    outOfOrderConversationItems: number;
     outOfOrderAssistantItems: number;
+    orphanAssistantItems: number;
   };
   interruption: {
     count: number;
@@ -73,7 +77,9 @@ const DEFAULT_THRESHOLDS: Required<VoiceBenchmarkThresholds> = {
   minRealtimeFactor: 0.85,
   maxRealtimeFactor: 1.35,
   maxDuplicateAssistantFinals: 0,
+  maxOutOfOrderConversationItems: 0,
   maxOutOfOrderAssistantItems: 0,
+  maxOrphanAssistantItems: 0,
   maxInterruptionP95Ms: 220,
 };
 
@@ -134,12 +140,29 @@ export function evaluateVoiceBenchmark(
     );
   }
 
+  const outOfOrderConversationItems = countOutOfOrderConversationItems(input.transcripts);
+  if (outOfOrderConversationItems > config.maxOutOfOrderConversationItems) {
+    violations.push(
+      `Out-of-order conversation items ${outOfOrderConversationItems} exceeds ${config.maxOutOfOrderConversationItems}`
+    );
+  }
+
   const outOfOrderAssistantItems = countOutOfOrderAssistantItems(
     input.assistantItems ?? collectAssistantItems(input.transcripts)
   );
   if (outOfOrderAssistantItems > config.maxOutOfOrderAssistantItems) {
     violations.push(
       `Out-of-order assistant items ${outOfOrderAssistantItems} exceeds ${config.maxOutOfOrderAssistantItems}`
+    );
+  }
+
+  const orphanAssistantItems = countOrphanAssistantItems(
+    input.assistantItems ?? collectAssistantItems(input.transcripts),
+    input.transcripts
+  );
+  if (orphanAssistantItems > config.maxOrphanAssistantItems) {
+    violations.push(
+      `Orphan assistant items ${orphanAssistantItems} exceeds ${config.maxOrphanAssistantItems}`
     );
   }
 
@@ -172,7 +195,9 @@ export function evaluateVoiceBenchmark(
     realtimeFactor,
     transcriptOrdering: {
       duplicateAssistantFinals,
+      outOfOrderConversationItems,
       outOfOrderAssistantItems,
+      orphanAssistantItems,
     },
     interruption: {
       count: interruptionLatencies.length,
@@ -298,6 +323,34 @@ function collectAssistantItems(events: BenchmarkTranscriptEvent[]): BenchmarkAss
     }));
 }
 
+function countOutOfOrderConversationItems(events: BenchmarkTranscriptEvent[]): number {
+  if (events.length <= 1) return 0;
+  const ordered = [...events].sort((a, b) => a.emittedAtMs - b.emittedAtMs);
+  const firstSeenItemIds: string[] = [];
+  const seen = new Set<string>();
+
+  for (const event of ordered) {
+    if ((event.role !== 'assistant' && event.role !== 'user') || typeof event.itemId !== 'string') {
+      continue;
+    }
+    if (seen.has(event.itemId)) continue;
+    seen.add(event.itemId);
+    firstSeenItemIds.push(event.itemId);
+  }
+
+  let outOfOrder = 0;
+  let lastNumeric = Number.NEGATIVE_INFINITY;
+  for (const itemId of firstSeenItemIds) {
+    const numeric = parseTrailingNumber(itemId);
+    if (numeric === null) continue;
+    if (numeric < lastNumeric) {
+      outOfOrder += 1;
+    }
+    lastNumeric = Math.max(lastNumeric, numeric);
+  }
+  return outOfOrder;
+}
+
 function countOutOfOrderAssistantItems(events: BenchmarkAssistantItemEvent[]): number {
   if (events.length <= 1) return 0;
   const ordered = [...events].sort((a, b) => a.emittedAtMs - b.emittedAtMs);
@@ -316,13 +369,46 @@ function countOutOfOrderAssistantItems(events: BenchmarkAssistantItemEvent[]): n
   return outOfOrder;
 }
 
+function countOrphanAssistantItems(
+  assistantItems: BenchmarkAssistantItemEvent[],
+  transcripts: BenchmarkTranscriptEvent[]
+): number {
+  if (assistantItems.length === 0) return 0;
+
+  const assistantItemIds = new Set(assistantItems.map((event) => event.itemId));
+  const itemIdsWithMeaningfulText = new Set<string>();
+
+  for (const event of transcripts) {
+    if (event.role !== 'assistant') continue;
+    if (typeof event.itemId !== 'string') continue;
+    if (!assistantItemIds.has(event.itemId)) continue;
+    if (event.text.trim().length === 0) continue;
+    itemIdsWithMeaningfulText.add(event.itemId);
+  }
+
+  let orphanCount = 0;
+  for (const itemId of assistantItemIds) {
+    if (!itemIdsWithMeaningfulText.has(itemId)) {
+      orphanCount += 1;
+    }
+  }
+  return orphanCount;
+}
+
 function parseTrailingNumber(value: string): number | null {
-  const match = value.match(/(\d+)(?!.*\d)/);
-  if (!match) return null;
-  const tail = match[1];
-  if (!tail) return null;
-  const parsed = Number.parseInt(tail, 10);
-  return Number.isFinite(parsed) ? parsed : null;
+  const uvxMatch = value.match(/^(?:assistant|user)-(\d+)$/);
+  if (uvxMatch?.[1]) {
+    const parsed = Number.parseInt(uvxMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  const decomposedMatch = value.match(/^decomp-(?:assistant|user|context)-(\d+)-[a-z0-9]+$/i);
+  if (decomposedMatch?.[1]) {
+    const parsed = Number.parseInt(decomposedMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }
 
 function computeGaps(values: number[]): number[] {

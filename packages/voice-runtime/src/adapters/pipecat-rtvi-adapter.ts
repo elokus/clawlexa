@@ -1,4 +1,5 @@
 import { resamplePcm16Mono } from '../media/resample-pcm16.js';
+import { parsePipecatProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
   AudioFrame,
@@ -504,7 +505,12 @@ export class PipecatRtviAdapter extends BaseWebSocketAdapter implements Provider
       this.rejectReady = reject;
     });
 
-    await this.openSocket(this.config.serverUrl);
+    const serverUrl = this.config.serverUrl;
+    if (!serverUrl) {
+      throw new Error('Pipecat RTVI requires providerConfig.serverUrl');
+    }
+
+    await this.openSocket(serverUrl);
     this.sendClientReady();
     this.sendEnvelope({ type: 'describe-actions' });
     this.sendEnvelope({ type: 'describe-config' });
@@ -1145,10 +1151,16 @@ export class PipecatRtviAdapter extends BaseWebSocketAdapter implements Provider
   }
 
   private resolveConfig(input: SessionInput): PipecatProviderConfig {
-    if (this.options.config) return this.options.config;
+    if (this.options.config) {
+      const parsed = parsePipecatProviderConfig(this.options.config);
+      if (!parsed.serverUrl) {
+        throw new Error('Pipecat RTVI requires providerConfig.serverUrl or adapter constructor config');
+      }
+      return parsed;
+    }
 
-    const raw = input.providerConfig as Partial<PipecatProviderConfig> | undefined;
-    const serverUrl = raw?.serverUrl;
+    const raw = parsePipecatProviderConfig(input.providerConfig);
+    const serverUrl = raw.serverUrl;
     if (!serverUrl) {
       throw new Error('Pipecat RTVI requires providerConfig.serverUrl or adapter constructor config');
     }

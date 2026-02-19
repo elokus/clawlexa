@@ -52,6 +52,15 @@ export class InterruptionTracker {
     this.cumulativeAudioMs += chunkDurationMs;
   }
 
+  hasActiveAssistantOutput(): boolean {
+    return (
+      this.currentItemId !== null ||
+      this.fullText.length > 0 ||
+      this.pendingText.length > 0 ||
+      this.cumulativeAudioMs > 0
+    );
+  }
+
   resolve(playbackPositionMs?: number): InterruptionContext | null {
     if (!this.currentItemId && !this.fullText && this.cumulativeAudioMs === 0) {
       return null;

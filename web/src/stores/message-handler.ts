@@ -9,7 +9,12 @@
 // stream_chunk handles ALL agent content (voice + subagent) in AI SDK format.
 // Voice sessions also populate voiceTimeline for AgentStage compatibility.
 
-import { useUnifiedSessionsStore, type TranscriptItem, type ToolItem } from './unified-sessions';
+import {
+  useUnifiedSessionsStore,
+  type TimelineItem,
+  type TranscriptItem,
+  type ToolItem,
+} from './unified-sessions';
 import type { WSMessage } from '../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -67,13 +72,91 @@ const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Find timeline item index by OpenAI itemId.
- * Used for correlating transcripts with their placeholders.
+ * Find timeline item index by provider itemId, preferring the most recent match.
+ * Using the latest match avoids attaching new deltas to stale placeholders.
  */
-function findTimelineItemByItemId(timeline: TranscriptItem[], itemId: string): number {
-  return timeline.findIndex(
-    (item) => item.type === 'transcript' && item.itemId === itemId
-  );
+function findTimelineItemByItemId(
+  timeline: TranscriptItem[],
+  itemId: string,
+  role?: 'user' | 'assistant'
+): number {
+  for (let idx = timeline.length - 1; idx >= 0; idx -= 1) {
+    const item = timeline[idx];
+    if (item.type !== 'transcript') continue;
+    if (item.itemId !== itemId) continue;
+    if (role && item.role !== role) continue;
+    return idx;
+  }
+  return -1;
+}
+
+function parseConversationItemOrder(itemId?: string): number | null {
+  if (!itemId) return null;
+  const uvxMatch = itemId.match(/^(?:assistant|user)-(\d+)$/);
+  if (uvxMatch?.[1]) {
+    const parsed = Number.parseInt(uvxMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  const decomposedMatch = itemId.match(/^decomp-(?:assistant|user|context)-(\d+)-[a-z0-9]+$/i);
+  if (decomposedMatch?.[1]) {
+    const parsed = Number.parseInt(decomposedMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  // Unknown provider-native IDs are treated as unsortable to avoid false reordering.
+  return null;
+}
+
+function findVoiceTimelineInsertIndex(
+  timeline: TimelineItem[],
+  itemId?: string,
+  previousItemId?: string
+): number | undefined {
+  const targetOrder = parseConversationItemOrder(itemId);
+
+  if (previousItemId) {
+    for (let idx = timeline.length - 1; idx >= 0; idx -= 1) {
+      const item = timeline[idx];
+      if (item.type !== 'transcript') continue;
+      if (item.itemId !== previousItemId) continue;
+
+      // Use previousItemId as an anchor, but never insert ahead of earlier-order
+      // transcript items. This protects ordering when providers emit stale links.
+      let insertIdx = idx + 1;
+      if (targetOrder !== null) {
+        while (insertIdx < timeline.length) {
+          const current = timeline[insertIdx];
+          if (!current || current.type !== 'transcript') {
+            insertIdx += 1;
+            continue;
+          }
+          const currentOrder = parseConversationItemOrder(current.itemId);
+          if (currentOrder === null) {
+            insertIdx += 1;
+            continue;
+          }
+          if (currentOrder >= targetOrder) break;
+          insertIdx += 1;
+        }
+      }
+      return insertIdx;
+    }
+  }
+
+  if (targetOrder === null) return undefined;
+
+  for (let idx = 0; idx < timeline.length; idx += 1) {
+    const item = timeline[idx];
+    if (item.type !== 'transcript') continue;
+    const currentOrder = parseConversationItemOrder(item.itemId);
+    if (currentOrder === null) continue;
+    if (currentOrder > targetOrder) {
+      return idx;
+    }
+  }
+
+  return timeline.length;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -211,6 +294,15 @@ export function handleWebSocketMessage(msg: WSMessage): void {
         // Convert AI SDK events to voiceTimeline format
         switch (event.type) {
           case 'user-placeholder': {
+            const { voiceTimeline } = store;
+            const transcriptItems = voiceTimeline.filter(
+              (item): item is TranscriptItem => item.type === 'transcript'
+            );
+            const existingIdx = findTimelineItemByItemId(transcriptItems, event.itemId, 'user');
+            if (existingIdx >= 0) {
+              break;
+            }
+
             // Create placeholder for user message (reserves position before transcript arrives)
             const newItem: TranscriptItem = {
               id: generateId(),
@@ -221,11 +313,25 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               pending: true,
               itemId: event.itemId,
             };
-            store.addVoiceTimelineItem(newItem);
+            const insertIndex = findVoiceTimelineInsertIndex(
+              voiceTimeline,
+              event.itemId,
+              event.previousItemId
+            );
+            store.addVoiceTimelineItem(newItem, insertIndex);
             break;
           }
 
           case 'assistant-placeholder': {
+            const { voiceTimeline } = store;
+            const transcriptItems = voiceTimeline.filter(
+              (item): item is TranscriptItem => item.type === 'transcript'
+            );
+            const existingIdx = findTimelineItemByItemId(transcriptItems, event.itemId, 'assistant');
+            if (existingIdx >= 0) {
+              break;
+            }
+
             // Create placeholder for assistant message (reserves position before transcript arrives)
             const newItem: TranscriptItem = {
               id: generateId(),
@@ -236,50 +342,76 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               pending: true,
               itemId: event.itemId,
             };
-            store.addVoiceTimelineItem(newItem);
+            const insertIndex = findVoiceTimelineInsertIndex(
+              voiceTimeline,
+              event.itemId,
+              event.previousItemId
+            );
+            store.addVoiceTimelineItem(newItem, insertIndex);
             break;
           }
 
           case 'text-delta': {
             // Add/update assistant transcript in voice timeline
             const { voiceTimeline } = store;
+            const deltaText = event.textDelta ?? '';
 
             // Try to find existing placeholder by itemId first
             if (event.itemId) {
               const transcriptItems = voiceTimeline.filter(
                 (item): item is TranscriptItem => item.type === 'transcript'
               );
-              const idx = findTimelineItemByItemId(transcriptItems, event.itemId);
+              const idx = findTimelineItemByItemId(transcriptItems, event.itemId, 'assistant');
               if (idx >= 0) {
                 const item = transcriptItems[idx];
                 store.updateVoiceTimelineItem(item.id, {
-                  content: item.content + event.textDelta,
+                  content: item.content + deltaText,
                 } as Partial<TranscriptItem>);
+                break;
+              }
+
+              // Ignore scaffold-only deltas when no matching placeholder exists.
+              if (deltaText.trim().length === 0) {
                 break;
               }
             }
 
-            // Fallback: find last pending assistant message
-            const lastItem = voiceTimeline[voiceTimeline.length - 1];
-            const isAssistantTranscript =
-              lastItem?.type === 'transcript' &&
-              lastItem.role === 'assistant' &&
-              lastItem.pending;
-
-            if (isAssistantTranscript) {
-              store.updateVoiceTimelineItem(lastItem.id, {
-                content: (lastItem as TranscriptItem).content + event.textDelta,
-                ...(event.itemId && { itemId: event.itemId }),
-              } as Partial<TranscriptItem>);
-            } else {
+            if (event.itemId) {
               const newItem: TranscriptItem = {
                 id: generateId(),
                 type: 'transcript',
                 role: 'assistant',
-                content: event.textDelta,
+                content: deltaText,
                 timestamp,
                 pending: true,
                 itemId: event.itemId,
+              };
+              const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.itemId);
+              store.addVoiceTimelineItem(newItem, insertIndex);
+              break;
+            }
+
+            // Fallback for providers that do not send stable item IDs.
+            const lastPendingAssistant = [...voiceTimeline].reverse().find(
+              (item): item is TranscriptItem =>
+                item.type === 'transcript' && item.role === 'assistant' && !!item.pending
+            );
+
+            if (lastPendingAssistant) {
+              store.updateVoiceTimelineItem(lastPendingAssistant.id, {
+                content: lastPendingAssistant.content + deltaText,
+              } as Partial<TranscriptItem>);
+            } else {
+              if (deltaText.trim().length === 0) {
+                break;
+              }
+              const newItem: TranscriptItem = {
+                id: generateId(),
+                type: 'transcript',
+                role: 'assistant',
+                content: deltaText,
+                timestamp,
+                pending: true,
               };
               store.addVoiceTimelineItem(newItem);
             }
@@ -293,7 +425,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               const transcriptItems = voiceTimeline.filter(
                 (item): item is TranscriptItem => item.type === 'transcript'
               );
-              const idx = findTimelineItemByItemId(transcriptItems, event.itemId);
+              const idx = findTimelineItemByItemId(transcriptItems, event.itemId, 'user');
               if (idx >= 0) {
                 const item = transcriptItems[idx];
                 store.updateVoiceTimelineItem(item.id, {
@@ -314,7 +446,9 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               pending: false,
               itemId: event.itemId,
             };
-            store.addVoiceTimelineItem(newItem);
+            const { voiceTimeline } = store;
+            const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.itemId);
+            store.addVoiceTimelineItem(newItem, insertIndex);
             break;
           }
 
@@ -381,13 +515,15 @@ export function handleWebSocketMessage(msg: WSMessage): void {
           }
 
           case 'finish': {
-            // Mark last pending transcript as complete
+            // Mark all pending assistant transcripts as complete.
+            // This prevents stale "typing" indicators from orphan placeholders.
             const { voiceTimeline } = store;
-            const lastItem = voiceTimeline[voiceTimeline.length - 1];
-            if (lastItem?.type === 'transcript' && lastItem.pending) {
-              store.updateVoiceTimelineItem(lastItem.id, {
-                pending: false,
-              } as Partial<TranscriptItem>);
+            const pendingAssistantItems = voiceTimeline.filter(
+              (item): item is TranscriptItem =>
+                item.type === 'transcript' && item.role === 'assistant' && !!item.pending
+            );
+            for (const item of pendingAssistantItems) {
+              store.updateVoiceTimelineItem(item.id, { pending: false } as Partial<TranscriptItem>);
             }
             break;
           }

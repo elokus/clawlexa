@@ -1,4 +1,5 @@
 import { resamplePcm16Mono } from '../media/resample-pcm16.js';
+import { parseUltravoxProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
   AudioFrame,
@@ -11,20 +12,11 @@ import type {
   ToolCallResult,
   ToolDefinition,
   ToolReaction,
+  UltravoxProviderConfig,
   VoiceHistoryItem,
   VoiceSessionEvents,
   VoiceState,
 } from '../types.js';
-
-interface UltravoxProviderConfig {
-  apiKey?: string;
-  apiBaseUrl?: string;
-  model?: string;
-  voice?: string;
-  clientBufferSizeMs?: number;
-  inputSampleRate?: number;
-  outputSampleRate?: number;
-}
 
 interface UltravoxCallResponse {
   joinUrl?: string;
@@ -58,6 +50,7 @@ interface TranscriptAccumulator {
   text: string;
   role: 'user' | 'assistant';
   final: boolean;
+  announced: boolean;
 }
 
 interface UltravoxSelectedTool {
@@ -472,32 +465,61 @@ export class UltravoxWsAdapter implements ProviderAdapter {
     const delta = typeof message.delta === 'string' ? message.delta : '';
     const text = typeof message.text === 'string' ? message.text : '';
 
-    if (ordinal >= 0 && !this.transcriptsByOrdinal.has(ordinal)) {
-      this.transcriptsByOrdinal.set(ordinal, { text: '', role, final: false });
+    let accumulator = ordinal >= 0 ? this.transcriptsByOrdinal.get(ordinal) : undefined;
+    if (!accumulator && ordinal >= 0) {
+      accumulator = {
+        text: '',
+        role,
+        final: false,
+        announced: false,
+      };
+      this.transcriptsByOrdinal.set(ordinal, accumulator);
+    }
+
+    const previousText = accumulator?.text ?? '';
+    const wasAnnounced = accumulator?.announced ?? false;
+
+    let nextText = previousText;
+    if (delta) {
+      nextText = previousText + delta;
+    } else if (text) {
+      nextText = text;
+    }
+    if (accumulator) {
+      accumulator.text = nextText;
+      accumulator.role = role;
+    }
+
+    // Ultravox can emit scaffold ordinals that carry only whitespace/newlines.
+    // Keep assistant placeholder gating strict (only with meaningful text) to avoid
+    // empty assistant bubbles, but announce user placeholder immediately so UI can
+    // show "You: ..." while recognition is still in progress.
+    const hasMeaningfulText = nextText.trim().length > 0;
+    if (accumulator && !accumulator.announced) {
       if (role === 'user') {
         this.events.emit('userItemCreated', itemId);
-      } else {
+        accumulator.announced = true;
+      } else if (hasMeaningfulText) {
         this.events.emit('assistantItemCreated', itemId);
+        accumulator.announced = true;
       }
     }
 
-    const accumulator = this.transcriptsByOrdinal.get(ordinal);
-    const previousText = accumulator?.text ?? '';
-
-    if (delta) {
-      if (accumulator) {
-        accumulator.text = previousText + delta;
-      }
-      if (role === 'assistant') {
-        this.events.emit('transcriptDelta', delta, role, itemId);
-      }
-    } else if (text) {
-      if (accumulator) {
-        accumulator.text = text;
-      }
-      if (role === 'assistant' && message.final !== true) {
-        const computedDelta =
+    if (role === 'assistant') {
+      if (delta && accumulator?.announced) {
+        let emittedDelta = delta;
+        if (!wasAnnounced && previousText.trim().length === 0 && hasMeaningfulText) {
+          emittedDelta = nextText.replace(/^\s+/, '');
+        }
+        if (emittedDelta) {
+          this.events.emit('transcriptDelta', emittedDelta, role, itemId);
+        }
+      } else if (text && message.final !== true && accumulator?.announced) {
+        let computedDelta =
           text.length > previousText.length ? text.slice(previousText.length) : text;
+        if (!wasAnnounced && previousText.trim().length === 0 && text.trim().length > 0) {
+          computedDelta = text.replace(/^\s+/, '');
+        }
         if (computedDelta) {
           this.events.emit('transcriptDelta', computedDelta, role, itemId);
         }
@@ -505,8 +527,21 @@ export class UltravoxWsAdapter implements ProviderAdapter {
     }
 
     if (message.final === true) {
+      if (accumulator) {
+        accumulator.final = true;
+      }
+
       const finalText = (accumulator?.text || text).trim();
       if (!finalText) return;
+
+      if (accumulator && !accumulator.announced) {
+        if (role === 'user') {
+          this.events.emit('userItemCreated', itemId);
+        } else {
+          this.events.emit('assistantItemCreated', itemId);
+        }
+        accumulator.announced = true;
+      }
 
       const historyItem: VoiceHistoryItem = {
         id: itemId,
@@ -644,8 +679,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
   }
 
   private getProviderConfig(input: SessionInput): UltravoxProviderConfig {
-    const raw = input.providerConfig as UltravoxProviderConfig | undefined;
-    return raw ?? {};
+    return parseUltravoxProviderConfig(input.providerConfig);
   }
 
   private toSelectedTools(tools: ToolDefinition[]): UltravoxSelectedTool[] {

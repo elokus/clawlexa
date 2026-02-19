@@ -22,6 +22,7 @@ Provider-agnostic realtime voice runtime package used by `pi-agent`.
 - `createVoiceRuntime`, `VoiceRuntimeImpl`
 - `VoiceSessionImpl`
 - `InterruptionTracker`
+- Provider config parsers (`parseProviderConfig`, `parseOpenAIProviderConfig`, etc.)
 - Provider adapters (`OpenAISdkAdapter`, `UltravoxWsAdapter`, `GeminiLiveAdapter`, `DecomposedAdapter`, `PipecatRtviAdapter`)
 - Benchmark helpers (`VoiceBenchmarkRecorder`, `evaluateVoiceBenchmark`)
 

@@ -9,6 +9,14 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./provider-config": {
+      "types": "./src/provider-config.ts",
+      "default": "./src/provider-config.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./src/types.ts"
     }
   },
   "scripts": {
@@ -37,6 +45,10 @@
     "adapters"
   ],
   "license": "MIT",
+  "dependencies": {
+    "@deepgram/sdk": "^4.11.3",
+    "ws": "^8.18.3"
+  },
   "devDependencies": {
     "typescript": "^5.9.3"
   }

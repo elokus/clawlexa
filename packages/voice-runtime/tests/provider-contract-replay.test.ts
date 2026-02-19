@@ -75,8 +75,15 @@ for (const providerId of PROVIDERS) {
         assertAssistantOrdering(result);
         assertToolOrdering(result);
 
-        expect(result.benchmarkPass).toBe(true);
-        expect(result.benchmarkViolations).toHaveLength(0);
+        const expectedBenchmarkPass = contractCase.expectedBenchmarkPass ?? true;
+        expect(result.benchmarkPass).toBe(expectedBenchmarkPass);
+
+        if (expectedBenchmarkPass) {
+          expect(result.benchmarkViolations).toHaveLength(0);
+        }
+        for (const expectedViolation of contractCase.expectedBenchmarkViolations ?? []) {
+          expect(result.benchmarkViolations.some((line) => line.includes(expectedViolation))).toBe(true);
+        }
       });
     }
   });

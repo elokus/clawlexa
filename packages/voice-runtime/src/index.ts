@@ -7,6 +7,9 @@ export type {
   EventHandler,
   InterruptionContext,
   LatencyMetric,
+  DecomposedProviderConfig,
+  GeminiProviderConfig,
+  OpenAIProviderConfig,
   PipecatProviderConfig,
   ProviderAdapter,
   ProviderCapabilities,
@@ -18,6 +21,7 @@ export type {
   ToolCallResult,
   ToolDefinition,
   ToolReaction,
+  UltravoxProviderConfig,
   UsageMetrics,
   VoiceHistoryItem,
   VoiceProviderId,
@@ -32,6 +36,15 @@ export { DecomposedAdapter } from './adapters/decomposed-adapter.js';
 export { GeminiLiveAdapter } from './adapters/gemini-live-adapter.js';
 export { OpenAISdkAdapter } from './adapters/openai-sdk-adapter.js';
 export { PipecatRtviAdapter } from './adapters/pipecat-rtvi-adapter.js';
+export {
+  parseDecomposedProviderConfig,
+  parseGeminiProviderConfig,
+  parseOpenAIProviderConfig,
+  parsePipecatProviderConfig,
+  parseProviderConfig,
+  parseUltravoxProviderConfig,
+  type ProviderConfigById,
+} from './provider-config.js';
 export { UltravoxWsAdapter } from './adapters/ultravox-ws-adapter.js';
 export {
   VoiceBenchmarkRecorder,

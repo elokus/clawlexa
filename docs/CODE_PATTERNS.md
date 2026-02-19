@@ -242,7 +242,7 @@ See `pi-agent/src/agent/voice-agent.ts`.
 - consume `delta` and final `text` transcript forms
 - register local tools on call creation and round-trip `client_tool_result` with `invocationId`
 
-See `pi-agent/src/voice/ultravox-realtime-runtime.ts`.
+See `packages/voice-runtime/src/adapters/ultravox-ws-adapter.ts`.
 
 ## Realtime Barge-In and Turn-Lag
 
@@ -262,4 +262,4 @@ See `pi-agent/src/voice/ultravox-realtime-runtime.ts`.
   - uplink: 24k transport PCM16 -> Ultravox input sample rate
   - downlink: Ultravox output sample rate -> 24k transport playback
 
-See `web/src/hooks/useAudioSession.ts`, `web/public/audio-processor.js`, `pi-agent/src/voice/ultravox-realtime-runtime.ts`.
+See `web/src/hooks/useAudioSession.ts`, `web/public/audio-processor.js`, `packages/voice-runtime/src/adapters/ultravox-ws-adapter.ts`, `packages/voice-runtime/src/media/resample-pcm16.ts`.

@@ -6,11 +6,13 @@ import {
   type TransportEvent,
   type TransportLayerAudio,
 } from '@openai/agents/realtime';
+import { parseOpenAIProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
   AudioFrame,
   AudioNegotiation,
   EventHandler,
+  OpenAIProviderConfig,
   ProviderAdapter,
   ProviderCapabilities,
   SessionInput,
@@ -21,13 +23,6 @@ import type {
   VoiceSessionEvents,
   VoiceState,
 } from '../types.js';
-
-interface OpenAIProviderConfig {
-  apiKey?: string;
-  language?: string;
-  transcriptionModel?: string;
-  turnDetection?: 'server_vad' | 'semantic_vad';
-}
 
 interface InputAudioTranscriptionCompletedEvent {
   type: 'conversation.item.input_audio_transcription.completed';
@@ -96,6 +91,7 @@ export class OpenAISdkAdapter implements ProviderAdapter {
   private session: RealtimeSession | null = null;
   private state: VoiceState = 'idle';
   private history: VoiceHistoryItem[] = [];
+  private outputSampleRateHz = 24000;
 
   capabilities(): ProviderCapabilities {
     return OPENAI_SDK_CAPABILITIES;
@@ -103,6 +99,7 @@ export class OpenAISdkAdapter implements ProviderAdapter {
 
   async connect(input: SessionInput): Promise<AudioNegotiation> {
     this.history = [];
+    this.outputSampleRateHz = 24000;
 
     const providerConfig = this.getProviderConfig(input);
     const apiKey = providerConfig.apiKey;
@@ -125,8 +122,29 @@ export class OpenAISdkAdapter implements ProviderAdapter {
           : providerConfig.turnDetection ?? 'semantic_vad';
 
     const sessionConfig: Record<string, unknown> = {
+      // Legacy config keys supported by the SDK.
       inputAudioFormat: 'pcm16',
       outputAudioFormat: 'pcm16',
+      // GA-style config with explicit PCM rate. This helps avoid ambiguous defaults
+      // that can produce playback-speed mismatches on some clients.
+      audio: {
+        input: {
+          format: { type: 'audio/pcm', rate: 24000 },
+          ...(turnDetectionType
+            ? {
+                turn_detection: {
+                  type: turnDetectionType,
+                  silence_duration_ms: input.vad?.silenceDurationMs,
+                  threshold: input.vad?.threshold,
+                },
+              }
+            : { turn_detection: null }),
+        },
+        output: {
+          format: { type: 'audio/pcm', rate: 24000 },
+          voice: input.voice,
+        },
+      },
       voice: input.voice,
       inputAudioTranscription: {
         model: providerConfig.transcriptionModel ?? 'gpt-4o-mini-transcribe',
@@ -265,7 +283,7 @@ export class OpenAISdkAdapter implements ProviderAdapter {
       this.setState('speaking');
       this.events.emit('audio', {
         data: audio.data,
-        sampleRate: 24000,
+        sampleRate: this.outputSampleRateHz,
         format: 'pcm16',
       });
     });
@@ -319,8 +337,17 @@ export class OpenAISdkAdapter implements ProviderAdapter {
     });
 
     this.session.on('transport_event', (event: TransportEvent) => {
+      if (event.type === 'session.created' || event.type === 'session.updated') {
+        this.updateOutputSampleRateFromSession((event as { session?: unknown }).session);
+      }
+
       if (event.type === 'input_audio_buffer.speech_started') {
-        this.events.emit('audioInterrupted');
+        // Treat speech_started as barge-in only while assistant output is active.
+        // Otherwise this event is just normal user turn onset and should not
+        // clear local playback buffers.
+        if (this.state === 'speaking') {
+          this.events.emit('audioInterrupted');
+        }
         this.setState('listening');
       }
 
@@ -446,6 +473,60 @@ export class OpenAISdkAdapter implements ProviderAdapter {
   }
 
   private getProviderConfig(input: SessionInput): OpenAIProviderConfig {
-    return (input.providerConfig as OpenAIProviderConfig | undefined) ?? {};
+    return parseOpenAIProviderConfig(input.providerConfig);
+  }
+
+  private updateOutputSampleRateFromSession(session: unknown): void {
+    if (!session || typeof session !== 'object') return;
+    const obj = session as Record<string, unknown>;
+
+    const gaFormat = (
+      obj.audio &&
+      typeof obj.audio === 'object' &&
+      (obj.audio as Record<string, unknown>).output &&
+      typeof (obj.audio as Record<string, unknown>).output === 'object'
+    )
+      ? ((obj.audio as Record<string, unknown>).output as Record<string, unknown>).format
+      : undefined;
+
+    const legacyFormat = obj.output_audio_format;
+    const resolvedRate = this.resolveAudioSampleRate(gaFormat) ?? this.resolveAudioSampleRate(legacyFormat);
+    if (resolvedRate) {
+      if (resolvedRate !== this.outputSampleRateHz) {
+        console.log(`[OpenAISdkAdapter] output sample rate: ${resolvedRate}Hz`);
+      }
+      this.outputSampleRateHz = resolvedRate;
+    }
+  }
+
+  private resolveAudioSampleRate(format: unknown): number | null {
+    if (!format) return null;
+
+    if (typeof format === 'string') {
+      if (format === 'pcm16' || format === 'audio/pcm') return 24000;
+      if (
+        format === 'g711_ulaw' ||
+        format === 'g711_alaw' ||
+        format === 'audio/pcmu' ||
+        format === 'audio/pcma'
+      ) {
+        return 8000;
+      }
+      return null;
+    }
+
+    if (typeof format !== 'object') return null;
+
+    const obj = format as Record<string, unknown>;
+    const rate = obj.rate;
+    if (typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
+      return rate;
+    }
+
+    const type = typeof obj.type === 'string' ? obj.type : null;
+    if (type === 'audio/pcmu' || type === 'audio/pcma') return 8000;
+    if (type === 'audio/pcm') return 24000;
+
+    return null;
   }
 }

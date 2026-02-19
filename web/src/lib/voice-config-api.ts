@@ -8,13 +8,16 @@ export interface VoiceConfigDocument {
     language: string;
     profileOverrides: Record<string, { mode?: VoiceMode; voice?: string; provider?: string }>;
     voiceToVoice: {
-      provider: 'openai-realtime' | 'gemini-live' | 'ultravox-realtime';
+      provider: 'openai-realtime' | 'gemini-live' | 'ultravox-realtime' | 'pipecat-rtvi';
       model: string;
       voice: string;
       authProfile?: string;
       ultravoxModel: string;
       geminiModel: string;
       geminiVoice: string;
+      pipecatServerUrl: string;
+      pipecatTransport: 'websocket' | 'webrtc';
+      pipecatBotId?: string;
     };
     decomposed: {
       stt: { provider: 'deepgram' | 'openai'; model: string; language: string; authProfile?: string };

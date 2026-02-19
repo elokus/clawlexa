@@ -46,6 +46,21 @@ bun test packages/voice-runtime/tests/provider-contract-replay.test.ts
 ```
 - `VoiceBenchmarkRecorder`: benchmark metrics for latency/cadence/ordering/interruption gates.
 
+### Build Fixture From Real Session
+
+Record a real multi-turn call, then convert the `.sessions/*.jsonl` log into a contract fixture:
+
+```bash
+cd pi-agent
+bun run scratch:contract-fixture <session-id> --case-id=live_multiturn_case
+```
+
+This writes a fixture into:
+
+- `packages/voice-runtime/tests/contracts/fixtures/*-live-multiturn.jsonl`
+
+and prints a `contract-cases.ts` stub with expected turn/tool/final counts from the live run.
+
 ## Read Next
 
 1. `docs/voice-runtime/ARCHITECTURE.md`

@@ -28,7 +28,7 @@ export type AISDKStreamEvent =
 
   // Placeholders for message ordering (custom extension for voice sessions)
   // These reserve position in the timeline before transcripts arrive
-  | { type: 'user-placeholder'; itemId: string }
+  | { type: 'user-placeholder'; itemId: string; previousItemId?: string }
   | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string }
 
   // Tool calls

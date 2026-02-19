@@ -15,10 +15,11 @@ This project integrates the package runtime through a thin compatibility layer.
 1. `factory.ts` resolves runtime config and tools from profile/context.
 2. It builds a package runtime host with registered adapters.
 3. It creates `SessionInput` (provider id, instructions, model, voice, tool handler, provider config).
-4. `PackageBackedVoiceRuntime` wraps package session and maps events to existing `VoiceRuntime` contract.
-5. `LegacyAudioTransportBridge` adapts existing `IAudioTransport` to package `ClientTransport`.
-6. `VoiceAgent` consumes the wrapper and keeps existing orchestration/session-tree behavior.
-7. Optional benchmark capture records session metrics and writes PASS/FAIL JSON reports.
+4. Provider config is validated through `parseProviderConfig()` from `@voiceclaw/voice-runtime`.
+5. `PackageBackedVoiceRuntime` wraps package session and maps events to existing `VoiceRuntime` contract.
+6. `LegacyAudioTransportBridge` adapts existing `IAudioTransport` to package `ClientTransport`.
+7. `VoiceAgent` consumes the wrapper and keeps existing orchestration/session-tree behavior.
+8. Optional benchmark capture records session metrics and writes PASS/FAIL JSON reports.
 
 ## Why This Layer Exists
 

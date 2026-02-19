@@ -70,7 +70,60 @@ describe('evaluateVoiceBenchmark', () => {
     const report = evaluateVoiceBenchmark(input);
     expect(report.pass).toBe(false);
     expect(report.transcriptOrdering.duplicateAssistantFinals).toBe(1);
+    expect(report.transcriptOrdering.outOfOrderConversationItems).toBe(0);
     expect(report.transcriptOrdering.outOfOrderAssistantItems).toBe(1);
+    expect(report.transcriptOrdering.orphanAssistantItems).toBe(2);
+    expect(report.violations.some((line) => line.includes('Orphan assistant items'))).toBe(true);
+  });
+
+  test('flags cross-role out-of-order conversation items', () => {
+    const input: VoiceBenchmarkInput = {
+      audioChunks: [makeAudioChunk(100), makeAudioChunk(200)],
+      transcripts: [
+        { emittedAtMs: 105, role: 'assistant', kind: 'delta', text: 'Na', itemId: 'assistant-2' },
+        { emittedAtMs: 110, role: 'user', kind: 'final', text: 'Hi', itemId: 'user-1' },
+        {
+          emittedAtMs: 140,
+          role: 'assistant',
+          kind: 'final',
+          text: 'Na, was brauchst du?',
+          itemId: 'assistant-2',
+        },
+      ],
+    };
+
+    const report = evaluateVoiceBenchmark(input);
+    expect(report.pass).toBe(false);
+    expect(report.transcriptOrdering.outOfOrderConversationItems).toBe(1);
+    expect(report.violations.some((line) => line.includes('Out-of-order conversation items'))).toBe(
+      true
+    );
+  });
+
+  test('flags orphan assistant placeholders with whitespace-only deltas', () => {
+    const input: VoiceBenchmarkInput = {
+      audioChunks: [makeAudioChunk(100), makeAudioChunk(200)],
+      assistantItems: [
+        { emittedAtMs: 95, itemId: 'assistant-1' },
+        { emittedAtMs: 100, itemId: 'assistant-2' },
+      ],
+      transcripts: [
+        { emittedAtMs: 96, role: 'assistant', kind: 'delta', text: '\n', itemId: 'assistant-1' },
+        { emittedAtMs: 110, role: 'assistant', kind: 'delta', text: 'Na', itemId: 'assistant-2' },
+        {
+          emittedAtMs: 120,
+          role: 'assistant',
+          kind: 'final',
+          text: 'Na, was brauchst du?',
+          itemId: 'assistant-2',
+        },
+      ],
+    };
+
+    const report = evaluateVoiceBenchmark(input);
+    expect(report.pass).toBe(false);
+    expect(report.transcriptOrdering.orphanAssistantItems).toBe(1);
+    expect(report.violations.some((line) => line.includes('Orphan assistant items'))).toBe(true);
   });
 });
 

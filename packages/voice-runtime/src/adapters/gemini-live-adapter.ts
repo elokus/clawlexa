@@ -1,9 +1,11 @@
 import { resamplePcm16Mono } from '../media/resample-pcm16.js';
+import { parseGeminiProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
   AudioFrame,
   AudioNegotiation,
   EventHandler,
+  GeminiProviderConfig,
   ProviderAdapter,
   ProviderCapabilities,
   SessionInput,
@@ -14,19 +16,6 @@ import type {
   VoiceSessionEvents,
   VoiceState,
 } from '../types.js';
-
-interface GeminiProviderConfig {
-  apiKey?: string;
-  endpoint?: string;
-  apiVersion?: 'v1alpha' | 'v1beta';
-  enableInputTranscription?: boolean;
-  enableOutputTranscription?: boolean;
-  noInterruption?: boolean;
-  contextWindowCompressionTokens?: number;
-  proactivity?: boolean;
-  sessionResumptionHandle?: string;
-  useEphemeralToken?: boolean;
-}
 
 interface GeminiInlineData {
   data?: string;
@@ -736,7 +725,7 @@ export class GeminiLiveAdapter implements ProviderAdapter {
   }
 
   private getProviderConfig(input: SessionInput): GeminiProviderConfig {
-    return (input.providerConfig as GeminiProviderConfig | undefined) ?? {};
+    return parseGeminiProviderConfig(input.providerConfig);
   }
 }
 

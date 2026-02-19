@@ -33,12 +33,20 @@ Expose one stable API for voice sessions while keeping provider specifics intern
 - `ProviderAdapter`: required adapter methods and optional advanced controls.
 - `VoiceSessionEvents`: unified event stream used by higher layers.
 - `ProviderCapabilities`: explicit feature matrix for safe runtime behavior.
+- `provider-config` parsers: canonical provider config validation/normalization shared by app and adapters.
+
+## Provider Config Source Of Truth
+
+- `packages/voice-runtime/src/provider-config.ts` owns provider config schemas and runtime validation.
+- Adapters parse `SessionInput.providerConfig` through these helpers before use.
+- App integrations (e.g. `pi-agent`) should also parse through the same helpers before creating sessions.
+- Lightweight imports are available via `@voiceclaw/voice-runtime/provider-config`.
 
 ## File Map
 
 - `packages/voice-runtime/src/runtime/voice-runtime.ts`
 - `packages/voice-runtime/src/runtime/voice-session.ts`
 - `packages/voice-runtime/src/types.ts`
+- `packages/voice-runtime/src/provider-config.ts`
 - `packages/voice-runtime/src/media/resample-pcm16.ts`
 - `packages/voice-runtime/src/runtime/interruption-tracker.ts`
-

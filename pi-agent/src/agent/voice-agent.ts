@@ -46,22 +46,6 @@ export interface VoiceAgentEvents {
   toolEnd: (name: string, result: string, callId?: string) => void;
 }
 
-/**
- * Decide whether a final assistant transcript should be forwarded to the UI.
- * Prevents duplicate assistant messages when deltas were already streamed.
- */
-export function shouldEmitAssistantTranscript(input: {
-  itemId?: string;
-  assistantDeltaItemIds: Set<string>;
-  assistantDeltaSeenThisTurn: boolean;
-}): boolean {
-  const { itemId, assistantDeltaItemIds, assistantDeltaSeenThisTurn } = input;
-  if (itemId) {
-    return !assistantDeltaItemIds.has(itemId);
-  }
-  return !assistantDeltaSeenThisTurn;
-}
-
 export class VoiceAgent {
   private runtime: VoiceRuntime | null = null;
   private currentProfile: AgentProfile | null = null;
@@ -76,8 +60,6 @@ export class VoiceAgent {
   private pendingNotifications: ManagedProcess[] = [];
   private voiceContext: VoiceContextEntry[] = []; // Accumulated voice context for HandoffPacket
   private readonly MAX_CONTEXT_ENTRIES = 30;
-  private assistantDeltaItemIds = new Set<string>();
-  private assistantDeltaSeenThisTurn = false;
   private benchmark: VoiceSessionBenchmark | null = null;
 
   /**
@@ -272,8 +254,8 @@ export class VoiceAgent {
 
     this.runtime.on('assistantItemCreated', (itemId, previousItemId) => {
       this.benchmark?.onAssistantItemCreated(itemId);
-      this.assistantDeltaSeenThisTurn = false;
-      this.assistantDeltaItemIds.delete(itemId);
+      // Keep provider-native ordering edges only. Synthetic fallback links can invert
+      // ordering for providers (e.g. Ultravox) where assistant starts before user transcript.
       this.adapter?.assistantPlaceholder(itemId, previousItemId);
     });
 
@@ -283,23 +265,8 @@ export class VoiceAgent {
       this.transcriptBuffer.push(`${role}: ${text}`);
       // Accumulate voice context for HandoffPacket (anti-telephone)
       this.addVoiceContext(role, text);
-      // Emit stream_chunk via AI SDK adapter (unified protocol)
-      // User messages are always emitted here.
-      // Assistant messages are emitted here only if no transcript deltas were seen for that item.
-      if (role === 'user') {
-        this.adapter?.transcript(text, role, itemId);
-      } else {
-        if (shouldEmitAssistantTranscript({
-          itemId,
-          assistantDeltaItemIds: this.assistantDeltaItemIds,
-          assistantDeltaSeenThisTurn: this.assistantDeltaSeenThisTurn,
-        })) {
-          this.adapter?.transcript(text, role, itemId);
-        }
-        if (itemId) {
-          this.assistantDeltaItemIds.delete(itemId);
-        }
-      }
+      // Runtime-level transcript dedupe/normalization ensures this is canonical.
+      this.adapter?.transcript(text, role, itemId);
     });
 
     this.runtime.on('transcriptDelta', (delta, role, itemId) => {
@@ -307,16 +274,20 @@ export class VoiceAgent {
       // Stream assistant transcript deltas in real-time
       // User transcripts don't have deltas (they arrive complete)
       if (role === 'assistant') {
-        this.assistantDeltaSeenThisTurn = true;
-        if (itemId) {
-          this.assistantDeltaItemIds.add(itemId);
-        }
         this.adapter?.transcript(delta, role, itemId);
       }
     });
 
     this.runtime.on('latency', (metric) => {
-      const summary = `[VoiceLatency] ${metric.stage}=${metric.durationMs}ms` +
+      const firstAudioLatency =
+        metric.stage === 'tts' && typeof metric.details?.firstAudioLatencyMs === 'number'
+          ? ` firstAudio=${metric.details.firstAudioLatencyMs}ms`
+          : '';
+      const segmentIndex =
+        metric.stage === 'tts' && typeof metric.details?.segmentIndex === 'number'
+          ? ` segment=${metric.details.segmentIndex}`
+          : '';
+      const summary = `[VoiceLatency] ${metric.stage}=${metric.durationMs}ms${firstAudioLatency}${segmentIndex}` +
         (metric.provider ? ` provider=${metric.provider}` : '') +
         (metric.model ? ` model=${metric.model}` : '');
       console.log(summary);
@@ -444,8 +415,6 @@ export class VoiceAgent {
     this.currentProfile = null;
     this.adapter = null;
     this.benchmark = null;
-    this.assistantDeltaItemIds.clear();
-    this.assistantDeltaSeenThisTurn = false;
     this.state = 'idle';
     this.emit('stateChange', 'idle', null);
   }

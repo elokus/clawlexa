@@ -289,8 +289,63 @@ export interface VoiceRuntime {
   createSession(input: SessionInput): Promise<VoiceSession>;
 }
 
-export interface PipecatProviderConfig {
-  serverUrl: string;
+export interface OpenAIProviderConfig extends Record<string, unknown> {
+  apiKey?: string;
+  language?: string;
+  transcriptionModel?: string;
+  turnDetection?: 'server_vad' | 'semantic_vad';
+}
+
+export interface UltravoxProviderConfig extends Record<string, unknown> {
+  apiKey?: string;
+  apiBaseUrl?: string;
+  model?: string;
+  voice?: string;
+  clientBufferSizeMs?: number;
+  inputSampleRate?: number;
+  outputSampleRate?: number;
+}
+
+export interface GeminiProviderConfig extends Record<string, unknown> {
+  apiKey?: string;
+  endpoint?: string;
+  apiVersion?: 'v1alpha' | 'v1beta';
+  enableInputTranscription?: boolean;
+  enableOutputTranscription?: boolean;
+  noInterruption?: boolean;
+  contextWindowCompressionTokens?: number;
+  proactivity?: boolean;
+  sessionResumptionHandle?: string;
+  useEphemeralToken?: boolean;
+}
+
+export interface DecomposedProviderConfig extends Record<string, unknown> {
+  openaiApiKey?: string;
+  openrouterApiKey?: string;
+  deepgramApiKey?: string;
+  sttProvider?: 'openai' | 'deepgram';
+  sttModel?: string;
+  llmProvider?: 'openai' | 'openrouter';
+  llmModel?: string;
+  ttsProvider?: 'openai' | 'deepgram';
+  ttsModel?: string;
+  ttsVoice?: string;
+  deepgramTtsTransport?: 'websocket';
+  deepgramTtsWsUrl?: string;
+  turn?: {
+    silenceMs?: number;
+    minSpeechMs?: number;
+    minRms?: number;
+    llmCompletionEnabled?: boolean;
+    llmShortTimeoutMs?: number;
+    llmLongTimeoutMs?: number;
+    llmShortReprompt?: string;
+    llmLongReprompt?: string;
+  };
+}
+
+export interface PipecatProviderConfig extends Record<string, unknown> {
+  serverUrl?: string;
   transport: 'websocket' | 'webrtc';
   inputSampleRate?: number;
   outputSampleRate?: number;

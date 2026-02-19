@@ -40,7 +40,7 @@ export interface VoiceBenchmarkFinalizeResult {
   outputPath?: string;
 }
 
-const PROVIDER_THRESHOLDS: Record<VoiceProviderName, VoiceBenchmarkThresholds> = {
+export const PROVIDER_THRESHOLDS: Record<VoiceProviderName, VoiceBenchmarkThresholds> = {
   'openai-realtime': {
     maxFirstAudioLatencyMs: 1_200,
     maxP95ChunkGapMs: 240,
@@ -85,7 +85,7 @@ function parseNumber(value: string | undefined): number | undefined {
   return parsed;
 }
 
-function parseThresholdOverridesFromEnv(): VoiceBenchmarkThresholds {
+export function parseThresholdOverridesFromEnv(): VoiceBenchmarkThresholds {
   return {
     maxFirstAudioLatencyMs: parseNumber(process.env.VOICE_BENCH_MAX_FIRST_AUDIO_MS),
     maxP95ChunkGapMs: parseNumber(process.env.VOICE_BENCH_MAX_P95_CHUNK_GAP_MS),
@@ -98,7 +98,7 @@ function parseThresholdOverridesFromEnv(): VoiceBenchmarkThresholds {
   };
 }
 
-function mergeThresholds(
+export function mergeThresholds(
   provider: VoiceProviderName,
   overrides: VoiceBenchmarkThresholds
 ): VoiceBenchmarkThresholds {
@@ -108,7 +108,7 @@ function mergeThresholds(
   };
 }
 
-function resolveOutputDir(): string {
+export function resolveOutputDir(): string {
   if (process.env.VOICE_BENCH_OUTPUT_DIR) {
     return path.resolve(process.cwd(), process.env.VOICE_BENCH_OUTPUT_DIR);
   }

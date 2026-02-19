@@ -179,8 +179,8 @@ export function createVoiceAdapter(sessionId: string) {
     /**
      * Emit a user placeholder event (reserves position before transcript arrives).
      */
-    userPlaceholder(itemId: string): void {
-      const chunk = createStreamChunk(sessionId, { type: 'user-placeholder', itemId });
+    userPlaceholder(itemId: string, previousItemId?: string): void {
+      const chunk = createStreamChunk(sessionId, { type: 'user-placeholder', itemId, previousItemId });
       broadcastStreamChunk(chunk);
     },
 

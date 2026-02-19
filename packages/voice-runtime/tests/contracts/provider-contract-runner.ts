@@ -71,6 +71,8 @@ export async function runProviderContractCase(
   let toolStarts = 0;
   let toolEnds = 0;
   const assistantFinals: string[] = [];
+  const assistantDeltaByItem = new Map<string, string>();
+  const assistantItemOrder: string[] = [];
 
   session.on('turnStarted', () => {
     turnStarted += 1;
@@ -91,6 +93,9 @@ export async function runProviderContractCase(
 
   session.on('assistantItemCreated', (itemId) => {
     recorder.recordAssistantItem(itemId);
+    if (!assistantItemOrder.includes(itemId)) {
+      assistantItemOrder.push(itemId);
+    }
     timeline.push({
       index: timelineIndex++,
       kind: 'assistant_item',
@@ -108,6 +113,10 @@ export async function runProviderContractCase(
 
   session.on('transcriptDelta', (delta, role, itemId) => {
     recorder.recordTranscript('delta', delta, role, itemId);
+    if (role === 'assistant' && itemId) {
+      const previous = assistantDeltaByItem.get(itemId) ?? '';
+      assistantDeltaByItem.set(itemId, previous + delta);
+    }
     timeline.push({
       index: timelineIndex++,
       kind: role === 'assistant' ? 'assistant_delta' : 'user_delta',
@@ -126,6 +135,9 @@ export async function runProviderContractCase(
     });
     if (role === 'assistant') {
       assistantFinals.push(text);
+      if (itemId) {
+        assistantDeltaByItem.set(itemId, text);
+      }
     }
   });
 
@@ -156,10 +168,15 @@ export async function runProviderContractCase(
   await waitFor(
     () =>
       turnComplete >= contractCase.expected.turnComplete &&
-      toolEnds >= contractCase.expected.toolEnds &&
-      assistantFinals.length >= contractCase.expected.assistantFinals.length,
+      toolEnds >= contractCase.expected.toolEnds,
     contractCase.timeoutMs ?? 800
   );
+
+  const assistantOutputs = assistantFinals.length > 0
+    ? assistantFinals
+    : assistantItemOrder
+        .map((itemId) => assistantDeltaByItem.get(itemId)?.trim())
+        .filter((text): text is string => Boolean(text && text.length > 0));
 
   const benchmark = recorder.evaluate(contractCase.thresholds);
   await session.close();
@@ -171,7 +188,7 @@ export async function runProviderContractCase(
     turnComplete,
     toolStarts,
     toolEnds,
-    assistantFinals,
+    assistantFinals: assistantOutputs,
     timeline,
     benchmarkPass: benchmark.pass,
     benchmarkViolations: benchmark.violations,

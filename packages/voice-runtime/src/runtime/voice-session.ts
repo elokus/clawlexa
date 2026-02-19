@@ -29,6 +29,8 @@ export class VoiceSessionImpl implements VoiceSession {
   private clientTransport: ClientTransport | null = null;
   private transportAudioHandler: ((frame: AudioFrame) => void) | null = null;
   private readonly interruptionTracker = new InterruptionTracker();
+  private readonly assistantDeltaItemIds = new Set<string>();
+  private assistantDeltaSeenThisTurn = false;
 
   constructor(adapter: ProviderAdapter, input: SessionInput) {
     this.adapter = adapter;
@@ -55,6 +57,7 @@ export class VoiceSessionImpl implements VoiceSession {
     this.negotiation = null;
     this.state = 'idle';
     this.interruptionTracker.reset();
+    this.resetAssistantTranscriptDedup();
   }
 
   async attachClientTransport(transport: ClientTransport): Promise<void> {
@@ -259,6 +262,7 @@ export class VoiceSessionImpl implements VoiceSession {
       this.connected = false;
       this.state = 'idle';
       this.interruptionTracker.reset();
+      this.resetAssistantTranscriptDedup();
       this.events.emit('disconnected', reason);
     });
 
@@ -272,6 +276,11 @@ export class VoiceSessionImpl implements VoiceSession {
     });
 
     this.adapter.on('audioInterrupted', () => {
+      const interruptionRelevant =
+        this.state === 'speaking' || this.interruptionTracker.hasActiveAssistantOutput();
+      if (!interruptionRelevant) {
+        return;
+      }
       if (this.clientTransport) {
         this.clientTransport.interruptPlayback();
       }
@@ -281,6 +290,12 @@ export class VoiceSessionImpl implements VoiceSession {
     this.adapter.on('transcript', (text, role, itemId) => {
       if (role === 'assistant') {
         this.interruptionTracker.trackAssistantTranscript(text, itemId);
+        if (!this.shouldEmitAssistantTranscript(itemId)) {
+          return;
+        }
+        if (itemId) {
+          this.assistantDeltaItemIds.delete(itemId);
+        }
       }
       this.events.emit('transcript', text, role, itemId);
     });
@@ -288,6 +303,10 @@ export class VoiceSessionImpl implements VoiceSession {
     this.adapter.on('transcriptDelta', (delta, role, itemId) => {
       if (role === 'assistant') {
         this.interruptionTracker.trackAssistantDelta(delta, itemId);
+        this.assistantDeltaSeenThisTurn = true;
+        if (itemId) {
+          this.assistantDeltaItemIds.add(itemId);
+        }
       }
       this.events.emit('transcriptDelta', delta, role, itemId);
     });
@@ -298,6 +317,8 @@ export class VoiceSessionImpl implements VoiceSession {
 
     this.adapter.on('assistantItemCreated', (itemId, previousItemId) => {
       this.interruptionTracker.beginAssistantItem(itemId);
+      this.assistantDeltaSeenThisTurn = false;
+      this.assistantDeltaItemIds.delete(itemId);
       this.events.emit('assistantItemCreated', itemId, previousItemId);
     });
 
@@ -323,12 +344,14 @@ export class VoiceSessionImpl implements VoiceSession {
     });
 
     this.adapter.on('turnStarted', () => {
+      this.resetAssistantTranscriptDedup();
       this.events.emit('turnStarted');
     });
 
     this.adapter.on('turnComplete', () => {
       this.events.emit('turnComplete');
       this.interruptionTracker.reset();
+      this.resetAssistantTranscriptDedup();
     });
 
     this.adapter.on('toolCancelled', (callIds) => {
@@ -338,5 +361,17 @@ export class VoiceSessionImpl implements VoiceSession {
     this.adapter.on('usage', (metrics) => {
       this.events.emit('usage', metrics);
     });
+  }
+
+  private shouldEmitAssistantTranscript(itemId?: string): boolean {
+    if (itemId) {
+      return !this.assistantDeltaItemIds.has(itemId);
+    }
+    return !this.assistantDeltaSeenThisTurn;
+  }
+
+  private resetAssistantTranscriptDedup(): void {
+    this.assistantDeltaItemIds.clear();
+    this.assistantDeltaSeenThisTurn = false;
   }
 }

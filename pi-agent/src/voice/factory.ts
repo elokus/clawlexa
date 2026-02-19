@@ -5,6 +5,7 @@ import {
   DecomposedAdapter,
   GeminiLiveAdapter,
   OpenAISdkAdapter,
+  parseProviderConfig,
   PipecatRtviAdapter,
   type SessionInput as PackageSessionInput,
   type ToolCallHandler as PackageToolCallHandler,
@@ -101,7 +102,7 @@ function buildTooling(
 function providerConfigFor(
   provider: VoiceProviderName,
   runtimeConfig: ResolvedRuntimeConfig
-): Record<string, unknown> {
+): unknown {
   if (provider === 'ultravox-realtime') {
     return {
       apiKey: runtimeConfig.auth.ultravoxApiKey,
@@ -169,6 +170,10 @@ export function createVoiceRuntime(
 
   const { tools, toolHandler } = buildTooling(profile, sessionId, voiceAgent);
   const packageProviderId = providerIdForRuntime(runtimeConfig.provider);
+  const providerConfig = parseProviderConfig(
+    packageProviderId,
+    providerConfigFor(runtimeConfig.provider, runtimeConfig)
+  );
 
   const runtimeHost = createPackageVoiceRuntime([
     {
@@ -206,7 +211,7 @@ export function createVoiceRuntime(
     language: runtimeConfig.language,
     tools,
     toolHandler,
-    providerConfig: providerConfigFor(runtimeConfig.provider, runtimeConfig),
+    providerConfig,
   };
 
   return new PackageBackedVoiceRuntime({
