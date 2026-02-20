@@ -1,6 +1,6 @@
 # @voiceclaw/voice-runtime
 
-Provider-agnostic realtime voice runtime package used by `pi-agent`.
+Provider-agnostic realtime voice runtime package for voice agent applications.
 
 ## Package Scope
 
@@ -8,14 +8,17 @@ Provider-agnostic realtime voice runtime package used by `pi-agent`.
 - Adapter boundary for provider-specific protocols/SDKs.
 - Transport boundary for client audio I/O.
 - Framework-level interruption resolution.
+- Benchmark recording and evaluation.
 
 ## Implemented Adapters
 
-- `openai-sdk`
-- `ultravox-ws`
-- `gemini-live`
-- `decomposed`
-- `pipecat-rtvi`
+| Adapter | Transport | Use Case |
+|---------|-----------|----------|
+| `openai-sdk` | SDK (WS/WebRTC) | OpenAI Realtime voice-to-voice |
+| `ultravox-ws` | WebSocket | Ultravox voice-to-voice |
+| `gemini-live` | WebSocket | Google Gemini Live voice-to-voice |
+| `decomposed` | HTTP + WebSocket | STT + LLM + TTS pipeline |
+| `pipecat-rtvi` | WebSocket | Pipecat RTVI protocol |
 
 ## Main Exports
 
@@ -34,10 +37,26 @@ bun test packages/voice-runtime/tests/*.test.ts
 bun test packages/voice-runtime/tests/provider-contract-replay.test.ts
 ```
 
-## Full Documentation
+## Documentation
 
-- `docs/voice-runtime/README.md`
-- `docs/voice-runtime/ARCHITECTURE.md`
-- `docs/voice-runtime/PROVIDERS.md`
-- `docs/voice-runtime/INTERRUPTION_TRACKING.md`
-- `docs/voice-runtime/INTEGRATION.md`
+All docs live in [`docs/`](docs/):
+
+| Document | Description |
+|----------|-------------|
+| [`docs/README.md`](docs/README.md) | Overview and reading order |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Three-plane model (control/media/provider) |
+| [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Adapter catalog and capability matrix |
+| [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | App-level config and control APIs |
+| [`docs/INTERRUPTION_TRACKING.md`](docs/INTERRUPTION_TRACKING.md) | Spoken text vs full text alignment |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Metrics, thresholds, report workflow |
+
+### Provider Deep Dives
+
+| Provider | Document |
+|----------|----------|
+| Deepgram | [`docs/providers/DEEPGRAM.md`](docs/providers/DEEPGRAM.md) |
+| OpenAI | [`docs/providers/OPENAI.md`](docs/providers/OPENAI.md) |
+| Ultravox | [`docs/providers/ULTRAVOX.md`](docs/providers/ULTRAVOX.md) |
+| Gemini | [`docs/providers/GEMINI.md`](docs/providers/GEMINI.md) |
+| Decomposed | [`docs/providers/DECOMPOSED.md`](docs/providers/DECOMPOSED.md) |
+| Pipecat | [`docs/providers/PIPECAT.md`](docs/providers/PIPECAT.md) |

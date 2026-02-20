@@ -1,11 +1,11 @@
 /**
- * Convert a real recorded voice session (.sessions/*.jsonl) into a provider-contract fixture.
+ * Convert a real recorded voice session (.voiceclaw/.sessions/*.jsonl) into a provider-contract fixture.
  *
  * Usage:
  * - bun run src/scratch-contract-fixture.ts <session-id>
  * - bun run src/scratch-contract-fixture.ts <session-id> <output-fixture.jsonl>
  * - bun run src/scratch-contract-fixture.ts <session-id> --case-id=<contract_case_id>
- * - bun run src/scratch-contract-fixture.ts .sessions/<file>.jsonl --case-id=live_multiturn_ultravox
+ * - bun run src/scratch-contract-fixture.ts .voiceclaw/.sessions/<file>.jsonl --case-id=live_multiturn_ultravox
  */
 
 import fs from 'fs';
@@ -90,7 +90,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 function resolveRepoRoot(): string {
   const cwd = process.cwd();
-  return path.basename(cwd) === 'pi-agent' ? path.resolve(cwd, '..') : cwd;
+  return path.basename(cwd) === 'voice-agent' ? path.resolve(cwd, '..', '..') : cwd;
 }
 
 function parseJsonl(filePath: string): SessionLogEntry[] {
@@ -146,14 +146,14 @@ function findSessionLogById(sessionId: string, sessionsDir: string): string {
     return byPrefix;
   }
 
-  throw new Error(`Could not find .sessions log for session id: ${sessionId}`);
+  throw new Error(`Could not find .voiceclaw/.sessions log for session id: ${sessionId}`);
 }
 
 function resolveInputLogPath(input: string, repoRoot: string): string {
   const direct = path.resolve(process.cwd(), input);
   if (fs.existsSync(direct)) return direct;
 
-  const sessionsDir = path.join(repoRoot, '.sessions');
+  const sessionsDir = path.join(repoRoot, '.voiceclaw', '.sessions');
   return findSessionLogById(input, sessionsDir);
 }
 

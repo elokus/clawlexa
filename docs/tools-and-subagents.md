@@ -166,8 +166,8 @@ Access via the "=" button in the left dock:
 |------|---------|
 | `prompts/*/config.json` | Prompt metadata + active version |
 | `prompts/*/v*.md` | Prompt versions |
-| `pi-agent/src/prompts/index.ts` | CRUD service |
-| `pi-agent/src/prompts/interpolate.ts` | Variable replacement |
-| `pi-agent/src/api/webhooks.ts` | REST endpoints |
-| `web/src/lib/prompts-api.ts` | Frontend API client |
-| `web/src/components/prompts/` | PromptsView, PromptsSidebar, PromptEditor |
+| `packages/voice-agent/src/prompts/index.ts` | CRUD service |
+| `packages/voice-agent/src/prompts/interpolate.ts` | Variable replacement |
+| `packages/voice-agent/src/api/webhooks.ts` | REST endpoints |
+| `packages/web-ui/src/lib/prompts-api.ts` | Frontend API client |
+| `packages/web-ui/src/components/prompts/` | PromptsView, PromptsSidebar, PromptEditor |

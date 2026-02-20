@@ -21,7 +21,7 @@ export interface RealtimeEvent {
   data: unknown;
 }
 
-// CLI Session types (matching pi-agent)
+// CLI Session types (matching voice-agent)
 export type SessionStatus =
   | 'pending'
   | 'running'

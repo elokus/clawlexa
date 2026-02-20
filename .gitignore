@@ -37,8 +37,8 @@ npm-debug.log*
 
 # Build output
 dist/
-web/dist/
-pi-agent/dist/
+packages/web-ui/dist/
+packages/voice-agent/dist/
 
 # Bun
 bun.lockb
@@ -49,6 +49,6 @@ bun.lockb
 # Repomix
 repomix-output.xml
 
-**/.sessions
+.voiceclaw/.sessions
 
 **/.benchmarks

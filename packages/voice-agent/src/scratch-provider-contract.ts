@@ -16,7 +16,7 @@ import {
   type AuthProvider,
 } from './voice/settings.js';
 
-loadEnv({ path: resolve(process.cwd(), '../.env') });
+loadEnv({ path: resolve(process.cwd(), '../../.env') });
 
 interface ProviderContract {
   provider: AuthProvider;

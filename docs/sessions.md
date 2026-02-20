@@ -66,14 +66,14 @@ The voice-agent system uses a **unified session model** where all agent interact
 
 | File | Purpose |
 |------|---------|
-| `pi-agent/src/api/websocket.ts` | WebSocket server, message broadcasting |
-| `pi-agent/src/api/stream-types.ts` | AI SDK event type definitions |
-| `pi-agent/src/realtime/ai-sdk-adapter.ts` | Voice → AI SDK event conversion |
-| `pi-agent/src/agent/voice-agent.ts` | Voice session lifecycle management |
-| `pi-agent/src/subagents/cli/index.ts` | CLI orchestration agent |
-| `pi-agent/src/subagents/direct-input.ts` | Text input to focused subagent |
-| `pi-agent/src/db/schema.ts` | Database schema and migrations |
-| `pi-agent/src/db/repositories/cli-sessions.ts` | Session CRUD operations |
+| `packages/voice-agent/src/api/websocket.ts` | WebSocket server, message broadcasting |
+| `packages/voice-agent/src/api/stream-types.ts` | AI SDK event type definitions |
+| `packages/voice-agent/src/realtime/ai-sdk-adapter.ts` | Voice → AI SDK event conversion |
+| `packages/voice-agent/src/agent/voice-agent.ts` | Voice session lifecycle management |
+| `packages/voice-agent/src/subagents/cli/index.ts` | CLI orchestration agent |
+| `packages/voice-agent/src/subagents/direct-input.ts` | Text input to focused subagent |
+| `packages/voice-agent/src/db/schema.ts` | Database schema and migrations |
+| `packages/voice-agent/src/db/repositories/cli-sessions.ts` | Session CRUD operations |
 
 ### Session Lifecycle
 
@@ -158,7 +158,7 @@ CREATE TABLE cli_sessions (
 The adapter converts OpenAI Realtime API events to AI SDK v5 format:
 
 ```typescript
-// pi-agent/src/realtime/ai-sdk-adapter.ts
+// packages/voice-agent/src/realtime/ai-sdk-adapter.ts
 
 // Voice event → AI SDK event mapping
 const mapping = {
@@ -182,7 +182,7 @@ adapter.toolEnd('web_search', 'Sunny, 72°F');
 Subagents use AI SDK's native `streamText()` with `fullStream`:
 
 ```typescript
-// pi-agent/src/subagents/cli/index.ts
+// packages/voice-agent/src/subagents/cli/index.ts
 
 const result = streamText({
   model: openrouter.chat('x-ai/grok-code-fast-1'),
@@ -262,20 +262,20 @@ type AISDKStreamEvent =
 
 | File | Purpose |
 |------|---------|
-| `web/src/stores/unified-sessions.ts` | Unified Zustand store (~921 LoC) |
-| `web/src/stores/message-handler.ts` | WebSocket event routing |
-| `web/src/stores/index.ts` | Store exports and selector hooks |
-| `web/src/hooks/useWebSocket.ts` | Singleton WebSocket connection |
-| `web/src/components/stages/AgentStage.tsx` | Unified agent renderer |
-| `web/src/components/stages/TerminalStage.tsx` | PTY terminal renderer |
-| `web/src/components/layout/StageOrchestrator.tsx` | Stage routing |
+| `packages/web-ui/src/stores/unified-sessions.ts` | Unified Zustand store (~921 LoC) |
+| `packages/web-ui/src/stores/message-handler.ts` | WebSocket event routing |
+| `packages/web-ui/src/stores/index.ts` | Store exports and selector hooks |
+| `packages/web-ui/src/hooks/useWebSocket.ts` | Singleton WebSocket connection |
+| `packages/web-ui/src/components/stages/AgentStage.tsx` | Unified agent renderer |
+| `packages/web-ui/src/components/stages/TerminalStage.tsx` | PTY terminal renderer |
+| `packages/web-ui/src/components/layout/StageOrchestrator.tsx` | Stage routing |
 
 ### State Management
 
 The unified store replaces the previous 3-store architecture:
 
 ```typescript
-// web/src/stores/unified-sessions.ts
+// packages/web-ui/src/stores/unified-sessions.ts
 
 interface UnifiedSessionsStore {
   // ─── Connection State ───
@@ -405,7 +405,7 @@ handleStreamChunk(sessionId, event) {
 The unified `AgentStage` renders any agent session using AI Elements:
 
 ```tsx
-// web/src/components/stages/AgentStage.tsx
+// packages/web-ui/src/components/stages/AgentStage.tsx
 
 export function AgentStage({ stage }: { stage: StageItem }) {
   // Get data based on session type
@@ -457,7 +457,7 @@ Users can type directly to focused subagent sessions:
    WebSocket: { type: 'session_input', payload: { text } }
 
 3. Backend routes to focused session
-   pi-agent/src/index.ts: onSessionInput(handleDirectInput)
+   packages/voice-agent/src/index.ts: onSessionInput(handleDirectInput)
 
 4. handleDirectInput processes the input
    - Loads session from DB
@@ -475,7 +475,7 @@ Users can type directly to focused subagent sessions:
 ### Implementation
 
 ```typescript
-// pi-agent/src/subagents/direct-input.ts
+// packages/voice-agent/src/subagents/direct-input.ts
 
 export async function handleDirectInput(sessionId: string, text: string): Promise<void> {
   // Load session
@@ -649,46 +649,3 @@ interface ErrorBlock {
 4. [ ] Click "Take Control" on replica, verify master handoff
 5. [ ] Disconnect master, verify promotion of replica
 
----
-
-## Migration from Legacy Architecture
-
-### Before (3 Stores, 26+ Event Types)
-
-```
-Stores:
-  agent.ts (830 LoC) - Agent state, transcripts, subagent activities
-  stage.ts (540 LoC) - Stage navigation stack
-  sessions.ts (150 LoC) - CLI session management
-
-Events:
-  transcript, tool_start, tool_end, item_pending, item_completed,
-  audio_start, audio_end, cli_session_created, cli_session_update,
-  cli_session_output, subagent_activity, reasoning_start, reasoning_delta,
-  reasoning_end, ...
-
-Components:
-  ChatStage.tsx - Voice conversation
-  SubagentStage.tsx - Subagent activities
-  ActivityFeed.tsx - Activity block renderer
-  ConversationStream.tsx - Message list
-```
-
-### After (1 Store, 8 Event Types)
-
-```
-Store:
-  unified-sessions.ts (921 LoC) - All session/agent state
-
-Events:
-  welcome, stream_chunk, session_tree_update, state_change,
-  master_changed, session_started, session_ended, cli_session_deleted
-
-Components:
-  AgentStage.tsx - All agent types (voice + subagent)
-  TerminalStage.tsx - Terminal rendering
-```
-
-### Migration Mapping
-
-See `docs/SESSION_CENTRIC_REFACTOR_PLAN.md` Section 3.4.3 for complete mapping of legacy → unified selectors and actions.

@@ -5,11 +5,11 @@
 // In production, set via PUBLIC_MAC_DAEMON_URL environment variable
 export const MAC_DAEMON_URL = process.env.PUBLIC_MAC_DAEMON_URL || 'localhost:3100';
 
-// Pi-agent API URL for session metadata
+// Voice-agent API URL for session metadata
 // Uses dev server proxy in development, explicit URL in production
 export const API_URL = process.env.PUBLIC_API_URL || '';
 
-// WebSocket URL for pi-agent events
+// WebSocket URL for voice-agent events
 export const WS_URL = process.env.PUBLIC_WS_URL || '';
 
 // Demo mode flag

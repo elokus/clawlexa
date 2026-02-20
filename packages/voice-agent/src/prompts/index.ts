@@ -13,8 +13,8 @@ import { interpolatePrompt, type InterpolationContext } from './interpolate.js';
 
 export { interpolatePrompt, type InterpolationContext } from './interpolate.js';
 
-// Prompts directory relative to pi-agent (repo root)
-const PROMPTS_DIR = path.join(process.cwd(), '..', 'prompts');
+// Prompts directory inside the voice-agent package
+const PROMPTS_DIR = path.join(process.cwd(), 'prompts');
 
 /**
  * Prompt configuration stored in config.json

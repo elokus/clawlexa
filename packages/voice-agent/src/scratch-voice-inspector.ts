@@ -18,8 +18,8 @@ import { resolve } from 'path';
 import { execSync } from 'child_process';
 import type { InspectorArgs } from './tui/inspector/types.js';
 
-// Load .env from project root
-loadEnv({ path: resolve(import.meta.dirname, '../.env') });
+// Load .env from repo root
+loadEnv({ path: resolve(import.meta.dirname, '../../.env') });
 
 // ── Audio Prerequisites Check ────────────────────────────────
 

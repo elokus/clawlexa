@@ -17,7 +17,7 @@ Expose one stable API for voice sessions while keeping provider specifics intern
 
 3. Provider plane:
 - Provider-specific protocol/SDK handling inside adapters.
-- No provider SDK types leaked into `pi-agent`.
+- No provider SDK types leaked into `voice-agent`.
 
 ## Runtime Flow
 
@@ -39,7 +39,7 @@ Expose one stable API for voice sessions while keeping provider specifics intern
 
 - `packages/voice-runtime/src/provider-config.ts` owns provider config schemas and runtime validation.
 - Adapters parse `SessionInput.providerConfig` through these helpers before use.
-- App integrations (e.g. `pi-agent`) should also parse through the same helpers before creating sessions.
+- App integrations (e.g. `voice-agent`) should also parse through the same helpers before creating sessions.
 - Lightweight imports are available via `@voiceclaw/voice-runtime/provider-config`.
 
 ## File Map

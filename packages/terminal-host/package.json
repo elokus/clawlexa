@@ -1,7 +1,7 @@
 {
-  "name": "mac-daemon",
+  "name": "@voiceclaw/terminal-host",
   "version": "1.0.0",
-  "description": "CLI execution daemon for Pi voice assistant - manages tmux sessions and exposes HTTP API",
+  "description": "CLI execution daemon for voice agent - manages tmux sessions and exposes HTTP API",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

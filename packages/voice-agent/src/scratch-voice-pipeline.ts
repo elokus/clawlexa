@@ -20,7 +20,7 @@ import {
   type AuthProvider,
 } from './voice/settings.js';
 
-loadEnv({ path: resolve(process.cwd(), '../.env') });
+loadEnv({ path: resolve(process.cwd(), '../../.env') });
 
 const TURN_COMPLETION_PROMPT = [
   'You must start every response with exactly one marker character:',

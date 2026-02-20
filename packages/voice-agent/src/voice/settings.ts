@@ -237,7 +237,7 @@ const DEFAULT_AUTH_PROFILES: AuthProfilesDocument = {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const REPO_ROOT = path.resolve(__dirname, '../../..');
+const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const CONFIG_DIR = process.env.VOICE_CONFIG_DIR ?? path.join(REPO_ROOT, '.voiceclaw');
 const VOICE_CONFIG_PATH = process.env.VOICE_CONFIG_PATH ?? path.join(CONFIG_DIR, 'voice.config.json');
 const AUTH_PROFILES_PATH = process.env.AUTH_PROFILES_PATH ?? path.join(CONFIG_DIR, 'auth-profiles.json');

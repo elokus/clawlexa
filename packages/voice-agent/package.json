@@ -1,5 +1,5 @@
 {
-  "name": "pi-agent",
+  "name": "@voiceclaw/voice-agent",
   "version": "1.0.0",
   "description": "TypeScript realtime voice agent for Raspberry Pi",
   "type": "module",

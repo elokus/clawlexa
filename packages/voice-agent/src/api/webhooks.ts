@@ -743,7 +743,7 @@ async function handleWebhook(
 
         // Optionally save to file
         if (saveToFile) {
-          const scenariosDir = path.join(process.cwd(), '..', 'web', 'src', 'dev', 'demos', 'captured');
+          const scenariosDir = path.join(process.cwd(), '..', 'web-ui', 'src', 'dev', 'demos', 'captured');
           if (!fs.existsSync(scenariosDir)) {
             fs.mkdirSync(scenariosDir, { recursive: true });
           }

@@ -6,9 +6,9 @@ import { tmuxManager } from './tmux/manager.js';
 import { ptyManager } from './pty/index.js';
 
 async function main() {
-  console.log('╔═══════════════════════════════════════╗');
-  console.log('║      Mac Daemon - CLI Session Manager ║');
-  console.log('╚═══════════════════════════════════════╝');
+  console.log('╔═══════════════════════════════════════════╗');
+  console.log('║   Terminal Host - CLI Session Manager     ║');
+  console.log('╚═══════════════════════════════════════════╝');
 
   const config = loadConfig();
 
@@ -53,7 +53,7 @@ async function main() {
     sessionManager,
   });
 
-  console.log(`[Ready] Mac Daemon running on http://localhost:${config.port}`);
+  console.log(`[Ready] Terminal Host running on http://localhost:${config.port}`);
   console.log('');
   console.log('Available endpoints:');
   console.log('  POST   /sessions              Create new session');

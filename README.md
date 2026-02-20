@@ -1,6 +1,6 @@
-# Voice Agent
+# VoiceClaw
 
-Realtime voice agent with wake-word activation, pluggable voice providers, tool execution, and web dashboard support.
+Realtime voice agent with wake-word activation, pluggable voice providers, tool execution, and web dashboard.
 
 ## Quick Start
 
@@ -9,86 +9,76 @@ Realtime voice agent with wake-word activation, pluggable voice providers, tool 
 bun install
 
 # Backend (Terminal 1)
-cd pi-agent
+cd packages/voice-agent
 SKIP_STATIC_SERVER=true TRANSPORT_MODE=web bun run dev
 
 # Frontend (Terminal 2)
-cd web
+cd packages/web-ui
 bun run dev
 ```
 
 Open `http://localhost:5173`.
 
-## What This Repo Contains
+## Modules
 
-- `pi-agent`: Bun backend, voice orchestration, tools, session tree, DB.
-- `web`: React dashboard and websocket/audio client.
-- `mac-daemon`: Mac-side tmux/CLI manager.
-- `packages/voice-runtime`: provider-agnostic voice runtime package used by `pi-agent`.
+| Module | Path | Purpose |
+|--------|------|---------|
+| **voice-runtime** | [`packages/voice-runtime/`](packages/voice-runtime/) | Provider-agnostic voice runtime (adapters, audio, benchmarks) |
+| **voice-agent** | [`packages/voice-agent/`](packages/voice-agent/) | Voice agent backend (sessions, config, tools, subagents, DB) |
+| **web-ui** | [`packages/web-ui/`](packages/web-ui/) | React dashboard (WebSocket client, audio, Zustand store) |
+| **terminal-host** | [`packages/terminal-host/`](packages/terminal-host/) | Mac-side tmux/CLI manager |
+
+Each module has its own README and docs directory. Start there when working in a specific module.
 
 ## Documentation
 
-Start at `docs/README.md`.
-
-| Topic | Document |
-|---|---|
-| Docs index | `docs/README.md` |
-| Session architecture | `docs/SESSION_MANAGEMENT.md` |
-| Tools and subagents | `docs/TOOLS_AND_SUBAGENTS.md` |
-| Code patterns and pitfalls | `docs/CODE_PATTERNS.md` |
-| Provider integration | `docs/VOICE_PROVIDER_INTEGRATION.md` |
-| Voice runtime package entrypoint | `docs/voice-runtime/README.md` |
-| Voice runtime internals | `docs/voice-runtime/ARCHITECTURE.md` |
-| Provider adapter details | `docs/voice-runtime/PROVIDERS.md` |
-| Interruption tracking | `docs/voice-runtime/INTERRUPTION_TRACKING.md` |
-| pi-agent integration with runtime package | `docs/voice-runtime/INTEGRATION.md` |
-| Pipecat RTVI provider notes | `docs/PIPECAT_RTVI_PROVIDER.md` |
-| Voice benchmark workflow | `docs/VOICE_BENCHMARKS.md` |
+| Scope | Location | Content |
+|-------|----------|---------|
+| **Project overview** | [`AGENTS.md`](AGENTS.md) | Architecture, module map, dev commands |
+| **System architecture** | [`docs/`](docs/) | Session management, tools, code patterns |
+| **Voice runtime** | [`packages/voice-runtime/docs/`](packages/voice-runtime/docs/) | Provider adapters, benchmarks, interruption tracking |
+| **Voice-agent** | [`packages/voice-agent/docs/`](packages/voice-agent/docs/) | Database, configuration, session lifecycle |
+| **Web dashboard** | [`packages/web-ui/CLAUDE.md`](packages/web-ui/CLAUDE.md) | Store, components, WebSocket protocol |
 
 ## Key Patterns
 
-- `HandoffPacket`: structured context transfer from voice to subagents.
-- `ProcessManager`: non-blocking process lifecycle via events.
-- Capability-first voice adapters: provider features are explicit, not implicit.
-- Framework-level interruption resolution: spoken text vs full generated text.
-- Master/replica websocket model for multi-client audio ownership.
+- **HandoffPacket**: structured context transfer from voice to subagents.
+- **ProcessManager**: non-blocking process lifecycle via events.
+- **Capability-first adapters**: provider features are explicit, not implicit.
+- **Framework-level interruption resolution**: spoken text vs full generated text.
+- **Master/replica WebSocket**: multi-client audio ownership.
 
-See `docs/CODE_PATTERNS.md` and `docs/voice-runtime/README.md`.
-
-## Runtime and Tooling
+## Runtime & Tooling
 
 - Runtime: Bun 1.2+
-- Package manager: bun
+- Package manager: bun (workspace monorepo)
 - DB: SQLite (`bun:sqlite`)
-- Wake-word engine: Porcupine
+- Wake-word: Porcupine (Picovoice)
 - Agent framework: `@openai/agents`
 
-## Useful Commands
+## Commands
 
 ```bash
-# Root
-bun run typecheck:voice-runtime
+# voice-agent
+cd packages/voice-agent && bun run dev       # Dev server
+cd packages/voice-agent && bun test          # Tests
+cd packages/voice-agent && bun run typecheck # Type check
 
-# pi-agent
-cd pi-agent
-bun run dev
-bun run typecheck
-bun test
+# web-ui
+cd packages/web-ui && bun run dev            # Dev server (HMR)
+cd packages/web-ui && bun run build          # Production build
 
-# web
-cd web
-bun run dev
-bun run typecheck
-bun run build
+# voice-runtime
+bun run typecheck:voice-runtime  # Type check
+bun test packages/voice-runtime  # Tests
 
-# mac-daemon
-cd mac-daemon
-bun run dev
+# terminal-host
+cd packages/terminal-host && bun run dev     # Port 3100
 ```
 
 ## Configuration
 
-- Backend env: `.env` (for API keys and daemon endpoints).
-- Runtime JSON config: `.voiceclaw/voice.config.json`.
-- Auth profiles: `.voiceclaw/auth-profiles.json`.
-- Templates: `.voiceclaw/voice.config.example.json`, `.voiceclaw/auth-profiles.example.json`.
+- **Backend env**: `.env` (API keys, daemon endpoints)
+- **Runtime config**: `.voiceclaw/voice.config.json` (mode, provider, model)
+- **Auth profiles**: `.voiceclaw/auth-profiles.json` (credentials, defaults)
+- **Templates**: `.voiceclaw/*.example.json`

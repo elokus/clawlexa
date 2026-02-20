@@ -14,8 +14,8 @@ import type { Socket } from 'net';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_PORT = parseInt(process.env.STATIC_PORT ?? '8080', 10);
 
-// Path to the built web dashboard (relative to pi-agent)
-const STATIC_DIR = path.resolve(__dirname, '../../../web/dist');
+// Path to the built web dashboard (sibling package: packages/web-ui)
+const STATIC_DIR = path.resolve(__dirname, '../../../web-ui/dist');
 
 let server: http.Server | null = null;
 const openConnections = new Set<Socket>();
@@ -122,7 +122,7 @@ export function startStaticServer(): Promise<void> {
     // Check if dist directory exists
     if (!fs.existsSync(STATIC_DIR)) {
       console.log(`[Static] Warning: ${STATIC_DIR} not found. Build the web dashboard first.`);
-      console.log('[Static] Run: cd web && bun run build');
+      console.log('[Static] Run: cd ../web-ui && bun run build');
       resolve(); // Don't fail, just warn
       return;
     }

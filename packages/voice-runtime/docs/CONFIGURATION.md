@@ -2,7 +2,7 @@
 
 This is the app-level integration guide for provider config, control APIs, and operational commands.
 
-Runtime internals live in `docs/voice-runtime/*` and are the canonical source for adapter architecture.
+Runtime internals live in this `docs/` directory and are the canonical source for adapter architecture.
 
 ## 1. Provider Surface (Current)
 
@@ -42,22 +42,11 @@ The dashboard `Voice Runtime` panel writes/reads config through:
 - `PUT /api/config/auth-profiles`
 - `POST /api/config/auth-profiles/test`
 
-## 4. Runtime Integration Files
+## 4. Consumer Integration
 
-- `pi-agent/src/voice/factory.ts`
-- `pi-agent/src/voice/package-backed-runtime.ts`
-- `pi-agent/src/voice/transport-bridge.ts`
-- `pi-agent/src/agent/voice-agent.ts`
+Consumers integrate via the public `SessionInput` API and `parseProviderConfig()` helper. See consumer-specific documentation for integration file details and operational commands.
 
-## 5. Operational Commands
-
-From `pi-agent/`:
-
-- `bun run scratch:voice [auth|ultravox|deepgram|decomposed|all]`
-- `bun run scratch:provider <openai|openrouter|google|deepgram|ultravox>`
-- `bun run scratch:benchmark [list|latest|<report.json>]`
-
-## 6. Benchmark Gate
+## 5. Benchmark Gate
 
 Enable runtime benchmark capture:
 
@@ -66,13 +55,14 @@ VOICE_BENCHMARK_ENABLED=true
 ```
 
 Reports are written to `.benchmarks/voice/` by default.  
-See `docs/VOICE_BENCHMARKS.md` for thresholds and PASS/FAIL policy.
+See [`BENCHMARKS.md`](BENCHMARKS.md) for thresholds and PASS/FAIL policy.
 
-## 7. Canonical Deep-Dive Docs
+## 6. Canonical Deep-Dive Docs
 
-- Runtime architecture: `docs/voice-runtime/ARCHITECTURE.md`
-- Provider adapters/capabilities: `docs/voice-runtime/PROVIDERS.md`
-- Interruption tracking: `docs/voice-runtime/INTERRUPTION_TRACKING.md`
-- pi-agent bridge integration: `docs/voice-runtime/INTEGRATION.md`
-- Pipecat operations: `docs/PIPECAT_RTVI_PROVIDER.md`
-- Benchmark workflow: `docs/VOICE_BENCHMARKS.md`
+- Runtime architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Provider adapters/capabilities: [`PROVIDERS.md`](PROVIDERS.md)
+- Interruption tracking: [`INTERRUPTION_TRACKING.md`](INTERRUPTION_TRACKING.md)
+- Consumer integration guide: see your application's docs
+- Pipecat operations: [`providers/PIPECAT.md`](providers/PIPECAT.md)
+- Benchmark workflow: [`BENCHMARKS.md`](BENCHMARKS.md)
+- Provider deep dives: [`providers/`](providers/)

@@ -15,7 +15,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 import { streamText, generateText, tool } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';

@@ -1,7 +1,7 @@
 /**
  * JSONL Session Logger - Append-only file-based session logging for debugging.
  *
- * Each session gets a `.jsonl` file in `.sessions/` with one JSON object per line.
+ * Each session gets a `.jsonl` file in `.voiceclaw/.sessions/` with one JSON object per line.
  * Inspired by pi-mono's session persistence pattern.
  */
 
@@ -10,7 +10,7 @@ import { join } from 'path';
 import { CliSessionsRepository } from '../db/repositories/cli-sessions.js';
 
 // Session log directory at project root
-const SESSIONS_DIR = join(import.meta.dirname, '..', '..', '..', '.sessions');
+const SESSIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', '.voiceclaw', '.sessions');
 type LoggerSessionType = 'voice' | 'subagent' | 'terminal';
 
 export interface SessionLogEntry {
@@ -36,7 +36,7 @@ export class SessionLogger {
     parentId: string | null = null,
     meta: Record<string, unknown> = {}
   ) {
-    // Ensure .sessions/ directory exists
+    // Ensure .voiceclaw/.sessions/ directory exists
     if (!existsSync(SESSIONS_DIR)) {
       mkdirSync(SESSIONS_DIR, { recursive: true });
     }

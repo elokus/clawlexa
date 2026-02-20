@@ -1,6 +1,6 @@
-# Mac Daemon
+# Terminal Host
 
-CLI execution daemon for the Pi voice assistant system. Manages tmux-backed CLI sessions (Claude Code, etc.) and exposes an HTTP API for control.
+CLI execution daemon for the voice agent system. Manages tmux-backed CLI sessions (Claude Code, etc.) and exposes an HTTP API for control.
 
 ## Prerequisites
 

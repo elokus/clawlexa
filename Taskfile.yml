@@ -62,36 +62,36 @@ tasks:
       - dev:web
 
   dev:daemon:
-    desc: Start mac daemon
-    dir: mac-daemon
+    desc: Start terminal-host daemon
+    dir: packages/terminal-host
     cmds:
-      - npm run dev
+      - bun run dev
 
   dev:daemon:demo:
-    desc: Start mac daemon in demo mode (terminals without claude commands)
-    dir: mac-daemon
+    desc: Start terminal-host daemon in demo mode (terminals without claude commands)
+    dir: packages/terminal-host
     env:
       DEMO_MODE: "true"
     cmds:
-      - npm run dev
+      - bun run dev
 
   dev:agent:
-    desc: Start pi-agent (backend)
-    dir: pi-agent
+    desc: Start voice-agent (backend)
+    dir: packages/voice-agent
     env:
       SKIP_STATIC_SERVER: "true"
       TRANSPORT_MODE: web
     cmds:
-      - npm run dev
+      - bun run dev
 
   dev:web:
-    desc: Start web frontend (Vite dev server)
-    dir: web
+    desc: Start web-ui frontend (Bun dev server)
+    dir: packages/web-ui
     cmds:
-      - npm run dev
+      - bun run dev
 
   tui:inspect:
     desc: Start voice inspector TUI
-    dir: pi-agent
+    dir: packages/voice-agent
     cmds:
       - bun run tui:inspect

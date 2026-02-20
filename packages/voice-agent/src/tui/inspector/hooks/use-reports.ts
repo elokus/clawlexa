@@ -13,8 +13,8 @@ function resolveBenchmarkDir(): string {
     return path.resolve(process.cwd(), process.env.VOICE_BENCH_OUTPUT_DIR);
   }
   const cwdBase = path.basename(process.cwd());
-  if (cwdBase === 'pi-agent') {
-    return path.resolve(process.cwd(), '..', '.benchmarks', 'voice');
+  if (cwdBase === 'voice-agent') {
+    return path.resolve(process.cwd(), '..', '..', '.benchmarks', 'voice');
   }
   return path.resolve(process.cwd(), '.benchmarks', 'voice');
 }

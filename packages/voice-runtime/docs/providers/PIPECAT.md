@@ -2,13 +2,12 @@
 
 This document describes the `pipecat-rtvi` adapter integration in the extracted runtime.
 
-Capability matrix and cross-provider comparisons live in `docs/voice-runtime/PROVIDERS.md`.
+Capability matrix and cross-provider comparisons live in [`../PROVIDERS.md`](../PROVIDERS.md).
 
 ## 1. Code Locations
 
 - adapter: `packages/voice-runtime/src/adapters/pipecat-rtvi-adapter.ts`
-- runtime registration: `pi-agent/src/voice/factory.ts`
-- config resolution: `pi-agent/src/voice/config.ts`, `pi-agent/src/voice/settings.ts`
+- runtime registration: your application's factory/config files
 
 ## 2. Session Flow
 
@@ -69,7 +68,7 @@ Turn lifecycle is deduplicated so `turnComplete` is emitted once per turn.
 
 ## 7. Operational Checklist
 
-1. Confirm Pipecat server is reachable from `pi-agent`.
+1. Confirm Pipecat server is reachable from your application.
 2. Start with websocket transport first (`transport: "websocket"`).
 3. Validate handshake and first turn in logs.
 4. Enable benchmark capture (`VOICE_BENCHMARK_ENABLED=true`) and confirm no ordering/latency violations.

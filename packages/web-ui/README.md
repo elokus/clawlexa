@@ -5,7 +5,7 @@ Real-time web dashboard for the Pi voice agent. Displays conversation transcript
 ## Quick Start
 
 ```bash
-cd web
+cd packages/web-ui
 
 # Install dependencies
 bun install
@@ -30,7 +30,7 @@ bun run build
 ## Project Structure
 
 ```
-web/
+packages/web-ui/
 ├── src/
 │   ├── components/
 │   │   ├── EventLog.tsx         # Expandable debug panel (bottom-right)
@@ -40,7 +40,7 @@ web/
 │   │   └── VoiceVisualizer.tsx  # Audio waveform bars
 │   │
 │   ├── hooks/
-│   │   └── useWebSocket.ts      # WebSocket connection to pi-agent
+│   │   └── useWebSocket.ts      # WebSocket connection to voice-agent
 │   │
 │   ├── stores/
 │   │   ├── agent.ts             # Agent state (messages, status, events)
@@ -67,7 +67,7 @@ web/
 Create `.env` for production:
 
 ```bash
-# WebSocket URL to pi-agent (required for live mode)
+# WebSocket URL to voice-agent (required for live mode)
 VITE_WS_URL=ws://marlon.local:3001
 
 # Enable demo mode with mock data (optional)
@@ -80,7 +80,7 @@ VITE_DEMO_MODE=true
 
 When `VITE_WS_URL` is not set, the app runs in demo mode:
 
-- **WebSocket disabled** - No connection attempts to pi-agent
+- **WebSocket disabled** - No connection attempts to voice-agent
 - **Mock conversation loaded** - 8 sample messages in German demonstrating todos, timers, lights, and weather
 - **State set to "listening"** - Shows active UI state
 - **Profile set to "Jarvis"** - Shows profile badge
@@ -103,7 +103,7 @@ The mock also includes 12 sample events in the Event Log (tool calls for `view_t
 
 ### Live Mode
 
-To connect to the real pi-agent:
+To connect to the real voice-agent:
 
 ```bash
 # Create .env file
@@ -143,7 +143,7 @@ To disable mock data loading, comment out in `App.tsx`:
 
 ## WebSocket Protocol
 
-The frontend connects to the pi-agent WebSocket server on port 3001.
+The frontend connects to the voice-agent WebSocket server on port 3001.
 
 ### Message Types (Server → Client)
 
@@ -261,7 +261,7 @@ interface SessionsStore {
 
 ### Pi-Agent WebSocket Server
 
-The pi-agent needs to run a WebSocket server on port 3001. See `pi-agent/src/api/websocket.ts`:
+The voice-agent needs to run a WebSocket server on port 3001. See `packages/voice-agent/src/api/websocket.ts`:
 
 ```typescript
 // Broadcast helpers
@@ -304,7 +304,7 @@ bun run build
 # Output in dist/
 ```
 
-Or serve directly from pi-agent by adding static file serving to the webhook server.
+Or serve directly from voice-agent by adding static file serving to the webhook server.
 
 ## Future Enhancements
 

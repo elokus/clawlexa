@@ -1,14 +1,14 @@
-# pi-agent Integration
+# voice-agent Integration
 
 This project integrates the package runtime through a thin compatibility layer.
 
 ## Integration Files
 
-- `pi-agent/src/voice/factory.ts`
-- `pi-agent/src/voice/package-backed-runtime.ts`
-- `pi-agent/src/voice/transport-bridge.ts`
-- `pi-agent/src/voice/benchmark-recorder.ts`
-- `pi-agent/src/agent/voice-agent.ts`
+- `packages/voice-agent/src/voice/factory.ts`
+- `packages/voice-agent/src/voice/package-backed-runtime.ts`
+- `packages/voice-agent/src/voice/transport-bridge.ts`
+- `packages/voice-agent/src/voice/benchmark-recorder.ts`
+- `packages/voice-agent/src/agent/voice-agent.ts`
 
 ## Integration Flow
 

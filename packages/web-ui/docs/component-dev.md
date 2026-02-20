@@ -6,12 +6,12 @@ A dedicated environment for developing and testing UI components in isolation wi
 
 ```bash
 # Terminal 1: Backend (with demo routes)
-cd pi-agent
-npm run dev
+cd packages/voice-agent
+bun run dev
 
 # Terminal 2: Frontend
-cd web
-npm run dev
+cd packages/web-ui
+bun run dev
 
 # Open browser
 open http://localhost:5173/dev
@@ -47,7 +47,7 @@ open http://localhost:5173/dev
 ## File Structure
 
 ```
-web/src/dev/
+packages/web-ui/src/dev/
 ├── DevPage.tsx                    # Main page component
 ├── registry.ts                    # Demo registration system
 ├── index.ts                       # Public exports
@@ -64,7 +64,7 @@ web/src/dev/
         ├── component.tsx         # Demo wrapper component
         └── scenarios.ts          # Mock stream data
 
-pi-agent/src/demo/
+packages/voice-agent/src/demo/
 ├── index.ts                      # Demo API router
 └── streams/
     └── index.ts                  # Pre-recorded demo streams
@@ -75,12 +75,12 @@ pi-agent/src/demo/
 ### Step 1: Create Demo Directory
 
 ```bash
-mkdir -p web/src/dev/demos/my-component
+mkdir -p packages/web-ui/src/dev/demos/my-component
 ```
 
 ### Step 2: Create Demo Files
 
-**`web/src/dev/demos/my-component/scenarios.ts`**
+**`packages/web-ui/src/dev/demos/my-component/scenarios.ts`**
 ```typescript
 import type { StreamScenario } from '../../registry';
 
@@ -103,7 +103,7 @@ export const basicScenario: StreamScenario = {
 };
 ```
 
-**`web/src/dev/demos/my-component/component.tsx`**
+**`packages/web-ui/src/dev/demos/my-component/component.tsx`**
 ```typescript
 import { MyComponent } from '../../../components/MyComponent';
 import type { DemoProps } from '../../registry';
@@ -118,7 +118,7 @@ export function MyComponentDemo({ events, isPlaying, onReset }: DemoProps) {
 }
 ```
 
-**`web/src/dev/demos/my-component/index.ts`**
+**`packages/web-ui/src/dev/demos/my-component/index.ts`**
 ```typescript
 import { registerDemo } from '../../registry';
 import { MyComponentDemo } from './component';
@@ -137,7 +137,7 @@ registerDemo({
 
 ### Step 3: Register the Demo
 
-Add to `web/src/dev/demos/index.ts`:
+Add to `packages/web-ui/src/dev/demos/index.ts`:
 
 ```typescript
 import './my-component';
@@ -179,7 +179,7 @@ interface StreamEvent {
 
 For real streaming from backend (useful for testing with production-like data):
 
-**`pi-agent/src/demo/streams/index.ts`**
+**`packages/voice-agent/src/demo/streams/index.ts`**
 ```typescript
 const myStream: DemoStream = {
   id: 'my-stream',

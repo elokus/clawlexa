@@ -16,7 +16,6 @@ Metrics are produced by `VoiceBenchmarkRecorder` and evaluated with threshold ga
 Core implementation:
 
 - metric engine: `packages/voice-runtime/src/benchmarks/voice-benchmark.ts`
-- session capture integration: `pi-agent/src/voice/benchmark-recorder.ts`
 
 ## 2. Enabling Benchmarks
 
@@ -60,13 +59,12 @@ Default location:
 
 ## 4. Inspecting Reports
 
-From `pi-agent/`:
+Each report is a self-contained JSON file. Open it directly or use your application's benchmark inspection tooling. The JSON structure contains:
 
-```bash
-bun run scratch:benchmark list
-bun run scratch:benchmark latest
-bun run scratch:benchmark <path-to-report.json>
-```
+- `metadata` — session ID, profile, provider, disconnect reason
+- `thresholds` — the gates applied
+- `rawInput` — raw benchmark measurements
+- `report` — evaluated results with `pass` boolean and `violations` array
 
 ## 5. Agnostic Contract Replay (Deterministic)
 

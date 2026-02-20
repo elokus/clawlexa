@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// WebSocket Hook - Real-time connection to pi-agent
+// WebSocket Hook - Real-time connection to voice-agent
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef } from 'react';

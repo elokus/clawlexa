@@ -1,86 +1,130 @@
-# Voice Agent - Configurable Voice Runtime
+# VoiceClaw - Configurable Voice Agent Platform
 
 Real-time voice agent with pluggable voice backends, wake word detection, tool support, and decomposed STT/LLM/TTS pipelines.
+
+## Module Responsibilities
+
+This is a Bun monorepo. Each module owns its domain and has its own README and docs.
+
+**Always read the module-specific README when working in that module.**
+
+| Module | Path | Owns | Docs |
+|--------|------|------|------|
+| **voice-runtime** | `packages/voice-runtime/` | Provider adapters, audio transcoding, session API, benchmarks | [`packages/voice-runtime/docs/`](packages/voice-runtime/docs/) |
+| **voice-agent** | `packages/voice-agent/` | Voice agent orchestration, session management, DB, config, tools, subagents | [`packages/voice-agent/docs/`](packages/voice-agent/docs/) |
+| **web-ui** | `packages/web-ui/` | React dashboard, WebSocket client, audio session, Zustand store | [`packages/web-ui/CLAUDE.md`](packages/web-ui/CLAUDE.md) |
+| **terminal-host** | `packages/terminal-host/` | Mac-side tmux/CLI manager for remote terminal sessions | [`packages/terminal-host/README.md`](packages/terminal-host/README.md) |
+
+### voice-runtime (`packages/voice-runtime/`)
+
+Provider-agnostic voice runtime package. Provides a stable `VoiceSession` API across all voice providers.
+
+**Owns:**
+- Provider adapter lifecycle (connect, disconnect, interrupt, tool callbacks)
+- Audio boundary normalization and resampling (PCM16 mono)
+- Normalized stream events (transcripts, tool calls, latency, usage, state)
+- Framework-level interruption resolution (spoken vs full generated text)
+- Capability-first feature gating per provider
+- Benchmark recording and evaluation
+
+**Does NOT own:** wake word, session persistence, DB, WebSocket broadcasting, profile orchestration, config resolution.
+
+**Adapters:** `openai-sdk`, `ultravox-ws`, `gemini-live`, `decomposed`, `pipecat-rtvi`
+
+See: [`packages/voice-runtime/docs/`](packages/voice-runtime/docs/)
+
+### voice-agent (`packages/voice-agent/`)
+
+Voice agent backend. Orchestrates sessions, resolves config, manages tools and subagents.
+
+**Owns:**
+- VoiceAgent class (profile activation, session lifecycle, event routing)
+- Session hierarchy (voice → subagent → terminal) with SQLite persistence
+- Configuration resolution (.voiceclaw/ JSON + env vars + profile overrides)
+- AI SDK adapter bridge (voice events → AI SDK Data Stream Protocol)
+- Tool definitions and execution (todo, timer, lights, search, CLI)
+- Subagent orchestration (CLI via Grok, web-search via Grok:online)
+- HandoffPacket context transfer (voice → subagents)
+- ProcessManager (async non-blocking tool execution)
+- WebSocket server + webhook API
+- Wake word detection (Porcupine)
+- Audio transport (local PipeWire / web WebSocket)
+
+**Does NOT own:** provider protocol implementation (that's voice-runtime).
+
+See: [`packages/voice-agent/docs/`](packages/voice-agent/docs/)
+
+### web-ui (`packages/web-ui/`)
+
+React dashboard for the voice agent. Pluggable UI interface.
+
+**Owns:**
+- Unified Zustand store (sessions, voice state, activities)
+- WebSocket client with Master/Replica pattern
+- Audio session (mic/speaker for master clients)
+- AgentStage (unified voice + subagent renderer)
+- TerminalStage (PTY via xterm.js)
+- ThreadRail / BackgroundRail navigation
+- Component dev environment (/dev)
+
+See: [`packages/web-ui/CLAUDE.md`](packages/web-ui/CLAUDE.md)
 
 ## Quick Start
 
 ```bash
-cd pi-agent
+# Install workspace dependencies
 bun install
+
+# Terminal 1: Backend
+cd packages/voice-agent
+SKIP_STATIC_SERVER=true TRANSPORT_MODE=web bun run dev
+
+# Terminal 2: Frontend
+cd packages/web-ui
 bun run dev
-# Say "Jarvis" or "Computer" to activate
 ```
 
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [`docs/SESSION_MANAGEMENT.md`](docs/SESSION_MANAGEMENT.md) | Session management architecture (primary) |
-| [`docs/TOOLS_AND_SUBAGENTS.md`](docs/TOOLS_AND_SUBAGENTS.md) | Tools, subagents, CLI flow, prompt management |
-| [`docs/CODE_PATTERNS.md`](docs/CODE_PATTERNS.md) | Hard-won patterns & bug fixes |
-| [`docs/COMPONENT_DEV.md`](docs/COMPONENT_DEV.md) | Component development environment |
-| [`docs/VOICE_PROVIDER_INTEGRATION.md`](docs/VOICE_PROVIDER_INTEGRATION.md) | App-level voice config, control APIs, and scratch operations |
-| [`docs/PIPECAT_RTVI_PROVIDER.md`](docs/PIPECAT_RTVI_PROVIDER.md) | Pipecat RTVI adapter handshake/events/config |
-| [`docs/VOICE_BENCHMARKS.md`](docs/VOICE_BENCHMARKS.md) | Runtime benchmark capture and PASS/FAIL gating |
-| [`web/CLAUDE.md`](web/CLAUDE.md) | Web dashboard architecture |
-
-## Project Setup
-
-- **Runtime**: Bun 1.2+
-- **Package Manager**: bun
-- **Framework**: OpenAI Agents SDK (`@openai/agents`)
-- **Database**: SQLite (`bun:sqlite`)
-- **Wake Word**: Porcupine (Picovoice, local)
-- **Web**: Bun fullstack dev server + React + Tailwind
-
-## Development Workflow
-
-### Atomic Commits
-
-**After every execution step, commit and push:**
-
-```bash
-git add . && git commit -m "descriptive message" && git push
-```
-
-Each logical change gets its own commit.
-
-### Plans Directory (`.plan/`)
-
-Store architecture decisions, refactoring guides, and feature specs in `.plan/`.
-
-## Wake Words & Profiles
-
-| Wake Word | Profile | Voice | Capabilities |
-|-----------|---------|-------|--------------|
-| **"Jarvis"** | Jarvis | echo | Todos, timers, lights, web search |
-| **"Computer"** | Marvin | ash | CLI sessions, coding tasks on Mac |
+Open `http://localhost:5173`.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           RASPBERRY PI                                   │
+│  voice-runtime (packages/voice-runtime/)                                │
+│  Provider adapters: OpenAI SDK │ Ultravox WS │ Gemini Live │           │
+│                     Decomposed (STT+LLM+TTS) │ Pipecat RTVI           │
+│  ─────────────────── stable VoiceSession API ──────────────────────    │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │ creates sessions
+┌────────────────────────────────┴────────────────────────────────────────┐
+│  voice-agent (packages/voice-agent/)                                     │
 │                                                                         │
 │  Porcupine ──▶ VoiceAgent ◀──▶ SQLite DB                              │
 │                    │                                                    │
 │            ┌───────┴───────┐                                           │
 │            ▼               ▼                                           │
-│     VoiceRuntime       Scheduler                                       │
-│ (OpenAI/Ultravox/      (Timers)                                        │
-│  Decomposed STT+LLM+TTS)                                               │
+│     VoiceSession       Scheduler                                       │
+│     (via runtime)      (Timers)                                        │
 │            │                                                           │
 │     ┌──────┴──────┐                                                    │
 │     ▼              ▼                                                   │
 │  Tools          Subagents                                              │
-│  (todo,timer,   CLI Agent (Grok) ──▶ Mac Daemon                       │
+│  (todo,timer,   CLI Agent (Grok) ──▶ Terminal Host                    │
 │   search,light) Web Search (Grok:online)                               │
-└─────────────────────────────────────────────────────────────────────────┘
-                              │ HTTP
-                              ▼
+└──────────────────────┬──────────────────────────────────────────────────┘
+                       │ WebSocket + AI SDK stream events
+            ┌──────────┴──────────┐
+            ▼                     ▼
+┌─────────────────────────┐  ┌──────────────────┐
+│  web-ui                 │  │  TUI (planned)   │
+│  (packages/web-ui/)     │  │  Terminal UI     │
+│  React dashboard        │  │                  │
+└─────────────────────────┘  └──────────────────┘
+            │ HTTP
+            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  MACBOOK - Mac Daemon (port 3100)                                       │
-│  Manages tmux sessions, runs Claude Code CLI                            │
+│  terminal-host (packages/terminal-host/)                                │
+│  Manages tmux sessions, runs Claude Code CLI (port 3100)               │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -96,163 +140,155 @@ All agents emit **AI SDK Data Stream Protocol** events via WebSocket `stream_chu
 
 ### Key Patterns
 
-- **HandoffPacket**: Structured context transfer from voice → subagents (anti-telephone)
+- **HandoffPacket**: Structured context transfer from voice → subagents (prevents information loss)
 - **ProcessManager**: EventEmitter-based async process management (non-blocking tools)
 - **Session Names**: Adjective-noun pairs (e.g. "swift-fox") with fuzzy resolution
 - **Master/Replica**: Multi-client WebSocket with single audio master
+- **Capability-first**: Provider features are explicit via `ProviderCapabilities`, not implicit
 
-## Project Structure
+## Wake Words & Profiles
 
-```
-voice-agent/
-├── CLAUDE.md              # This file (entry point)
-├── docs/                  # Detailed documentation
-├── prompts/               # Agent prompt versions (jarvis/, marvin/, cli-orchestrator/, web-search/)
-├── web/                   # Web Dashboard (React + Bun)
-│   ├── dev-server.ts          # Bun.serve with WS proxy, API proxy, SPA fallback
-│   ├── src/
-│   │   ├── components/stages/  # AgentStage (unified), TerminalStage
-│   │   ├── components/rails/   # ThreadRail (navigation), BackgroundRail
-│   │   ├── stores/             # Zustand unified store + message handler
-│   │   └── hooks/              # useWebSocket, useAudioSession
-│   └── package.json
-├── pi-agent/              # Backend (Bun)
-│   ├── src/
-│   │   ├── agent/              # VoiceAgent, profiles
-│   │   ├── realtime/           # OpenAI Realtime SDK + AI SDK adapter
-│   │   ├── api/                # WebSocket server, webhooks, stream types
-│   │   ├── context/            # HandoffPacket (anti-telephone)
-│   │   ├── processes/          # ProcessManager (async runtime)
-│   │   ├── subagents/          # CLI orchestrator, web search
-│   │   ├── tools/              # Voice agent tools
-│   │   ├── db/                 # SQLite schema + repositories
-│   │   └── utils/              # Session names generator/resolver
-│   ├── tests/                  # 26 tests (bun test)
-│   └── package.json
-└── mac-daemon/            # Mac-side tmux/CLI manager
-```
+| Wake Word | Profile | Voice | Capabilities |
+|-----------|---------|-------|--------------|
+| **"Jarvis"** | Jarvis | echo | Todos, timers, lights, web search |
+| **"Computer"** | Marvin | ash | CLI sessions, coding tasks on Mac |
 
 ## Development Commands
 
-### Local Mac Development
-
 ```bash
-# Terminal 1: Backend
-cd pi-agent
-SKIP_STATIC_SERVER=true TRANSPORT_MODE=web bun run dev
+# voice-agent
+cd packages/voice-agent
+bun run dev                    # Development server
+bun test                       # Run tests
+bun run typecheck              # TypeScript check
+bun run scratch:voice [mode]   # Voice API smoke lab
+bun run scratch:provider [p]   # Provider contract check
+bun run scratch:benchmark      # Inspect benchmark reports
 
-# Terminal 2: Frontend
-cd web
-bun run dev
+# web-ui
+cd packages/web-ui
+bun run dev                    # Dev server with HMR
+bun run build                  # Production build
+bun run typecheck              # TypeScript check
+
+# voice-runtime
+bunx tsc -p packages/voice-runtime/tsconfig.json --noEmit
+bun test packages/voice-runtime/tests/*.test.ts
+
+# terminal-host
+cd packages/terminal-host
+bun run dev                    # Port 3100
 ```
 
-Access at `http://localhost:5173` - Bun dev server proxies WebSocket and API.
+## Documentation Map
 
-### Pi Deployment
-
-```bash
-cd pi-agent
-TRANSPORT_MODE=local bun run dev
-# Web dashboard at http://marlon.local:8080
 ```
+docs/                              # System-level architecture
+├── sessions.md                    # Session model and lifecycle
+└── tools-and-subagents.md         # Tool execution and subagent flow
 
-### Commands
+packages/voice-runtime/docs/       # Voice runtime internals
+├── README.md                      # Package overview and reading order
+├── ARCHITECTURE.md                # Three-plane model (control/media/provider)
+├── PROVIDERS.md                   # Adapter catalog and capabilities
+├── CONFIGURATION.md               # App-level config and control APIs
+├── INTERRUPTION_TRACKING.md       # Spoken text vs full text alignment
+├── BENCHMARKS.md                  # Metrics, thresholds, report workflow
+└── providers/                     # Provider-specific deep dives
+    ├── DEEPGRAM.md                # TTS WebSocket streaming, STT
+    ├── OPENAI.md                  # Realtime SDK adapter
+    ├── ULTRAVOX.md                # WebSocket protocol
+    ├── GEMINI.md                  # Gemini Live adapter
+    ├── DECOMPOSED.md              # STT+LLM+TTS pipeline
+    └── PIPECAT.md                 # RTVI protocol adapter
 
-```bash
-# pi-agent
-bun run dev          # Development
-bun test             # Run tests (26 tests)
-bun run typecheck    # TypeScript check
-bun run scratch:voice [auth|ultravox|deepgram|decomposed|all]  # Voice API smoke lab
-bun run scratch:provider <openai|openrouter|google|deepgram|ultravox>  # Provider contract check
-bun run scratch:benchmark [list|latest|<report.json>]  # Inspect benchmark reports
+packages/voice-agent/docs/         # Backend-specific docs
+├── DATABASE.md                    # SQLite schema, migrations, repositories
+├── CONFIGURATION.md               # Config resolution, .voiceclaw/, env vars
+├── SESSIONS.md                    # Session lifecycle, hierarchy, naming
+└── voice-runtime-integration.md   # How voice-agent integrates voice-runtime
 
-# web
-bun run dev          # Dev server with HMR
-bun run build        # Production build
-bun run typecheck    # TypeScript check
+packages/web-ui/CLAUDE.md          # Web dashboard architecture
+packages/web-ui/docs/
+└── component-dev.md               # Frontend component dev environment
+
+packages/terminal-host/README.md   # Terminal host API and tmux integration
+packages/voice-agent/prompts/      # Agent prompt versions (jarvis/, marvin/, etc.)
+.plan/                             # Architecture decisions and feature specs
 ```
 
 ## Configuration
 
+Configuration details live in the module that owns them:
+- **Voice runtime config**: See [`packages/voice-runtime/docs/CONFIGURATION.md`](packages/voice-runtime/docs/CONFIGURATION.md)
+- **Voice-agent config**: See [`packages/voice-agent/docs/CONFIGURATION.md`](packages/voice-agent/docs/CONFIGURATION.md)
+- **Web config**: See [`packages/web-ui/CLAUDE.md`](packages/web-ui/CLAUDE.md)
+
 ### Environment Variables (.env)
 
 ```bash
-OPENAI_API_KEY=sk-proj-...     # Required
-PICOVOICE_ACCESS_KEY=...       # Required
-GOVEE_API_KEY=...              # Optional
-MAC_DAEMON_URL=http://MacBook-Pro-von-Lukasz.local:3100
-OPEN_ROUTER_API_KEY=...        # For subagents (Grok)
-DEEPGRAM_API_KEY=...           # Optional (decomposed STT/TTS)
-ULTRAVOX_API_KEY=...           # Optional (ultravox voice-to-voice)
+OPENAI_API_KEY=sk-proj-...         # Required
+PICOVOICE_ACCESS_KEY=...           # Required (wake word)
+MAC_DAEMON_URL=http://...          # Mac daemon endpoint
+OPEN_ROUTER_API_KEY=...            # For subagents (Grok)
+DEEPGRAM_API_KEY=...               # Optional (decomposed STT/TTS)
+ULTRAVOX_API_KEY=...               # Optional (Ultravox provider)
 ```
 
-### Web Environment (web/.env)
+### Runtime Config (`.voiceclaw/`)
 
-```bash
-PUBLIC_DEMO_MODE=true           # Mock data mode
-# PUBLIC_WS_URL=ws://marlon.local:3001    # Only for Pi deployment
-# PUBLIC_API_URL=http://marlon.local:3000  # Only for Pi deployment
-```
+JSON-backed runtime configuration:
+- `.voiceclaw/voice.config.json` — mode, provider, model, turn settings
+- `.voiceclaw/auth-profiles.json` — API credentials and provider defaults
 
-Uses `PUBLIC_*` prefix with `process.env.PUBLIC_*` (Bun convention, not Vite's `import.meta.env`).
+See templates: `.voiceclaw/*.example.json`
 
-### JSON Runtime Config (`.voiceclaw/`)
+## Runtime & Tooling
 
-Voice runtime config is now JSON-backed:
+- **Runtime**: Bun 1.2+
+- **Package manager**: bun (workspace monorepo)
+- **Database**: SQLite via `bun:sqlite`
+- **Wake word**: Porcupine (Picovoice, local)
+- **Agent framework**: `@openai/agents`
+- **Web**: Bun fullstack dev server + React + Tailwind
 
-- `.voiceclaw/voice.config.json`
-- `.voiceclaw/auth-profiles.json`
+## Development Patterns
 
-Templates:
+Hard-won patterns from development. Each entry: problem, fix, file reference.
 
-- `.voiceclaw/voice.config.example.json`
-- `.voiceclaw/auth-profiles.example.json`
+### WebSocket
 
-`voice.config.json` controls mode/provider/model/turn settings.  
-`auth-profiles.json` controls API credentials and provider default mappings.
+- **StrictMode singleton**: React StrictMode double-mounts create duplicate WebSocket connections. Fix: module-level singleton with ref counting + delayed close (500ms). See `packages/web-ui/src/hooks/useWebSocket.ts`.
+- **Binary detection**: `Buffer.isBuffer(data)` is wrong for detecting binary WS messages (text also arrives as Buffer in Node `ws`). Fix: only use the `isBinary` flag. See `packages/voice-agent/src/api/websocket.ts`.
 
-The web dashboard includes a **Voice Runtime** panel (above the control bar) to edit/save core mode/provider/model settings without touching files manually.
-It uses provider-native catalogs from `/api/config/voice/catalog` and shows resolved per-profile runtime via `/api/config/voice/effective`.
+### Audio
 
-### Profile Configuration
+- **Buffering during connection**: Browser sends mic audio before OpenAI session connects. Fix: buffer audio in `VoiceSession` during connection, flush when ready. See `packages/voice-agent/src/realtime/session.ts`.
+- **Echo prevention**: Don't send mic audio while agent is speaking/thinking. Fix: gate `sendBinary()` on `stateRef.current`. See `packages/web-ui/src/hooks/useAudioSession.ts`.
+- **Interruption handling**: Buffered TTS continues playing during barge-in. Fix: propagate `audio_interrupted` through transport layer to frontend `audioController.interrupt()`. See `packages/voice-agent/src/agent/voice-agent.ts`.
+- **Playback scheduling**: Checking `playbackStartTime < currentTime` resets scheduling in tight loops. Fix: check if scheduled END time is in the past. See `packages/web-ui/src/hooks/useAudioSession.ts`.
 
-Edit `pi-agent/src/agent/profiles.ts`: `instructions`, `voice`, `tools`, `wakeWord`.
+### React
 
-## Database
+- **State transition detection**: Auto-stop on state change triggers on initial mount. Fix: track previous state with `useRef`, only act on actual transitions. See `packages/web-ui/src/hooks/useAudioSession.ts`.
+- **Demo mode check**: Don't use absence of env vars. Fix: explicit `process.env.PUBLIC_DEMO_MODE === 'true'` check.
 
-SQLite at `~/voice-agent.db` (9 migrations):
+### Terminal
 
-| Table | Purpose |
-|-------|---------|
-| `cli_sessions` | Session metadata + hierarchy + names |
-| `cli_events` | Session event log |
-| `handoff_packets` | Context handoff persistence |
-| `timers` | Timers and reminders |
-| `agent_runs` | Conversation history |
+- **PTY multiplexing**: Multiple WS connections to same terminal each spawned new `tmux attach-session`. Fix: one PTY per session, multiple WS viewers via `viewers.add(ws)`. See `packages/terminal-host/src/pty/manager.ts`.
+- **Client singleton**: React StrictMode creates multiple terminal WS connections. Fix: module-level singleton map keyed by sessionId with ref counting + delayed cleanup. See `packages/web-ui/src/lib/terminal-client.ts`.
 
-## Mac Daemon
+### AI SDK
 
-```bash
-cd mac-daemon
-bun run dev  # Port 3100
-curl http://MacBook-Pro-von-Lukasz.local:3100/health
-```
+- **Transcript roles**: User and assistant transcripts concatenated into one message. Fix: send user transcripts as custom `user-transcript` event, assistant as `text-delta`. See `packages/voice-agent/src/realtime/ai-sdk-adapter.ts`.
+- **Assistant double-emit guard**: OpenAI realtime emits both streamed deltas (with `item_id`) and final `agent_end` (without `itemId`). Fix: drop final transcript if deltas already seen; don't reset dedupe on state transition. See `packages/voice-agent/src/agent/voice-agent.ts`.
+- **Ultravox client tool contract**: Ultravox uses `role: "agent"` (not `assistant`), `delta` field for partials. Fix: map `agent` to assistant, register tools via `selectedTools.temporaryTool`, round-trip `client_tool_result` with `invocationId`. See `packages/voice-runtime/src/adapters/ultravox-ws-adapter.ts`.
+- **Barge-in / turn-lag**: Mic suppression during speaking + 100ms chunk size adds latency. Fix: always stream mic (provider handles interruption), reduce chunk to 40ms, use negotiated sample rates. See `packages/web-ui/src/hooks/useAudioSession.ts`, `packages/voice-runtime/src/adapters/ultravox-ws-adapter.ts`.
 
-## WebSocket Messages (10 Core Types)
+### CSS
 
-| Message | Direction | Purpose |
-|---------|-----------|---------|
-| `welcome` | S→C | Client identity + service state |
-| `stream_chunk` | S→C | All agent events (AI SDK format) |
-| `session_tree_update` | S→C | Session hierarchy changes |
-| `state_change` | S→C | Voice state (listening/thinking/speaking) |
-| `master_changed` | S→All | Multi-client master coordination |
-| `service_state_changed` | S→All | Service active/dormant + audio mode |
-| `audio_control` | S→C | Audio playback (start/stop/interrupt) |
-| `session_started` | S→C | Voice session activated |
-| `session_ended` | S→C | Voice session deactivated |
-| `cli_session_deleted` | S→C | Terminal session cleanup |
+- **3D perspective nesting**: Nested `perspective` + `preserve-3d` cause compounded transforms. Fix: apply `perspective` to ONE ancestor only, cap depth effects at index 5.
+- **shadcn dark mode**: CSS variables in `:root` are light mode; dark mode is scoped under `.dark`. Fix: apply `class="dark"` to the HTML element.
 
 ## Notes
 
@@ -260,7 +296,4 @@ curl http://MacBook-Pro-von-Lukasz.local:3100/health
 - Wake word detection runs locally (Porcupine)
 - Conversation timeout: 60 seconds of silence
 - Default model: gpt-4o-mini-realtime (cost-effective)
-- Webhook server on Pi: port 3000
-- OpenAI realtime dedupe guard: assistant `delta` + final `agent_end` (without `itemId`) must not both be forwarded.
-- Ultravox stream contract: assistant role may arrive as `agent`; client tools require `client_tool_invocation` -> local execute -> `client_tool_result`.
-- See `/home/elokus/CLAUDE.md` for device-level docs
+- See device-level docs on Pi at `/home/elokus/CLAUDE.md`

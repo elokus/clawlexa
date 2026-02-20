@@ -1,8 +1,8 @@
 import { config as loadEnv } from 'dotenv';
 import { resolve } from 'path';
 
-// Load .env from parent directory (shared with Python agent)
-loadEnv({ path: resolve(process.cwd(), '../.env') });
+// Load .env from repo root (two levels up from packages/voice-agent)
+loadEnv({ path: resolve(process.cwd(), '../../.env') });
 
 export const config = {
   openai: {

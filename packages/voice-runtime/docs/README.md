@@ -1,6 +1,6 @@
 # Voice Runtime Package
 
-`@voiceclaw/voice-runtime` is the provider-agnostic runtime used by `pi-agent` for realtime voice sessions.
+`@voiceclaw/voice-runtime` is the provider-agnostic runtime used by voice agent applications for realtime voice sessions.
 
 It gives one stable session API while allowing multiple provider adapters (`openai-sdk`, `ultravox-ws`, `gemini-live`, `decomposed`, `pipecat-rtvi`) behind the same contract.
 
@@ -48,22 +48,16 @@ bun test packages/voice-runtime/tests/provider-contract-replay.test.ts
 
 ### Build Fixture From Real Session
 
-Record a real multi-turn call, then convert the `.sessions/*.jsonl` log into a contract fixture:
+Record a real multi-turn call, then convert the session log into a contract fixture using your application's fixture generation tooling. The output fixture should be placed in:
 
-```bash
-cd pi-agent
-bun run scratch:contract-fixture <session-id> --case-id=live_multiturn_case
-```
+- `packages/voice-runtime/tests/contracts/fixtures/*.jsonl`
 
-This writes a fixture into:
-
-- `packages/voice-runtime/tests/contracts/fixtures/*-live-multiturn.jsonl`
-
-and prints a `contract-cases.ts` stub with expected turn/tool/final counts from the live run.
+The fixture generator should produce a `contract-cases.ts` stub with expected turn/tool/final counts from the live run.
 
 ## Read Next
 
-1. `docs/voice-runtime/ARCHITECTURE.md`
-2. `docs/voice-runtime/PROVIDERS.md`
-3. `docs/voice-runtime/INTERRUPTION_TRACKING.md`
-4. `docs/voice-runtime/INTEGRATION.md`
+1. [`ARCHITECTURE.md`](ARCHITECTURE.md) — Three-plane model
+2. [`PROVIDERS.md`](PROVIDERS.md) — Adapter catalog and capabilities
+3. [`INTERRUPTION_TRACKING.md`](INTERRUPTION_TRACKING.md) — Spoken text alignment
+4. Consumer integration — see your application's docs
+5. [`providers/`](providers/) — Provider-specific deep dives (Deepgram, OpenAI, etc.)

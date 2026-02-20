@@ -1,5 +1,5 @@
 {
-  "name": "vertex-voice-dashboard",
+  "name": "@voiceclaw/web-ui",
   "version": "0.1.0",
   "description": "Real-time voice agent dashboard",
   "type": "module",

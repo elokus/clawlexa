@@ -114,8 +114,8 @@ export function resolveOutputDir(): string {
   }
 
   const cwdBase = path.basename(process.cwd());
-  if (cwdBase === 'pi-agent') {
-    return path.resolve(process.cwd(), '..', '.benchmarks', 'voice');
+  if (cwdBase === 'voice-agent') {
+    return path.resolve(process.cwd(), '..', '..', '.benchmarks', 'voice');
   }
   return path.resolve(process.cwd(), '.benchmarks', 'voice');
 }

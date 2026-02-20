@@ -5,7 +5,7 @@ React + Bun + TypeScript web dashboard for the Voice Agent system.
 ## Quick Start
 
 ```bash
-cd web
+cd packages/web-ui
 bun install
 bun run dev        # Dev server at http://localhost:5173
 bun run typecheck  # Type checking
@@ -17,7 +17,7 @@ bun run build      # Production build
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              App.tsx                                         │
-│  ├─ useWebSocket()     → WebSocket connection to pi-agent                   │
+│  ├─ useWebSocket()     → WebSocket connection to voice-agent                 │
 │  ├─ useAudioSession()  → Mic/speaker control (master clients only)          │
 │  └─ StageOrchestrator  → Main 3-column layout                               │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -208,12 +208,12 @@ Access at `/dev` for isolated component testing with mock data.
 
 ```bash
 # Run both servers
-cd pi-agent && bun run dev &
-cd web && bun run dev
+cd packages/voice-agent && bun run dev &
+cd packages/web-ui && bun run dev
 open http://localhost:5173/dev
 ```
 
-See `docs/COMPONENT_DEV.md` for adding new demos.
+See [`docs/component-dev.md`](docs/component-dev.md) for adding new demos.
 
 ## Styling Patterns
 
@@ -235,7 +235,7 @@ See `docs/COMPONENT_DEV.md` for adding new demos.
 ## File Structure
 
 ```
-web/src/
+packages/web-ui/src/
 ├── main.tsx                 # Entry point with routing
 ├── App.tsx                  # Main layout with ControlBar
 ├── components/
