@@ -50,10 +50,8 @@ export function replayCapabilitiesForProvider(providerId: VoiceProviderId): Prov
   if (providerId === 'decomposed') {
     return {
       ...DEFAULT_CAPABILITIES,
-      toolCalling: false,
-      providerTransportKinds: ['http'],
+      providerTransportKinds: ['http', 'websocket'],
       vadModes: ['manual'],
-      asyncTools: false,
     };
   }
 

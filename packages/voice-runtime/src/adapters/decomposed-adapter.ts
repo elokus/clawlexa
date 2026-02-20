@@ -9,6 +9,8 @@ import type {
   ProviderAdapter,
   ProviderCapabilities,
   SessionInput,
+  ToolCallContext,
+  ToolDefinition,
   ToolCallResult,
   VoiceHistoryItem,
   VoiceSessionEvents,
@@ -58,9 +60,8 @@ interface DeepgramListenResponse {
 
 interface ChatCompletionResponse {
   choices?: Array<{
-    message?: {
-      content?: string | Array<{ type?: string; text?: string }>;
-    };
+    message?: ChatCompletionMessage;
+    finish_reason?: string | null;
   }>;
 }
 
@@ -72,6 +73,35 @@ interface ChatCompletionStreamChunk {
   }>;
 }
 
+interface ChatCompletionMessage {
+  role?: 'system' | 'user' | 'assistant' | 'tool';
+  content?: string | Array<{ type?: string; text?: string }> | null;
+  tool_calls?: ChatCompletionToolCall[];
+  tool_call_id?: string;
+}
+
+interface ChatCompletionToolCall {
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
+interface LlmRequestTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+type LlmMessage =
+  | { role: 'system' | 'user' | 'assistant'; content: string; tool_calls?: ChatCompletionToolCall[] }
+  | { role: 'tool'; content: string; tool_call_id: string };
+
 const TURN_COMPLETION_PROMPT = [
   'You must start every response with exactly one marker character:',
   '✓ when the user turn is complete and you should answer now.',
@@ -82,7 +112,7 @@ const TURN_COMPLETION_PROMPT = [
 ].join('\n');
 
 const DECOMPOSED_CAPABILITIES: ProviderCapabilities = {
-  toolCalling: false,
+  toolCalling: true,
   transcriptDeltas: true,
   interruption: true,
 
@@ -92,7 +122,7 @@ const DECOMPOSED_CAPABILITIES: ProviderCapabilities = {
   interruptionModes: ['barge-in'],
 
   toolTimeout: false,
-  asyncTools: false,
+  asyncTools: true,
   toolCancellation: false,
   toolScheduling: false,
   toolReaction: false,
@@ -271,7 +301,7 @@ export class DecomposedAdapter implements ProviderAdapter {
   }
 
   private emitLatency(metric: {
-    stage: 'stt' | 'llm' | 'tts' | 'turn';
+    stage: 'stt' | 'llm' | 'tts' | 'turn' | 'tool';
     durationMs: number;
     provider?: string;
     model?: string;
@@ -527,6 +557,10 @@ export class DecomposedAdapter implements ProviderAdapter {
       };
     }
 
+    if (this.toolsEnabled()) {
+      return this.generateAssistantResponseWithTools(systemPrompt, assistantId);
+    }
+
     if (this.options.ttsProvider === 'deepgram') {
       const request = this.deepgramTtsRequestQueue.then(() =>
         this.generateAssistantResponseStreamingWithDeepgram(systemPrompt, assistantId)
@@ -592,6 +626,23 @@ export class DecomposedAdapter implements ProviderAdapter {
       text: assistantText,
       spokeAudio,
       llmDurationMs,
+    };
+  }
+
+  private async generateAssistantResponseWithTools(
+    systemPrompt: string,
+    assistantId: string
+  ): Promise<{ marker: TurnMarker; text: string; spokeAudio: boolean; llmDurationMs: number }> {
+    const llmStartedAtMs = Date.now();
+    const text = await this.generateAssistantTextWithTools(systemPrompt);
+    if (text) {
+      this.events.emit('transcriptDelta', text, 'assistant', assistantId);
+    }
+    return {
+      marker: '✓',
+      text,
+      spokeAudio: false,
+      llmDurationMs: Date.now() - llmStartedAtMs,
     };
   }
 
@@ -839,63 +890,22 @@ export class DecomposedAdapter implements ProviderAdapter {
 
   private async generateAssistantText(systemPrompt: string): Promise<string> {
     if (!this.options) return '';
-
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...this.history.map((entry) => ({
-        role: entry.role === 'system' ? 'user' : entry.role,
-        content: entry.content,
-      })),
-    ];
-
-    const { endpoint, apiKey } = this.resolveLlmEndpointAndKey();
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: this.options.llmModel,
-        messages,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `${this.options.llmProvider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} LLM failed (${response.status}): ${errorText}`
-      );
+    if (this.toolsEnabled()) {
+      return this.generateAssistantTextWithTools(systemPrompt);
     }
 
-    const payload = (await response.json()) as ChatCompletionResponse;
+    const payload = await this.requestChatCompletion({
+      messages: this.buildLlmMessages(systemPrompt),
+    });
     return extractChatCompletionText(payload);
   }
 
   private async *generateAssistantTextStream(systemPrompt: string): AsyncGenerator<string> {
     if (!this.options) return;
 
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...this.history.map((entry) => ({
-        role: entry.role === 'system' ? 'user' : entry.role,
-        content: entry.content,
-      })),
-    ];
-
-    const { endpoint, apiKey } = this.resolveLlmEndpointAndKey();
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: this.options.llmModel,
-        messages,
-        stream: true,
-      }),
+    const response = await this.requestChatCompletionStream({
+      messages: this.buildLlmMessages(systemPrompt),
+      stream: true,
     });
 
     if (!response.ok) {
@@ -949,6 +959,213 @@ export class DecomposedAdapter implements ProviderAdapter {
     } finally {
       reader.releaseLock();
     }
+  }
+
+  private toolsEnabled(): boolean {
+    return Boolean(this.input?.toolHandler && this.input.tools && this.input.tools.length > 0);
+  }
+
+  private buildLlmMessages(systemPrompt: string): LlmMessage[] {
+    return [
+      { role: 'system', content: systemPrompt },
+      ...this.history.map((entry) => ({
+        role: entry.role === 'system' ? 'user' : entry.role,
+        content: entry.content,
+      })),
+    ];
+  }
+
+  private getLlmTools(): LlmRequestTool[] {
+    if (!this.toolsEnabled()) {
+      return [];
+    }
+    const tools: ToolDefinition[] = this.input?.tools ?? [];
+    return tools.map((tool) => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters ?? {},
+      },
+    }));
+  }
+
+  private async requestChatCompletion(
+    body: Record<string, unknown>
+  ): Promise<ChatCompletionResponse> {
+    const response = await this.sendChatCompletionRequest(body);
+    return (await response.json()) as ChatCompletionResponse;
+  }
+
+  private async requestChatCompletionStream(body: Record<string, unknown>): Promise<Response> {
+    return this.sendChatCompletionRequest(body);
+  }
+
+  private async sendChatCompletionRequest(body: Record<string, unknown>): Promise<Response> {
+    if (!this.options) {
+      throw new Error('Decomposed LLM options are unavailable');
+    }
+    const { endpoint, apiKey } = this.resolveLlmEndpointAndKey();
+    const payload: Record<string, unknown> = {
+      model: this.options.llmModel,
+      ...body,
+    };
+
+    if (typeof this.input?.temperature === 'number') {
+      payload.temperature = this.input.temperature;
+    }
+    if (typeof this.input?.maxOutputTokens === 'number') {
+      payload.max_tokens = this.input.maxOutputTokens;
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `${this.options.llmProvider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} LLM failed (${response.status}): ${errorText}`
+      );
+    }
+
+    return response;
+  }
+
+  private async generateAssistantTextWithTools(systemPrompt: string): Promise<string> {
+    if (!this.options) return '';
+
+    const messages: LlmMessage[] = this.buildLlmMessages(systemPrompt);
+    const tools = this.getLlmTools();
+    if (tools.length === 0 || !this.input?.toolHandler) {
+      const payload = await this.requestChatCompletion({ messages });
+      return extractChatCompletionText(payload);
+    }
+
+    const maxToolRounds = 6;
+
+    for (let round = 0; round < maxToolRounds; round += 1) {
+      const payload = await this.requestChatCompletion({
+        messages,
+        tools,
+        tool_choice: 'auto',
+      });
+      const message = payload.choices?.[0]?.message;
+      if (!message) {
+        return '';
+      }
+
+      const assistantText = extractChatCompletionMessageText(message);
+      const toolCalls = sanitizeToolCalls(message.tool_calls);
+      if (toolCalls.length === 0) {
+        return assistantText.trim();
+      }
+
+      messages.push({
+        role: 'assistant',
+        content: assistantText,
+        tool_calls: toolCalls,
+      });
+
+      for (const toolCall of toolCalls) {
+        const callId = typeof toolCall.id === 'string' && toolCall.id ? toolCall.id : makeItemId('tool');
+        const functionName = toolCall.function?.name?.trim() ?? '';
+        const rawArguments = toolCall.function?.arguments ?? '{}';
+        const parsedArguments = parseToolArgs(rawArguments);
+        this.events.emit('toolStart', functionName || 'unknown_tool', parsedArguments, callId);
+
+        const result = await this.invokeToolHandler(functionName, parsedArguments, callId);
+        this.events.emit('toolEnd', functionName || 'unknown_tool', result.result, callId);
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: callId,
+          content: result.result,
+        });
+      }
+    }
+
+    throw new Error('Decomposed LLM exceeded maximum tool-call rounds');
+  }
+
+  private async invokeToolHandler(
+    toolName: string,
+    args: Record<string, unknown>,
+    callId: string
+  ): Promise<ToolCallResult> {
+    if (!this.input?.toolHandler) {
+      return {
+        invocationId: callId,
+        result: `Tool handler is not configured (tool: ${toolName || 'unknown'})`,
+        isError: true,
+      };
+    }
+    if (!toolName) {
+      return {
+        invocationId: callId,
+        result: 'Tool name is missing in model function call',
+        isError: true,
+      };
+    }
+
+    const startedAtMs = Date.now();
+    try {
+      const context: ToolCallContext = {
+        providerId: this.id,
+        callId,
+        invocationId: callId,
+        history: this.getHistoryItems(),
+      };
+      const rawResult = await this.input.toolHandler(toolName, args, context);
+      const normalized = this.normalizeToolResult(callId, rawResult);
+      this.emitLatency({
+        stage: 'tool',
+        durationMs: Date.now() - startedAtMs,
+        provider: this.options?.llmProvider,
+        model: this.options?.llmModel,
+        details: { toolName, callId, isError: normalized.isError === true },
+      });
+      return normalized;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Tool execution failed';
+      this.emitLatency({
+        stage: 'tool',
+        durationMs: Date.now() - startedAtMs,
+        provider: this.options?.llmProvider,
+        model: this.options?.llmModel,
+        details: { toolName, callId, isError: true, message },
+      });
+      return {
+        invocationId: callId,
+        result: `Tool ${toolName} failed: ${message}`,
+        isError: true,
+        errorMessage: message,
+      };
+    }
+  }
+
+  private normalizeToolResult(callId: string, result: ToolCallResult | string): ToolCallResult {
+    if (typeof result === 'string') {
+      return {
+        invocationId: callId,
+        result,
+      };
+    }
+
+    const resultText =
+      typeof result.result === 'string' ? result.result : safeStringify(result.result);
+
+    return {
+      ...result,
+      invocationId: callId,
+      result: resultText,
+    };
   }
 
   private resolveLlmEndpointAndKey(): { endpoint: string; apiKey: string } {
@@ -1526,6 +1743,50 @@ function toRawDataUint8Array(value: unknown): Uint8Array | null {
   return null;
 }
 
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function parseToolArgs(raw: string): Record<string, unknown> {
+  if (!raw.trim()) return {};
+  const parsed = parseJsonObject(raw);
+  if (parsed) return parsed;
+  return { raw };
+}
+
+function sanitizeToolCalls(value: ChatCompletionToolCall[] | undefined): ChatCompletionToolCall[] {
+  if (!Array.isArray(value)) return [];
+  const calls: ChatCompletionToolCall[] = [];
+  for (const call of value) {
+    if (!call || typeof call !== 'object') continue;
+    const name = call.function?.name;
+    if (typeof name !== 'string' || !name.trim()) continue;
+    calls.push(call);
+  }
+  return calls;
+}
+
+function safeStringify(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    const serialized = JSON.stringify(value);
+    if (typeof serialized === 'string') {
+      return serialized;
+    }
+    return String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function parseMarker(
   text: string,
   markerMode: boolean
@@ -1628,6 +1889,20 @@ function sleep(ms: number): Promise<void> {
 
 function extractChatCompletionText(payload: ChatCompletionResponse): string {
   const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+  return content
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('')
+    .trim();
+}
+
+function extractChatCompletionMessageText(message: ChatCompletionMessage): string {
+  const content = message.content;
   if (typeof content === 'string') {
     return content.trim();
   }

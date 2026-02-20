@@ -263,3 +263,21 @@ See `packages/voice-runtime/src/adapters/ultravox-ws-adapter.ts`.
   - downlink: Ultravox output sample rate -> 24k transport playback
 
 See `web/src/hooks/useAudioSession.ts`, `web/public/audio-processor.js`, `packages/voice-runtime/src/adapters/ultravox-ws-adapter.ts`, `packages/voice-runtime/src/media/resample-pcm16.ts`.
+
+## Async Tool Calls in LLM Function-Calling (Future)
+
+**Risk**: chat-completions style function-calling expects each `tool_call` to receive a corresponding tool result message in conversation history before the model can continue correctly.
+
+**Why this breaks async tools**:
+- truly async/background jobs may finish after the current LLM turn has ended
+- if no tool result is written back for the original `tool_call_id`, the model state gets inconsistent
+
+**Recommended pattern** (`create/get`):
+- keep `create_*` tools synchronous and return immediately with a `job_id` + `status: pending`
+- this immediate response is the required tool result for the original call
+- expose a paired `get_*` tool that returns current status/result for `job_id`
+- when background work completes, trigger a new assistant turn that can call `get_*` and present final output
+
+**Runtime note**:
+- current decomposed tooling is sync per turn
+- if async tools are introduced, preserve protocol by always returning an immediate tool result, then resolve final output through follow-up `get_*` calls
