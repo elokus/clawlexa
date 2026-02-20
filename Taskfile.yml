@@ -54,6 +54,13 @@ tasks:
       - find . -name '.env.enc' -not -path './node_modules/*'
 
   # Development tasks
+  dev:
+    desc: Start all services (daemon, agent, web) concurrently
+    deps:
+      - dev:daemon
+      - dev:agent
+      - dev:web
+
   dev:daemon:
     desc: Start mac daemon
     dir: mac-daemon
@@ -82,3 +89,9 @@ tasks:
     dir: web
     cmds:
       - npm run dev
+
+  tui:inspect:
+    desc: Start voice inspector TUI
+    dir: pi-agent
+    cmds:
+      - bun run tui:inspect
