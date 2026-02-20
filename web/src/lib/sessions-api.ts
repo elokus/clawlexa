@@ -5,7 +5,7 @@
  * Used to reconstruct chat conversations after page refresh.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = process.env.PUBLIC_API_URL || '';
 
 /**
  * Stored session message (AI SDK event)

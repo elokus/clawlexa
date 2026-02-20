@@ -19,6 +19,7 @@ import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { CliSessionsRepository, SessionMessagesRepository } from '../db/index.js';
 import { eventRecorder } from './event-recorder.js';
+import { logStreamEvent } from '../logging/session-logger.js';
 
 // Repository instance for persisting stream events
 const messagesRepo = new SessionMessagesRepository();
@@ -126,6 +127,7 @@ export function startWebSocketServer(): Promise<void> {
 
     wss.on('error', (err) => {
       console.error('[WS] Server error:', err);
+      wss = null;
       reject(err);
     });
 
@@ -275,19 +277,44 @@ export function stopWebSocketServer(): Promise<void> {
       return;
     }
 
-    // Close all client connections
+    const wsServer = wss;
+    wss = null;
+
+    // Terminate client sockets immediately to avoid close-handshake stalls.
     for (const client of clients) {
-      client.close();
+      try {
+        client.terminate();
+      } catch {
+        // Ignore close errors during shutdown.
+      }
     }
     clients.clear();
     clientStates.clear();
     masterClientId = null;
 
-    wss.close(() => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
       console.log('[WS] Server stopped');
-      wss = null;
       resolve();
-    });
+    };
+
+    const timeout = setTimeout(() => {
+      console.warn('[WS] Force shutdown after close timeout');
+      finish();
+    }, 2000);
+
+    try {
+      wsServer.close(() => {
+        clearTimeout(timeout);
+        finish();
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      console.warn('[WS] Error while closing server:', error);
+      finish();
+    }
   });
 }
 
@@ -547,6 +574,10 @@ export const wsBroadcast = {
     if (result) {
       console.log(`[WS] Persisted ${event.type} for session ${sessionId.slice(0, 8)}`);
     }
+
+    // Log to JSONL file
+    logStreamEvent(sessionId, event as { type: string; [key: string]: unknown });
+
     // Broadcast to all connected clients
     broadcast('stream_chunk', { sessionId, event });
   },

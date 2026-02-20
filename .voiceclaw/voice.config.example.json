@@ -1,0 +1,51 @@
+{
+  "voice": {
+    "mode": "voice-to-voice",
+    "language": "de",
+    "profileOverrides": {},
+    "voiceToVoice": {
+      "provider": "ultravox-realtime",
+      "model": "gpt-realtime-mini-2025-10-06",
+      "voice": "ultravox_voice_id",
+      "authProfile": "ultravox-main",
+      "ultravoxModel": "fixie-ai/ultravox-70B",
+      "geminiModel": "gemini-2.5-flash-native-audio-preview",
+      "geminiVoice": "Puck",
+      "pipecatServerUrl": "ws://localhost:7860",
+      "pipecatTransport": "websocket",
+      "pipecatBotId": ""
+    },
+    "decomposed": {
+      "stt": {
+        "provider": "deepgram",
+        "model": "nova-3",
+        "language": "de",
+        "authProfile": "deepgram-main"
+      },
+      "llm": {
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "authProfile": "openai-main"
+      },
+      "tts": {
+        "provider": "deepgram",
+        "model": "aura-2-thalia-en",
+        "voice": "aura-2-thalia-en",
+        "authProfile": "deepgram-main"
+      }
+    },
+    "turn": {
+      "strategy": "layered",
+      "silenceMs": 700,
+      "minSpeechMs": 350,
+      "minRms": 0.015,
+      "llmCompletion": {
+        "enabled": false,
+        "shortTimeoutMs": 5000,
+        "longTimeoutMs": 10000,
+        "shortReprompt": "Kannst du den Gedanken bitte noch vervollständigen?",
+        "longReprompt": "Ich bin noch da. Sag einfach weiter, wenn du bereit bist."
+      }
+    }
+  }
+}

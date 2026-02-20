@@ -9,17 +9,17 @@ import type { WSMessage } from '../types';
 // Determine WebSocket URL based on environment
 const getWsUrl = () => {
   // If demo mode is explicitly enabled, return null
-  if (import.meta.env.VITE_DEMO_MODE === 'true') return null;
+  if (process.env.PUBLIC_DEMO_MODE === 'true') return null;
 
-  // In development mode, use the Vite proxy to avoid cross-origin issues
+  // In development mode, use the dev server proxy to avoid cross-origin issues
   // The proxy at /ws forwards to the Pi's WebSocket server
-  if (import.meta.env.DEV) {
+  if (process.env.NODE_ENV !== 'production') {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/ws`;
   }
 
   // If explicit URL is set (production), use it
-  const envUrl = import.meta.env.VITE_WS_URL;
+  const envUrl = process.env.PUBLIC_WS_URL;
   if (envUrl) return envUrl;
 
   // In production build served from Pi, use same host with port 3001

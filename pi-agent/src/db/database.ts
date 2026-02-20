@@ -2,32 +2,32 @@
  * Database Connection Manager
  *
  * Singleton pattern for SQLite database connection.
- * Uses better-sqlite3 for synchronous, high-performance operations.
+ * Uses bun:sqlite for synchronous, high-performance operations.
  */
 
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { homedir } from 'os';
 import { runMigrations } from './schema.js';
 
 const DEFAULT_DB_PATH = join(homedir(), 'voice-agent.db');
 
-let dbInstance: Database.Database | null = null;
+let dbInstance: Database | null = null;
 
 /**
  * Get the database instance (singleton).
  * Creates the database and runs migrations if needed.
  */
-export function getDatabase(dbPath: string = DEFAULT_DB_PATH): Database.Database {
+export function getDatabase(dbPath: string = DEFAULT_DB_PATH): Database {
   if (!dbInstance) {
     console.log(`[DB] Opening database at ${dbPath}`);
     dbInstance = new Database(dbPath);
 
     // Enable WAL mode for better concurrent access
-    dbInstance.pragma('journal_mode = WAL');
+    dbInstance.exec('PRAGMA journal_mode = WAL');
 
     // Enable foreign keys
-    dbInstance.pragma('foreign_keys = ON');
+    dbInstance.exec('PRAGMA foreign_keys = ON');
 
     // Run migrations
     runMigrations(dbInstance);

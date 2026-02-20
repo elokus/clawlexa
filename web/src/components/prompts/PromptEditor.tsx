@@ -1,17 +1,20 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Prompt Editor - Toolbar + Markdown Textarea
-// Features: version dropdown, save as new version, set as active, dirty indicator
+// Prompt Editor - Toolbar + Agent Config (for subagents) + Markdown Textarea
+// Features: version dropdown, save as new version, set as active, dirty indicator,
+//           model picker, maxSteps config for subagent prompts
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useUnifiedSessionsStore, usePromptsState } from '../../stores';
+import { ModelPicker } from './ModelPicker';
 
 export function PromptEditor() {
   const selectVersion = useUnifiedSessionsStore((s) => s.selectVersion);
   const setPromptContent = useUnifiedSessionsStore((s) => s.setPromptContent);
   const savePromptVersion = useUnifiedSessionsStore((s) => s.savePromptVersion);
   const setPromptActiveVersion = useUnifiedSessionsStore((s) => s.setPromptActiveVersion);
+  const updatePromptMetadata = useUnifiedSessionsStore((s) => s.updatePromptMetadata);
 
   const {
     prompts,
@@ -24,6 +27,11 @@ export function PromptEditor() {
     promptDirty,
   } = usePromptsState();
 
+  // Local state for config changes (separate from prompt content dirty state)
+  const [configDirty, setConfigDirty] = useState(false);
+  const [localModel, setLocalModel] = useState<string | null>(null);
+  const [localMaxSteps, setLocalMaxSteps] = useState<number | null>(null);
+
   // Get selected prompt info
   const selectedPrompt = useMemo(
     () => prompts.find((p) => p.id === selectedPromptId),
@@ -32,6 +40,17 @@ export function PromptEditor() {
 
   // Check if selected version is active
   const isActiveVersion = selectedPrompt?.activeVersion === selectedVersion;
+
+  // Effective model/maxSteps (local override or from metadata)
+  const effectiveModel = localModel ?? selectedPrompt?.metadata?.model ?? '';
+  const effectiveMaxSteps = localMaxSteps ?? selectedPrompt?.metadata?.maxSteps ?? 3;
+
+  // Reset local overrides when prompt selection changes
+  useMemo(() => {
+    setLocalModel(null);
+    setLocalMaxSteps(null);
+    setConfigDirty(false);
+  }, [selectedPromptId]);
 
   const handleVersionChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -56,6 +75,32 @@ export function PromptEditor() {
       setPromptActiveVersion(selectedVersion);
     }
   }, [selectedVersion, setPromptActiveVersion]);
+
+  const handleModelChange = useCallback((modelId: string) => {
+    setLocalModel(modelId);
+    setConfigDirty(true);
+  }, []);
+
+  const handleMaxStepsChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value, 10);
+    if (!isNaN(val) && val > 0) {
+      setLocalMaxSteps(val);
+      setConfigDirty(true);
+    }
+  }, []);
+
+  const handleSaveConfig = useCallback(async () => {
+    if (!selectedPromptId) return;
+    const metadata: Record<string, unknown> = {};
+    if (localModel !== null) metadata.model = localModel;
+    if (localMaxSteps !== null) metadata.maxSteps = localMaxSteps;
+    await updatePromptMetadata(selectedPromptId, metadata as { model?: string; maxSteps?: number });
+    setConfigDirty(false);
+    setLocalModel(null);
+    setLocalMaxSteps(null);
+  }, [selectedPromptId, localModel, localMaxSteps, updatePromptMetadata]);
+
+  const isSubagent = selectedPrompt?.type === 'subagent';
 
   return (
     <div className="prompt-editor">
@@ -196,6 +241,76 @@ export function PromptEditor() {
           color: var(--color-emerald);
         }
 
+        /* Agent Config Section */
+        .agent-config {
+          padding: 12px 16px;
+          border-bottom: 1px solid var(--color-glass-border);
+          background: rgba(5, 5, 12, 0.3);
+          flex-shrink: 0;
+        }
+
+        .agent-config-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 10px;
+        }
+
+        .agent-config-label {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--color-text-dim);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+
+        .agent-config-fields {
+          display: flex;
+          gap: 12px;
+          align-items: flex-end;
+        }
+
+        .agent-config-field {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .agent-config-field.model-field {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .agent-config-field-label {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: var(--color-text-ghost);
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .agent-config-steps-input {
+          width: 60px;
+          padding: 8px 10px;
+          background: rgba(10, 10, 15, 0.8);
+          border: 1px solid var(--color-glass-border);
+          border-radius: 6px;
+          font-family: var(--font-mono);
+          font-size: 12px;
+          color: var(--color-text-normal);
+          outline: none;
+          text-align: center;
+        }
+
+        .agent-config-steps-input:focus {
+          border-color: var(--color-cyan);
+        }
+
+        .agent-config-save {
+          flex-shrink: 0;
+        }
+
         .prompt-editor-content {
           flex: 1;
           display: flex;
@@ -328,6 +443,56 @@ export function PromptEditor() {
           </button>
         </div>
       </div>
+
+      {/* Agent Config - only for subagent prompts */}
+      {isSubagent && (
+        <div className="agent-config">
+          <div className="agent-config-header">
+            <span className="agent-config-label">Agent Config</span>
+            {configDirty && (
+              <motion.div
+                className="prompt-dirty-indicator"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+              >
+                <span className="prompt-dirty-dot" />
+                <span>Unsaved</span>
+              </motion.div>
+            )}
+          </div>
+          <div className="agent-config-fields">
+            <div className="agent-config-field model-field">
+              <span className="agent-config-field-label">Model</span>
+              <ModelPicker
+                value={effectiveModel}
+                onChange={handleModelChange}
+                disabled={promptsLoading}
+              />
+            </div>
+            <div className="agent-config-field">
+              <span className="agent-config-field-label">Max Steps</span>
+              <input
+                type="number"
+                className="agent-config-steps-input"
+                value={effectiveMaxSteps}
+                onChange={handleMaxStepsChange}
+                min={1}
+                max={20}
+                disabled={promptsLoading}
+              />
+            </div>
+            <div className="agent-config-save">
+              <button
+                className="prompt-editor-btn primary"
+                onClick={handleSaveConfig}
+                disabled={promptsLoading || !configDirty}
+              >
+                Save Config
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error message */}
       {promptsError && (

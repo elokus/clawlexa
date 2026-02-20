@@ -1,0 +1,47 @@
+{
+  "profiles": {
+    "openai-main": {
+      "provider": "openai",
+      "type": "api-key",
+      "enabled": true,
+      "apiKey": "sk-..."
+    },
+    "openrouter-main": {
+      "provider": "openrouter",
+      "type": "api-key",
+      "enabled": true,
+      "apiKey": "sk-or-..."
+    },
+    "deepgram-main": {
+      "provider": "deepgram",
+      "type": "api-key",
+      "enabled": true,
+      "apiKey": "dg-..."
+    },
+    "ultravox-main": {
+      "provider": "ultravox",
+      "type": "api-key",
+      "enabled": true,
+      "apiKey": "..."
+    },
+    "google-live": {
+      "provider": "google",
+      "type": "oauth",
+      "enabled": false,
+      "oauth": {
+        "clientId": "...",
+        "clientSecret": "...",
+        "refreshToken": "...",
+        "scopes": [
+          "https://www.googleapis.com/auth/generative-language.realtime"
+        ]
+      }
+    }
+  },
+  "defaults": {
+    "openai": "openai-main",
+    "openrouter": "openrouter-main",
+    "deepgram": "deepgram-main",
+    "ultravox": "ultravox-main"
+  }
+}

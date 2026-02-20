@@ -10,7 +10,7 @@
  *   - agent_runs: Agent interaction history (optional)
  */
 
-import type Database from 'better-sqlite3';
+import type { Database } from 'bun:sqlite';
 
 export interface Migration {
   version: number;
@@ -169,12 +169,45 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_cli_sessions_background ON cli_sessions(background);
     `,
   },
+  {
+    version: 8,
+    name: 'session_names',
+    up: `
+      -- Human-readable session names (e.g., "swift-falcon")
+      -- Generated automatically for subagents, optional for voice/terminal sessions
+      ALTER TABLE cli_sessions ADD COLUMN name TEXT;
+
+      -- Unique index (partial: only non-null names) for collision detection
+      CREATE UNIQUE INDEX idx_cli_sessions_name ON cli_sessions(name) WHERE name IS NOT NULL;
+    `,
+  },
+  {
+    version: 9,
+    name: 'handoff_packets',
+    up: `
+      -- Store handoff packets for debugging and replay
+      -- Each packet captures the full context transferred from voice to a subagent
+      CREATE TABLE IF NOT EXISTS handoff_packets (
+        id TEXT PRIMARY KEY,
+        source_session_id TEXT NOT NULL,
+        target_session_id TEXT,
+        request TEXT NOT NULL,
+        voice_context TEXT NOT NULL,
+        active_processes TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (source_session_id) REFERENCES cli_sessions(id)
+      );
+
+      -- Index for querying handoffs by source session
+      CREATE INDEX IF NOT EXISTS idx_handoff_packets_source ON handoff_packets(source_session_id);
+    `,
+  },
 ];
 
 /**
  * Run all pending migrations on the database.
  */
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database): void {
   // Create migrations tracking table
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -186,7 +219,7 @@ export function runMigrations(db: Database.Database): void {
 
   // Get applied migrations
   const applied = db
-    .prepare('SELECT version FROM _migrations')
+    .query('SELECT version FROM _migrations')
     .all() as { version: number }[];
   const appliedVersions = new Set(applied.map((m) => m.version));
 
@@ -197,7 +230,7 @@ export function runMigrations(db: Database.Database): void {
 
       db.transaction(() => {
         db.exec(migration.up);
-        db.prepare('INSERT INTO _migrations (version, name) VALUES (?, ?)').run(
+        db.query('INSERT INTO _migrations (version, name) VALUES (?, ?)').run(
           migration.version,
           migration.name
         );

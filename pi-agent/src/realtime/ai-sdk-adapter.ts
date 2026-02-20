@@ -48,9 +48,6 @@ function generateToolCallId(): string {
   return `voice-tool-${++toolCallCounter}`;
 }
 
-// Track current tool call IDs for tool-result matching
-const pendingToolCalls = new Map<string, string>(); // toolName → toolCallId
-
 // Track previous state per session for detecting transitions
 const previousStates = new Map<string, string>(); // sessionId → previous state
 
@@ -78,7 +75,11 @@ export function adaptVoiceEvent<T extends VoiceEventType>(
  */
 function convertToAISDKEvent<T extends VoiceEventType>(
   eventType: T,
-  payload: VoiceEventPayloads[T]
+  payload: VoiceEventPayloads[T],
+  options?: {
+    consumePendingToolCall?: (toolName: string) => string | undefined;
+    pushPendingToolCall?: (toolName: string, toolCallId: string) => void;
+  }
 ): AISDKStreamEvent | null {
   switch (eventType) {
     case 'transcript': {
@@ -94,8 +95,7 @@ function convertToAISDKEvent<T extends VoiceEventType>(
     case 'toolStart': {
       const { name, args, callId } = payload as VoiceEventPayloads['toolStart'];
       const toolCallId = callId ?? generateToolCallId();
-      // Track for matching with tool-result
-      pendingToolCalls.set(name, toolCallId);
+      options?.pushPendingToolCall?.(name, toolCallId);
       return {
         type: 'tool-call',
         toolName: name,
@@ -106,9 +106,8 @@ function convertToAISDKEvent<T extends VoiceEventType>(
 
     case 'toolEnd': {
       const { name, result, callId } = payload as VoiceEventPayloads['toolEnd'];
-      // Use provided callId or look up from pending
-      const toolCallId = callId ?? pendingToolCalls.get(name) ?? generateToolCallId();
-      pendingToolCalls.delete(name);
+      // Use provided callId or dequeue one from pending starts for the same tool name.
+      const toolCallId = callId ?? options?.consumePendingToolCall?.(name) ?? generateToolCallId();
       return {
         type: 'tool-result',
         toolName: name,
@@ -154,13 +153,34 @@ function broadcastStreamChunk(chunk: StreamChunkMessage): void {
 export function createVoiceAdapter(sessionId: string) {
   // Initialize previous state tracking for this session
   previousStates.set(sessionId, 'idle');
+  const pendingToolCalls = new Map<string, string[]>();
+
+  const pushPendingToolCall = (toolName: string, toolCallId: string): void => {
+    const list = pendingToolCalls.get(toolName) ?? [];
+    list.push(toolCallId);
+    pendingToolCalls.set(toolName, list);
+  };
+
+  const consumePendingToolCall = (toolName: string): string | undefined => {
+    const list = pendingToolCalls.get(toolName);
+    if (!list || list.length === 0) {
+      return undefined;
+    }
+    const next = list.shift();
+    if (list.length === 0) {
+      pendingToolCalls.delete(toolName);
+    } else {
+      pendingToolCalls.set(toolName, list);
+    }
+    return next;
+  };
 
   return {
     /**
      * Emit a user placeholder event (reserves position before transcript arrives).
      */
-    userPlaceholder(itemId: string): void {
-      const chunk = createStreamChunk(sessionId, { type: 'user-placeholder', itemId });
+    userPlaceholder(itemId: string, previousItemId?: string): void {
+      const chunk = createStreamChunk(sessionId, { type: 'user-placeholder', itemId, previousItemId });
       broadcastStreamChunk(chunk);
     },
 
@@ -176,21 +196,38 @@ export function createVoiceAdapter(sessionId: string) {
      * Emit a transcript event (user or assistant speech).
      */
     transcript(text: string, role: 'user' | 'assistant', itemId?: string): void {
-      adaptVoiceEvent(sessionId, 'transcript', { text, role, itemId });
+      const event = convertToAISDKEvent('transcript', { text, role, itemId });
+      if (!event) return;
+      const chunk = createStreamChunk(sessionId, event);
+      broadcastStreamChunk(chunk);
     },
 
     /**
      * Emit a tool start event.
      */
     toolStart(name: string, args: Record<string, unknown>, callId?: string): void {
-      adaptVoiceEvent(sessionId, 'toolStart', { name, args, callId });
+      const event = convertToAISDKEvent(
+        'toolStart',
+        { name, args, callId },
+        { pushPendingToolCall, consumePendingToolCall }
+      );
+      if (!event) return;
+      const chunk = createStreamChunk(sessionId, event);
+      broadcastStreamChunk(chunk);
     },
 
     /**
      * Emit a tool end event.
      */
     toolEnd(name: string, result: string, callId?: string): void {
-      adaptVoiceEvent(sessionId, 'toolEnd', { name, result, callId });
+      const event = convertToAISDKEvent(
+        'toolEnd',
+        { name, result, callId },
+        { pushPendingToolCall, consumePendingToolCall }
+      );
+      if (!event) return;
+      const chunk = createStreamChunk(sessionId, event);
+      broadcastStreamChunk(chunk);
     },
 
     /**
@@ -225,6 +262,7 @@ export function createVoiceAdapter(sessionId: string) {
      */
     cleanup(): void {
       previousStates.delete(sessionId);
+      pendingToolCalls.clear();
     },
   };
 }

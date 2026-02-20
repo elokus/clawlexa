@@ -18,6 +18,8 @@ node_modules
 .env.local
 !.env.example
 !.env.enc
+.voiceclaw/auth-profiles.json
+.voiceclaw/voice.config.json
 
 # IDE
 .vscode/
@@ -46,3 +48,7 @@ bun.lockb
 
 # Repomix
 repomix-output.xml
+
+**/.sessions
+
+**/.benchmarks

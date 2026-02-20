@@ -17,7 +17,11 @@ import { tool, type RealtimeContextData } from '@openai/agents/realtime';
 import OpenAI from 'openai';
 import { z } from 'zod';
 
-const client = new OpenAI();
+let _client: OpenAI | null = null;
+function getClient(): OpenAI {
+  if (!_client) _client = new OpenAI();
+  return _client;
+}
 
 export const reasoningTool = tool<
   z.ZodObject<{
@@ -65,7 +69,7 @@ export const reasoningTool = tool<
       .join('\n');
 
     try {
-      const response = await client.chat.completions.create({
+      const response = await getClient().chat.completions.create({
         model: 'gpt-4o', // Use gpt-5-mini when available
         messages: [
           {

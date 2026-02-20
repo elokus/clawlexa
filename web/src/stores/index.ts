@@ -38,6 +38,7 @@ export {
   useServiceState,
   useActiveView,
   usePromptsState,
+  useToasts,
 
   // Legacy compatibility selectors (for migration)
   useSessionPath,        // Alias for useFocusPath
@@ -66,6 +67,7 @@ export {
   type SessionTreeNode,
   type FlattenedTreeNode,
   type OverlayType,
+  type ToastItem,
 } from './unified-sessions';
 
 // ─────────────────────────────────────────────────────────────────────────────

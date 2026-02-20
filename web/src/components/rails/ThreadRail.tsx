@@ -14,9 +14,9 @@ import {
   useFlattenedSessionTree,
 } from '../../stores';
 import { navigateToSession } from '../../hooks/useRouter';
-import type { SessionTreeNode } from '../../types';
+import type { SessionTreeNode, SessionStatus } from '../../types';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL = process.env.PUBLIC_API_URL || '';
 
 // Simple indent per depth level
 const INDENT_PX = 16;
@@ -38,12 +38,24 @@ const TYPE_LABELS: Record<string, string> = {
   terminal: 'TERMINAL',
 };
 
+// Status indicator config
+const STATUS_CONFIG: Record<string, { symbol: string; className: string }> = {
+  running:           { symbol: '●', className: 'status-running' },
+  pending:           { symbol: '○', className: 'status-pending' },
+  waiting_for_input: { symbol: '❚❚', className: 'status-waiting' },
+  finished:          { symbol: '✓', className: 'status-finished' },
+  error:             { symbol: '✗', className: 'status-error' },
+  cancelled:         { symbol: '—', className: 'status-cancelled' },
+};
+
 // Unified card component for all session types
 function SessionCard({
   id,
   type,
   agentName,
+  name,
   title,
+  status,
   depth,
   index,
   isFocused,
@@ -53,7 +65,9 @@ function SessionCard({
   id: string;
   type: string;
   agentName?: string | null;
+  name?: string | null;
   title: string;
+  status?: SessionStatus;
   depth: number;
   index: number;
   isFocused: boolean;
@@ -62,9 +76,13 @@ function SessionCard({
 }) {
   const icon = agentName ? ICONS[agentName] || ICONS[type] : ICONS[type] || '◆';
   const typeLabel = agentName?.toUpperCase() || TYPE_LABELS[type] || type.toUpperCase();
+  const statusInfo = status ? STATUS_CONFIG[status] : null;
 
-  // Truncate title
-  const displayTitle = title.length > 28 ? title.substring(0, 28) + '…' : title;
+  // Use name as primary label when available, fall back to title (goal)
+  const primaryLabel = name || title;
+  const displayTitle = primaryLabel.length > 28 ? primaryLabel.substring(0, 28) + '…' : primaryLabel;
+  // Show goal as subtitle when name is present
+  const subtitle = name && title ? (title.length > 40 ? title.substring(0, 40) + '…' : title) : null;
 
   // Calculate indent - root has 0, children have depth * INDENT_PX
   const marginLeft = depth * INDENT_PX;
@@ -87,7 +105,15 @@ function SessionCard({
       </div>
       <div className="session-card-content">
         <div className="session-card-title">{displayTitle}</div>
+        {subtitle && (
+          <div className="session-card-subtitle">{subtitle}</div>
+        )}
         <div className="session-card-meta">
+          {statusInfo && (
+            <span className={`session-card-status ${statusInfo.className}`}>
+              {statusInfo.symbol}
+            </span>
+          )}
           <span className="session-card-type">{typeLabel}</span>
           {isFocused && <span className="session-card-active">ACTIVE</span>}
         </div>
@@ -112,14 +138,25 @@ export function ThreadRail() {
   const profile = useUnifiedSessionsStore((s) => s.voiceProfile);
 
   const handleClearSessions = async () => {
-    if (isClearing) return;
+    const rootId = sessionTree?.id;
+    if (isClearing || !rootId) return;
+
     setIsClearing(true);
     try {
-      const res = await fetch(`${API_URL}/api/sessions`, { method: 'DELETE' });
-      if (res.ok) {
-        const data = await res.json();
-        console.log('[ThreadRail] Cleared', data.deleted, 'sessions');
+      const res = await fetch(
+        `${API_URL}/api/sessions/${encodeURIComponent(rootId)}/tree`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`DELETE /api/sessions/${rootId}/tree failed (${res.status}): ${errorText}`);
       }
+
+      const data = await res.json();
+      console.log('[ThreadRail] Cleared thread:', data);
+
+      // The currently focused session may be gone; clear URL and let tree sync pick the next root.
+      navigateToSession(null, true);
     } catch (err) {
       console.error('[ThreadRail] Error:', err);
     } finally {
@@ -315,6 +352,16 @@ export function ThreadRail() {
           color: var(--color-text-bright);
         }
 
+        .session-card-subtitle {
+          font-family: var(--font-ui);
+          font-size: 11px;
+          font-weight: 400;
+          color: var(--color-text-ghost);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
         .session-card-meta {
           display: flex;
           align-items: center;
@@ -338,6 +385,44 @@ export function ThreadRail() {
           padding: 1px 5px;
           background: rgba(52, 211, 153, 0.12);
           border-radius: 3px;
+        }
+
+        /* Status indicator */
+        .session-card-status {
+          font-size: 8px;
+          line-height: 1;
+        }
+
+        .session-card-status.status-running {
+          color: var(--color-cyan);
+          animation: status-pulse 1.5s ease-in-out infinite;
+        }
+
+        .session-card-status.status-pending {
+          color: var(--color-text-ghost);
+        }
+
+        .session-card-status.status-waiting {
+          color: var(--color-amber);
+          font-size: 7px;
+          letter-spacing: -1px;
+        }
+
+        .session-card-status.status-finished {
+          color: var(--color-emerald);
+        }
+
+        .session-card-status.status-error {
+          color: var(--color-rose);
+        }
+
+        .session-card-status.status-cancelled {
+          color: var(--color-text-ghost);
+        }
+
+        @keyframes status-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
         }
 
         /* End indicator */
@@ -427,8 +512,8 @@ export function ThreadRail() {
         <button
           className="thread-clear"
           onClick={handleClearSessions}
-          disabled={isClearing}
-          title="Clear sessions"
+          disabled={isClearing || !sessionTree}
+          title="Clear current thread"
         >
           {isClearing ? '…' : '×'}
         </button>
@@ -451,7 +536,9 @@ export function ThreadRail() {
                 key="voice-root"
                 id={voiceSessionId || 'voice'}
                 type="voice"
+                name={sessionTree?.name}
                 title={profile || 'Voice'}
+                status={sessionTree?.status}
                 depth={0}
                 index={0}
                 isFocused={isVoiceFocused}
@@ -467,7 +554,9 @@ export function ThreadRail() {
                 id={item.node.id}
                 type={item.node.type}
                 agentName={item.node.agent_name}
+                name={item.node.name}
                 title={item.node.goal}
+                status={item.node.status}
                 depth={showVoiceCard ? item.depth : item.depth}
                 index={showVoiceCard ? index + 1 : index}
                 isFocused={item.node.id === focusedSessionId}

@@ -7,15 +7,18 @@ import { useEffect, useRef } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useConnectionState, useVoiceState, useUnifiedSessionsStore } from './stores';
 import { useAudioSession } from './hooks/useAudioSession';
+import { useVoiceRuntimeConfig } from './hooks/useVoiceRuntimeConfig';
 import { useUrlSessionSync } from './hooks/useRouter';
 import { StageOrchestrator } from './components/layout/StageOrchestrator';
 import { ControlBar } from './components/ControlBar';
+import { VoiceRuntimePanel } from './components/VoiceRuntimePanel';
 
 export function App() {
   const { reconnect, sendFocusSession } = useWebSocket();
   const { connected } = useConnectionState();
   const { voiceState, voiceProfile } = useVoiceState();
   const audioSession = useAudioSession();
+  const voiceRuntime = useVoiceRuntimeConfig();
 
   // Track focused session and sync to backend + URL
   const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
@@ -306,6 +309,14 @@ export function App() {
 
         {/* Bottom Control Bar */}
         <div className="bottom-controls">
+          <VoiceRuntimePanel
+            config={voiceRuntime.config}
+            setConfig={voiceRuntime.setConfig}
+            save={voiceRuntime.save}
+            loading={voiceRuntime.loading}
+            saving={voiceRuntime.saving}
+            error={voiceRuntime.error}
+          />
           <ControlBar
             activeProfile={audioSession.activeProfile}
             onProfileChange={audioSession.setActiveProfile}

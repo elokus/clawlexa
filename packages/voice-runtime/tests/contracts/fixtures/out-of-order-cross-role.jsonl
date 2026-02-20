@@ -1,0 +1,10 @@
+{"atMs":0,"type":"state","state":"thinking"}
+{"atMs":1,"type":"turn_started"}
+{"atMs":2,"type":"assistant_item","itemId":"assistant-2"}
+{"atMs":4,"type":"transcript_delta","role":"assistant","text":"Na","itemId":"assistant-2"}
+{"atMs":12,"type":"user_item","itemId":"user-1"}
+{"atMs":14,"type":"transcript_final","role":"user","text":"Hi, wie geht es dir?","itemId":"user-1"}
+{"atMs":90,"type":"transcript_delta","role":"assistant","text":", was brauchst du?","itemId":"assistant-2"}
+{"atMs":150,"type":"transcript_final","role":"assistant","text":"Na, was brauchst du?","itemId":"assistant-2"}
+{"atMs":170,"type":"turn_complete"}
+{"atMs":171,"type":"state","state":"listening"}

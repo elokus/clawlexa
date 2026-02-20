@@ -9,6 +9,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import type { Socket } from 'net';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_PORT = parseInt(process.env.STATIC_PORT ?? '8080', 10);
@@ -17,6 +18,7 @@ const STATIC_PORT = parseInt(process.env.STATIC_PORT ?? '8080', 10);
 const STATIC_DIR = path.resolve(__dirname, '../../../web/dist');
 
 let server: http.Server | null = null;
+const openConnections = new Set<Socket>();
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -126,9 +128,19 @@ export function startStaticServer(): Promise<void> {
     }
 
     server = http.createServer(handleRequest);
+    openConnections.clear();
+
+    server.on('connection', (socket) => {
+      openConnections.add(socket);
+      socket.on('close', () => {
+        openConnections.delete(socket);
+      });
+    });
 
     server.on('error', (err) => {
       console.error('[Static] Server error:', err);
+      server = null;
+      openConnections.clear();
       reject(err);
     });
 
@@ -150,10 +162,36 @@ export function stopStaticServer(): Promise<void> {
       return;
     }
 
-    server.close(() => {
-      console.log('[Static] Server stopped');
-      server = null;
+    const currentServer = server;
+    server = null;
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      openConnections.clear();
       resolve();
-    });
+    };
+
+    const timeout = setTimeout(() => {
+      for (const socket of openConnections) {
+        socket.destroy();
+      }
+      openConnections.clear();
+      console.warn('[Static] Force shutdown after close timeout');
+      finish();
+    }, 2000);
+
+    try {
+      currentServer.close(() => {
+        clearTimeout(timeout);
+        console.log('[Static] Server stopped');
+        finish();
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      console.warn('[Static] Error while closing server:', error);
+      finish();
+    }
   });
 }

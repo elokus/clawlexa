@@ -28,6 +28,108 @@ export async function isMacDaemonAvailable(): Promise<boolean> {
   return health !== null;
 }
 
+const ACTIVE_SESSION_STATUSES = new Set(['pending', 'running', 'waiting_for_input']);
+
+function isActiveSessionStatus(status: string): boolean {
+  return ACTIVE_SESSION_STATUSES.has(status);
+}
+
+function clipText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
+function normalizeOutputLine(line: string): string {
+  const trimmed = line.trimEnd();
+
+  if (/^[\-\u2500\s]+$/.test(trimmed) && trimmed.length > 30) {
+    return '----------------------------------------';
+  }
+
+  return clipText(trimmed, 160);
+}
+
+function formatOutputBlock(lines: string[]): string {
+  if (lines.length === 0) {
+    return '| (keine Ausgabe - interaktive Session wartet eventuell auf Eingabe)';
+  }
+
+  return lines.map((line) => `| ${normalizeOutputLine(line)}`).join('\n');
+}
+
+interface ResolvedTerminalTarget {
+  terminalId: string | null;
+  resolutionNote: string | null;
+  error: string | null;
+}
+
+function resolveTerminalTarget(
+  sessionsRepo: CliSessionsRepository,
+  targetId: string,
+  orchestratorId?: string
+): ResolvedTerminalTarget {
+  const target = sessionsRepo.findById(targetId);
+
+  if (!target) {
+    return {
+      terminalId: null,
+      resolutionNote: null,
+      error: `Terminal/Session "${targetId}" nicht gefunden.`,
+    };
+  }
+
+  if (target.type === 'terminal') {
+    return {
+      terminalId: target.id,
+      resolutionNote: null,
+      error: null,
+    };
+  }
+
+  if (target.type === 'subagent') {
+    const activeChildren = sessionsRepo
+      .getChildren(target.id)
+      .filter((child) => child.type === 'terminal' && isActiveSessionStatus(child.status));
+
+    if (activeChildren.length === 1) {
+      const resolved = activeChildren[0]!;
+      return {
+        terminalId: resolved.id,
+        resolutionNote: `Orchestrator-ID ${target.id} wurde auf Terminal ${resolved.id} aufgelöst.`,
+        error: null,
+      };
+    }
+
+    if (activeChildren.length > 1) {
+      const choices = activeChildren.map((child) => `- ${child.id} (${child.status})`).join('\n');
+      return {
+        terminalId: null,
+        resolutionNote: null,
+        error: `Orchestrator ${target.id} hat mehrere aktive Terminals. Nutze terminal_id explizit:\n${choices}`,
+      };
+    }
+
+    return {
+      terminalId: null,
+      resolutionNote: null,
+      error: `Orchestrator ${target.id} hat kein aktives Terminal.`,
+    };
+  }
+
+  if (target.type === 'voice' && orchestratorId) {
+    const orchestrator = sessionsRepo.findById(orchestratorId);
+    if (orchestrator?.type === 'subagent') {
+      return resolveTerminalTarget(sessionsRepo, orchestrator.id, orchestratorId);
+    }
+  }
+
+  return {
+    terminalId: null,
+    resolutionNote: null,
+    error: `ID ${target.id} ist vom Typ "${target.type}". Erwarte terminal_id oder orchestrator_id.`,
+  };
+}
+
 export const startHeadlessSessionTool = tool({
   description:
     'Start a headless Claude session with -p flag for quick tasks. Returns the result directly. IMPORTANT: After calling this tool, you MUST stop and provide your final response.',
@@ -112,7 +214,7 @@ export const startHeadlessSessionTool = tool({
         }
 
         wsBroadcast.sessionTreeUpdate(orchestratorId);
-        return completion.message || 'Aufgabe abgeschlossen, keine Ausgabe.';
+        return `Headless-Session ${terminalId} abgeschlossen.\n${completion.message || 'Aufgabe abgeschlossen, keine Ausgabe.'}`;
       } else {
         sessionsRepo.finish(terminalId, 'error');
         wsBroadcast.sessionTreeUpdate(orchestratorId);
@@ -202,7 +304,7 @@ export const startInteractiveSessionTool = tool({
       });
 
       wsBroadcast.sessionTreeUpdate(orchestratorId);
-      return `Interaktive Session gestartet in ${project_path}. Claude arbeitet jetzt an der Aufgabe.`;
+      return `Interaktive Session gestartet in ${project_path}. Terminal-ID: ${terminalId}. Claude arbeitet jetzt an der Aufgabe.`;
     } catch (error) {
       sessionsRepo.finish(terminalId, 'error');
       wsBroadcast.sessionTreeUpdate(orchestratorId);
@@ -212,26 +314,63 @@ export const startInteractiveSessionTool = tool({
 });
 
 export const sendSessionInputTool = tool({
-  description: 'Send input/feedback to a running interactive session',
+  description:
+    'Send input/feedback to a running interactive terminal. Use terminal_id. ' +
+    'If an orchestrator session_id is provided and has exactly one active terminal, it is auto-resolved.',
   inputSchema: z.object({
-    session_id: z.string().describe('The session ID'),
+    terminal_id: z
+      .string()
+      .optional()
+      .describe('Terminal session ID (preferred)'),
+    session_id: z
+      .string()
+      .optional()
+      .describe('Deprecated alias. Can be terminal ID or orchestrator ID'),
     input: z.string().describe('The input to send'),
   }),
-  execute: async ({ session_id, input }: { session_id: string; input: string }) => {
+  execute: async (
+    { terminal_id, session_id, input }: { terminal_id?: string; session_id?: string; input: string }
+  ) => {
     const eventsRepo = new CliEventsRepository();
+    const sessionsRepo = new CliSessionsRepository();
+    const requestedId = terminal_id ?? session_id;
+    const orchestratorId = getCurrentOrchestratorId();
 
-    console.log(`[CliAgent] Sending input to session ${session_id}: ${input}`);
+    if (!requestedId) {
+      return 'Fehler: terminal_id fehlt. Nutze list_active_sessions für gültige Terminal-IDs.';
+    }
+
+    const resolved = resolveTerminalTarget(sessionsRepo, requestedId, orchestratorId);
+    if (!resolved.terminalId) {
+      return `Fehler: ${resolved.error}`;
+    }
+
+    console.log(`[CliAgent] Sending input to terminal ${resolved.terminalId}: ${input}`);
 
     try {
-      const result = await macClient.sendCliInput(session_id, input);
+      const result = await macClient.sendCliInput(resolved.terminalId, input);
 
       eventsRepo.create({
-        session_id,
+        session_id: resolved.terminalId,
         event_type: 'input',
-        payload: { input },
+        payload: {
+          input,
+          requested_id: requestedId,
+          resolved_terminal_id: resolved.terminalId,
+        },
       });
 
-      return result.success ? 'Eingabe gesendet.' : `Fehler: ${result.message}`;
+      const resolutionPrefix = resolved.resolutionNote ? `${resolved.resolutionNote}\n` : '';
+      return result.success
+        ? [
+            resolutionPrefix.trim(),
+            '=== INPUT GESENDET ===',
+            `Terminal : ${resolved.terminalId}`,
+            `Text     : ${clipText(input, 140)}`,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : `Fehler: ${result.message}`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -239,19 +378,56 @@ export const sendSessionInputTool = tool({
 });
 
 export const checkSessionStatusTool = tool({
-  description: 'Check the status and recent output of a session',
+  description:
+    'Check the status and recent output of a terminal session. Use terminal_id (or session_id alias).',
   inputSchema: z.object({
-    session_id: z.string().describe('The session ID'),
+    terminal_id: z.string().optional().describe('Terminal session ID (preferred)'),
+    session_id: z.string().optional().describe('Deprecated alias for terminal_id/orchestrator_id'),
   }),
-  execute: async ({ session_id }: { session_id: string }) => {
-    console.log(`[CliAgent] Checking status for session ${session_id}`);
+  execute: async ({ terminal_id, session_id }: { terminal_id?: string; session_id?: string }) => {
+    const sessionsRepo = new CliSessionsRepository();
+    const requestedId = terminal_id ?? session_id;
+    const orchestratorId = getCurrentOrchestratorId();
+
+    if (!requestedId) {
+      return 'Fehler: terminal_id fehlt. Nutze list_active_sessions für gültige Terminal-IDs.';
+    }
+
+    const resolved = resolveTerminalTarget(sessionsRepo, requestedId, orchestratorId);
+    if (!resolved.terminalId) {
+      return `Fehler: ${resolved.error}`;
+    }
+
+    console.log(`[CliAgent] Checking status for terminal ${resolved.terminalId}`);
 
     try {
-      const result = await macClient.readCliOutput(session_id);
+      const result = await macClient.readCliOutput(resolved.terminalId);
+      const details = await macClient.getSessionDetails(resolved.terminalId);
+      const runtimeStatus = details?.status || result.status;
 
-      const recentOutput = result.output.slice(-10).join('\n');
+      const recentOutput = formatOutputBlock(result.output.slice(-10));
+      const waitingHint =
+        runtimeStatus === 'waiting_for_input'
+          ? '\n[Hint]\nSession wartet auf Input. Nutze send_session_input.'
+          : '';
 
-      return `Status: ${result.status}\n\nLetzte Ausgabe:\n${recentOutput || '(keine Ausgabe)'}`;
+      const resolutionPrefix = resolved.resolutionNote ? `${resolved.resolutionNote}\n` : '';
+      return [
+        resolutionPrefix.trim(),
+        '=== TERMINAL STATUS ===',
+        '',
+        '[Terminal]',
+        `ID     : ${resolved.terminalId}`,
+        `Status : ${runtimeStatus}`,
+        '',
+        '[Snapshot]',
+        '--- BEGIN SNAPSHOT ---',
+        recentOutput,
+        '--- END SNAPSHOT ---',
+        waitingHint.trim(),
+      ]
+        .filter(Boolean)
+        .join('\n');
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -259,7 +435,8 @@ export const checkSessionStatusTool = tool({
 });
 
 export const listActiveSessionsTool = tool({
-  description: 'List all active CLI sessions',
+  description:
+    'List active terminal sessions. By default this returns only terminals for the current orchestrator.',
   inputSchema: z.object({}),
   execute: async () => {
     console.log(`[CliAgent] Listing active sessions`);
@@ -267,16 +444,41 @@ export const listActiveSessionsTool = tool({
     try {
       const sessionsRepo = new CliSessionsRepository();
       const dbSessions = sessionsRepo.getActive();
-
-      if (dbSessions.length === 0) {
-        return 'Keine aktiven Sessions.';
-      }
-
-      const summaries = dbSessions.map(
-        (s) => `- ${s.id.substring(0, 8)}: ${s.goal} (${s.status})`
+      const orchestratorId = getCurrentOrchestratorId();
+      const activeTerminals = dbSessions.filter(
+        (s) =>
+          s.type === 'terminal' &&
+          isActiveSessionStatus(s.status) &&
+          (orchestratorId ? s.parent_id === orchestratorId : true)
       );
 
-      return `Aktive Sessions:\n${summaries.join('\n')}`;
+      if (activeTerminals.length === 0) {
+        return orchestratorId
+          ? `Keine aktiven Terminals für Orchestrator ${orchestratorId}.`
+          : 'Keine aktiven Terminals.';
+      }
+
+      const summaries = activeTerminals.map(
+        (terminal) => {
+          const parent = terminal.parent_id ?? '-';
+          return [
+            `- ${terminal.id}`,
+            `  status : ${terminal.status}`,
+            `  parent : ${parent}`,
+            `  goal   : ${clipText(terminal.goal, 100)}`,
+          ].join('\n');
+        }
+      );
+
+      return [
+        '=== AKTIVE TERMINALS ===',
+        `Scope: ${orchestratorId ? `orchestrator ${orchestratorId}` : 'global'}`,
+        `Count: ${activeTerminals.length}`,
+        '',
+        ...summaries,
+        '',
+        'Nutze diese IDs als terminal_id in send_session_input/check_session_status/terminate_session.',
+      ].join('\n');
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -284,36 +486,50 @@ export const listActiveSessionsTool = tool({
 });
 
 export const terminateSessionTool = tool({
-  description: 'Terminate/cancel a running session and delete it from the database',
+  description:
+    'Terminate/cancel a running terminal and delete it from the database. Use terminal_id (or session_id alias).',
   inputSchema: z.object({
-    session_id: z.string().describe('The session ID to terminate'),
+    terminal_id: z.string().optional().describe('Terminal session ID (preferred)'),
+    session_id: z.string().optional().describe('Deprecated alias for terminal_id/orchestrator_id'),
   }),
-  execute: async ({ session_id }: { session_id: string }) => {
-    console.log(`[CliAgent] Terminating session ${session_id}`);
-
+  execute: async ({ terminal_id, session_id }: { terminal_id?: string; session_id?: string }) => {
+    const requestedId = terminal_id ?? session_id;
+    const orchestratorId = getCurrentOrchestratorId();
     const sessionsRepo = new CliSessionsRepository();
+
+    if (!requestedId) {
+      return 'Fehler: terminal_id fehlt. Nutze list_active_sessions für gültige Terminal-IDs.';
+    }
+
+    const resolved = resolveTerminalTarget(sessionsRepo, requestedId, orchestratorId);
+    if (!resolved.terminalId) {
+      return `Fehler: ${resolved.error}`;
+    }
+
+    console.log(`[CliAgent] Terminating terminal ${resolved.terminalId}`);
 
     try {
       // Get session to find parent for tree update
-      const session = sessionsRepo.findById(session_id);
+      const session = sessionsRepo.findById(resolved.terminalId);
       const parentId = session?.parent_id;
 
       // Terminate on Mac daemon
-      await macClient.terminateSession(session_id);
+      await macClient.terminateSession(resolved.terminalId);
 
       // Delete from database (cascade deletes events too)
-      sessionsRepo.delete(session_id);
-      console.log(`[CliAgent] Deleted session ${session_id} from database`);
+      sessionsRepo.delete(resolved.terminalId);
+      console.log(`[CliAgent] Deleted terminal ${resolved.terminalId} from database`);
 
       // Broadcast deletion to connected clients
-      wsBroadcast.cliSessionDeleted(session_id);
+      wsBroadcast.cliSessionDeleted(resolved.terminalId);
 
       // Broadcast tree update if we have a parent
       if (parentId) {
         wsBroadcast.sessionTreeUpdate(parentId);
       }
 
-      return 'Session beendet und gelöscht.';
+      const resolutionPrefix = resolved.resolutionNote ? `${resolved.resolutionNote}\n` : '';
+      return `${resolutionPrefix}Terminal ${resolved.terminalId} beendet und gelöscht.`;
     } catch (error) {
       return `Fehler: ${error instanceof Error ? error.message : String(error)}`;
     }

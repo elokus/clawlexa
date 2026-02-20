@@ -11,6 +11,7 @@ import { wsBroadcast } from '../api/websocket.js';
 import { CliSessionsRepository } from '../db/index.js';
 import { loadAgentConfig } from './loader.js';
 import { cliAgentTools } from './cli/tools.js';
+import { getCurrentOrchestratorId, setCurrentOrchestratorId } from './cli/index.js';
 
 const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
 
@@ -83,6 +84,8 @@ async function handleCliInput(
   // Create OpenRouter model
   const openrouter = createOpenRouter({ apiKey: OPENROUTER_API_KEY });
   const model = openrouter.chat(config.model);
+  const previousOrchestratorId = getCurrentOrchestratorId();
+  setCurrentOrchestratorId(sessionId);
 
   try {
     // Emit start event
@@ -228,5 +231,7 @@ async function handleCliInput(
     console.error(`[DirectInput] Error:`, errorMsg);
     wsBroadcast.streamChunk(sessionId, { type: 'error', error: errorMsg });
     throw error;
+  } finally {
+    setCurrentOrchestratorId(previousOrchestratorId);
   }
 }

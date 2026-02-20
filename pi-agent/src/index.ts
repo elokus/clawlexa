@@ -18,6 +18,8 @@ import {
 import { handleDirectInput } from './subagents/direct-input.js';
 import { startStaticServer, stopStaticServer } from './api/static.js';
 import { LocalTransport, WebSocketTransport } from './transport/index.js';
+import { getProcessManager, type ManagedProcess } from './processes/manager.js';
+import { CliSessionsRepository } from './db/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Service State Machine
@@ -41,6 +43,7 @@ let wakeword: WakewordDetector | null = null;
 let scheduler: Scheduler;
 let localTransport: LocalTransport;
 let wsTransport: WebSocketTransport;
+const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? '8000', 10);
 
 /**
  * Update service state and coordinate all components.
@@ -137,6 +140,74 @@ async function main() {
 
   // Initialize agent WITHOUT a transport (will be set via updateServiceState)
   agent = new VoiceAgent();
+
+  // Initialize ProcessManager for background task tracking
+  const processManager = getProcessManager();
+
+  processManager.on('process:completed', (process: ManagedProcess) => {
+    console.log(`[ProcessManager] Process "${process.name}" completed`);
+
+    const sessionsRepo = new CliSessionsRepository();
+    const session = sessionsRepo.findById(process.sessionId);
+    if (!session) {
+      // Detached process without DB session linkage (e.g. developer_session fire-and-forget).
+      return;
+    }
+    const voiceSessionId = session.type === 'voice' ? session.id : session.parent_id ?? session.id;
+
+    wsBroadcast.streamChunk(voiceSessionId, {
+      type: 'process-status',
+      processName: process.name,
+      sessionId: process.sessionId,
+      status: 'completed',
+      summary: process.result?.substring(0, 200),
+    });
+
+    if (!process.notifyVoiceOnCompletion) {
+      return;
+    }
+
+    // Notify voice agent or queue for next session
+    if (agent.isActive()) {
+      agent.sendMessage(
+        `[Background task "${process.name}" completed] ${process.result?.substring(0, 500) || 'Task finished.'}`
+      );
+    } else {
+      agent.addPendingNotification(process);
+    }
+  });
+
+  processManager.on('process:error', (process: ManagedProcess) => {
+    console.error(`[ProcessManager] Process "${process.name}" failed: ${process.error}`);
+
+    const sessionsRepo = new CliSessionsRepository();
+    const session = sessionsRepo.findById(process.sessionId);
+    if (!session) {
+      // Detached process without DB session linkage (e.g. developer_session fire-and-forget).
+      return;
+    }
+    const voiceSessionId = session.type === 'voice' ? session.id : session.parent_id ?? session.id;
+
+    wsBroadcast.streamChunk(voiceSessionId, {
+      type: 'process-status',
+      processName: process.name,
+      sessionId: process.sessionId,
+      status: 'error',
+      summary: process.error,
+    });
+
+    if (!process.notifyVoiceOnCompletion) {
+      return;
+    }
+
+    if (agent.isActive()) {
+      agent.sendMessage(
+        `[Background task "${process.name}" failed] ${process.error || 'Unknown error'}`
+      );
+    } else {
+      agent.addPendingNotification(process);
+    }
+  });
 
   // Initialize wakeword detector (but don't start yet)
   try {
@@ -329,6 +400,55 @@ async function main() {
     console.log('[Static] Skipped (SKIP_STATIC_SERVER=true, use Vite dev server instead)');
   }
 
+  let shutdownPromise: Promise<void> | null = null;
+  const shutdown = async (signal: NodeJS.Signals | 'startup_failure'): Promise<void> => {
+    if (shutdownPromise) {
+      return shutdownPromise;
+    }
+
+    shutdownPromise = (async () => {
+      console.log(`\nShutting down... (${signal})`);
+
+      const forceExitTimer = setTimeout(() => {
+        console.error(`[Shutdown] Timed out after ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit`);
+        process.exit(1);
+      }, SHUTDOWN_TIMEOUT_MS);
+      forceExitTimer.unref?.();
+
+      try {
+        scheduler.stop();
+      } catch (error) {
+        console.warn('[Shutdown] Failed to stop scheduler:', error);
+      }
+
+      await Promise.allSettled([
+        stopStaticServer(),
+        stopWebSocketServer(),
+        stopWebhookServer(),
+      ]);
+
+      try {
+        agent.deactivate();
+      } catch (error) {
+        console.warn('[Shutdown] Failed to deactivate agent:', error);
+      }
+
+      if (wakeword) {
+        try {
+          wakeword.stop();
+        } catch (error) {
+          console.warn('[Shutdown] Failed to stop wakeword:', error);
+        }
+      }
+
+      closeDatabase();
+      clearTimeout(forceExitTimer);
+      process.exit(signal === 'startup_failure' ? 1 : 0);
+    })();
+
+    return shutdownPromise;
+  };
+
   // Start webhook server for Mac daemon callbacks
   try {
     await startWebhookServer();
@@ -350,26 +470,25 @@ async function main() {
       }
     });
   } catch (error) {
-    console.warn('Failed to start webhook server:', error);
+    console.error('Failed to start webhook server:', error);
+    await shutdown('startup_failure');
+    return;
   }
 
-  // Handle graceful shutdown
-  const shutdown = async () => {
-    console.log('\nShutting down...');
-    scheduler.stop();
-    await stopStaticServer();
-    await stopWebSocketServer();
-    await stopWebhookServer();
-    agent.deactivate();
-    if (wakeword) {
-      wakeword.stop();
+  process.on('SIGINT', () => {
+    if (shutdownPromise) {
+      console.log('[Shutdown] SIGINT received while shutdown is already in progress');
+      return;
     }
-    closeDatabase();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+    void shutdown('SIGINT');
+  });
+  process.on('SIGTERM', () => {
+    if (shutdownPromise) {
+      console.log('[Shutdown] SIGTERM received while shutdown is already in progress');
+      return;
+    }
+    void shutdown('SIGTERM');
+  });
 
   // Broadcast initial service state (dormant by default)
   setServiceState(isServiceActive, audioMode);

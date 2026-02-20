@@ -12,28 +12,54 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import type { Socket } from 'net';
 import {
   CliSessionsRepository,
   CliEventsRepository,
   SessionMessagesRepository,
+  HandoffsRepository,
+  type Session,
   type SessionStatus,
 } from '../db/index.js';
 import { handleDemoRequest } from '../demo/index.js';
 import { eventRecorder } from './event-recorder.js';
 import { wsBroadcast } from './websocket.js';
+import { clearAllSessionLogs, clearSessionLogsForSessions, logWebhookStatus } from '../logging/session-logger.js';
+import * as macClient from '../tools/mac-client.js';
 import {
   listPrompts,
   getPromptInfo,
+  getPromptConfig,
   getPromptVersion,
   listVersions,
   createPromptVersion,
   setActiveVersion,
   createPrompt,
+  updatePromptConfig,
   getActivePromptRaw,
   type PromptConfig,
 } from '../prompts/index.js';
+import { profiles } from '../agent/profiles.js';
+import { resolveVoiceRuntimeConfig } from '../voice/config.js';
+import {
+  loadVoiceConfig,
+  saveVoiceConfig,
+  loadAuthProfiles,
+  saveAuthProfiles,
+  redactAuthProfiles,
+  resolveApiKey,
+  getVoiceConfigPath,
+  getAuthProfilesPath,
+} from '../voice/settings.js';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
+const OPEN_ROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY ?? '';
+
+// OpenRouter models cache
+let modelsCache: { data: unknown[]; timestamp: number } | null = null;
+const MODELS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+let voiceCatalogCache: { data: unknown; timestamp: number } | null = null;
+const VOICE_CATALOG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 interface WebhookPayload {
   sessionId: string;
@@ -46,6 +72,7 @@ type WebhookHandler = (payload: WebhookPayload) => Promise<void>;
 
 let webhookHandler: WebhookHandler | null = null;
 let server: http.Server | null = null;
+const openConnections = new Set<Socket>();
 
 // Pending session completions - resolve when webhook received
 const pendingCompletions = new Map<
@@ -102,6 +129,256 @@ function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
+async function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      try {
+        resolve((body ? JSON.parse(body) : {}) as T);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function testProviderAuth(
+  provider: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox',
+  apiKey: string
+): Promise<{ ok: boolean; status: number; message: string }> {
+  const headers = (contentType?: string) => ({
+    Authorization: `Bearer ${apiKey}`,
+    ...(contentType ? { 'Content-Type': contentType } : {}),
+  });
+
+  try {
+    switch (provider) {
+      case 'openai': {
+        const res = await fetch('https://api.openai.com/v1/models', {
+          headers: headers(),
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'OpenAI credentials valid' : await res.text(),
+        };
+      }
+      case 'openrouter': {
+        const res = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: headers(),
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'OpenRouter credentials valid' : await res.text(),
+        };
+      }
+      case 'google': {
+        const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
+        url.searchParams.set('key', apiKey);
+        const res = await fetch(url);
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'Google credentials valid' : await res.text(),
+        };
+      }
+      case 'deepgram': {
+        const res = await fetch('https://api.deepgram.com/v1/projects', {
+          headers: {
+            Authorization: `Token ${apiKey}`,
+          },
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'Deepgram credentials valid' : await res.text(),
+        };
+      }
+      case 'ultravox': {
+        const res = await fetch('https://api.ultravox.ai/api/models', {
+          headers: {
+            'X-API-Key': apiKey,
+          },
+        });
+        return {
+          ok: res.ok,
+          status: res.status,
+          message: res.ok ? 'Ultravox credentials valid' : await res.text(),
+        };
+      }
+      default:
+        return {
+          ok: false,
+          status: 400,
+          message: `Unsupported provider: ${String(provider)}`,
+        };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 500,
+      message: (error as Error).message,
+    };
+  }
+}
+
+function maskKey(value: string): string {
+  if (!value) return '';
+  if (value.length <= 8) return '********';
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+async function fetchOpenAIVoiceCatalog(apiKey: string): Promise<{
+  realtimeModels: string[];
+  textModels: string[];
+  voices: string[];
+}> {
+  const fallback = {
+    realtimeModels: ['gpt-realtime-mini-2025-10-06', 'gpt-realtime'],
+    textModels: ['gpt-4.1', 'gpt-4o-mini'],
+    voices: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'],
+  };
+
+  if (!apiKey) {
+    return fallback;
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) return fallback;
+
+    const payload = (await response.json()) as { data?: Array<{ id?: string }> };
+    const ids = (payload.data ?? []).map((m) => m.id ?? '').filter(Boolean);
+
+    const realtimeModels = ids
+      .filter((id) => id.includes('realtime'))
+      .sort();
+    const textModels = ids
+      .filter((id) => id.startsWith('gpt-4') || id.startsWith('gpt-5'))
+      .slice(0, 80)
+      .sort();
+
+    return {
+      realtimeModels: realtimeModels.length > 0 ? realtimeModels : fallback.realtimeModels,
+      textModels: textModels.length > 0 ? textModels : fallback.textModels,
+      voices: fallback.voices,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function fetchDeepgramVoiceCatalog(apiKey: string): Promise<{
+  sttModels: string[];
+  ttsVoices: string[];
+}> {
+  const fallback = {
+    sttModels: ['nova-3', 'nova-2'],
+    ttsVoices: ['aura-2-thalia-en', 'aura-2-luna-en', 'aura-2-cora-en'],
+  };
+
+  if (!apiKey) {
+    return fallback;
+  }
+
+  try {
+    const response = await fetch('https://api.deepgram.com/v1/models', {
+      headers: { Authorization: `Token ${apiKey}` },
+    });
+    if (!response.ok) return fallback;
+    const payload = (await response.json()) as {
+      stt?: Array<{ canonical_name?: string; streaming?: boolean }>;
+      tts?: Array<{ canonical_name?: string }>;
+    };
+
+    const sttModels = Array.from(
+      new Set(
+        (payload.stt ?? [])
+          .filter((model) => model.streaming)
+          .map((model) => model.canonical_name ?? '')
+          .filter(Boolean)
+      )
+    ).sort();
+
+    const ttsVoices = Array.from(
+      new Set(
+        (payload.tts ?? [])
+          .map((model) => model.canonical_name ?? '')
+          .filter(Boolean)
+      )
+    ).sort();
+
+    return {
+      sttModels: sttModels.length > 0 ? sttModels : fallback.sttModels,
+      ttsVoices: ttsVoices.length > 0 ? ttsVoices : fallback.ttsVoices,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function fetchUltravoxVoiceCatalog(apiKey: string): Promise<{
+  models: string[];
+  voices: Array<{ voiceId: string; name: string; primaryLanguage?: string }>;
+}> {
+  const fallback = {
+    models: ['ultravox-v0.7'],
+    voices: [],
+  };
+
+  if (!apiKey) {
+    return fallback;
+  }
+
+  try {
+    const modelRes = await fetch('https://api.ultravox.ai/api/models', {
+      headers: { 'X-API-Key': apiKey },
+    });
+    const voiceRes = await fetch('https://api.ultravox.ai/api/voices', {
+      headers: { 'X-API-Key': apiKey },
+    });
+
+    let models = fallback.models;
+    if (modelRes.ok) {
+      const modelPayload = (await modelRes.json()) as {
+        results?: Array<{ name?: string }>;
+      };
+      const discovered = (modelPayload.results ?? [])
+        .map((entry) => entry.name ?? '')
+        .filter(Boolean)
+        .sort();
+      if (discovered.length > 0) {
+        models = discovered;
+      }
+    }
+
+    let voices: Array<{ voiceId: string; name: string; primaryLanguage?: string }> = [];
+    if (voiceRes.ok) {
+      const voicePayload = (await voiceRes.json()) as {
+        results?: Array<{ voiceId?: string; name?: string; primaryLanguage?: string }>;
+      };
+      voices = (voicePayload.results ?? [])
+        .filter((voice) => voice.voiceId && voice.name)
+        .map((voice) => ({
+          voiceId: voice.voiceId as string,
+          name: voice.name as string,
+          primaryLanguage: voice.primaryLanguage,
+        }));
+    }
+
+    return { models, voices };
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -210,16 +487,142 @@ async function handleWebhook(
   if (req.method === 'DELETE' && req.url === '/api/sessions') {
     try {
       const sessionsRepo = new CliSessionsRepository();
+      const handoffsRepo = new HandoffsRepository();
+
+      const activeStatuses: SessionStatus[] = ['pending', 'running', 'waiting_for_input'];
+      const sessions = sessionsRepo.list();
+      const activeTerminalSessions = sessions.filter(
+        (session) =>
+          activeStatuses.includes(session.status) &&
+          (session.type === 'terminal' || session.mac_session_id !== null)
+      );
+
+      let terminatedPtySessions = 0;
+      const terminationErrors: string[] = [];
+
+      // Best-effort PTY termination before DB cleanup.
+      for (const session of activeTerminalSessions) {
+        try {
+          const result = await macClient.terminateSession(session.id);
+          if (result.success) {
+            terminatedPtySessions += 1;
+          } else {
+            terminationErrors.push(`${session.id.slice(0, 8)}: ${result.message}`);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          terminationErrors.push(`${session.id.slice(0, 8)}: ${message}`);
+        }
+      }
+
+      // Remove handoff packets first to avoid FK violations on cli_sessions.
+      const deletedHandoffs = handoffsRepo.deleteAll();
       const deleted = sessionsRepo.deleteAll();
-      console.log(`[API] Deleted all ${deleted} sessions`);
+      const deletedLogs = clearAllSessionLogs();
+
+      if (terminationErrors.length > 0) {
+        console.warn('[API] PTY termination warnings:', terminationErrors);
+      }
+
+      console.log(
+        `[API] Cleared ${deleted} sessions, ${deletedHandoffs} handoffs, ${deletedLogs} session logs, terminated ${terminatedPtySessions} PTY sessions`
+      );
+
       // Broadcast to all connected clients
       wsBroadcast.cliAllSessionsDeleted();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ deleted }));
+      res.end(JSON.stringify({
+        deleted,
+        deletedHandoffs,
+        deletedLogs,
+        terminatedPtySessions,
+        terminationErrors,
+      }));
     } catch (error) {
       console.error('[API] Error deleting sessions:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to delete sessions' }));
+    }
+    return;
+  }
+
+  // DELETE /api/sessions/:id/tree - Delete a thread tree (root + descendants)
+  const deleteTreeMatch = req.url?.match(/^\/api\/sessions\/([a-zA-Z0-9_-]+)\/tree$/);
+  if (req.method === 'DELETE' && deleteTreeMatch) {
+    try {
+      const rootId = deleteTreeMatch[1]!;
+      const sessionsRepo = new CliSessionsRepository();
+      const rootSession = sessionsRepo.findById(rootId);
+
+      if (!rootSession) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+        return;
+      }
+
+      const treeIds = sessionsRepo.getTreeSessionIds(rootId);
+      const treeSessions: Session[] = treeIds
+        .map((id) => sessionsRepo.findById(id))
+        .filter((session): session is Session => session !== null);
+
+      const activeStatuses: SessionStatus[] = ['pending', 'running', 'waiting_for_input'];
+      const activeTerminalSessions = treeSessions.filter(
+        (session) =>
+          activeStatuses.includes(session.status) &&
+          (session.type === 'terminal' || session.mac_session_id !== null)
+      );
+
+      let terminatedPtySessions = 0;
+      const terminationErrors: string[] = [];
+
+      // Best-effort PTY termination before DB cleanup.
+      for (const session of activeTerminalSessions) {
+        try {
+          const result = await macClient.terminateSession(session.id);
+          if (result.success) {
+            terminatedPtySessions += 1;
+          } else {
+            terminationErrors.push(`${session.id.slice(0, 8)}: ${result.message}`);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          terminationErrors.push(`${session.id.slice(0, 8)}: ${message}`);
+        }
+      }
+
+      const deletedLogs = clearSessionLogsForSessions(
+        treeSessions.map((session) => ({ id: session.id, name: session.name }))
+      );
+      const deletedSessionIds = sessionsRepo.deleteTree(rootId);
+
+      if (terminationErrors.length > 0) {
+        console.warn('[API] PTY termination warnings (tree delete):', terminationErrors);
+      }
+
+      console.log(
+        `[API] Deleted tree ${rootId}: ${deletedSessionIds.length} sessions, ${deletedLogs} logs, terminated ${terminatedPtySessions} PTY sessions`
+      );
+
+      // Remove deleted sessions from in-memory client stores.
+      for (const deletedId of deletedSessionIds) {
+        wsBroadcast.cliSessionDeleted(deletedId);
+      }
+
+      // Refresh tree list for all clients.
+      wsBroadcast.allActiveTreesUpdate();
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        deleted: deletedSessionIds.length,
+        deletedSessionIds,
+        deletedLogs,
+        terminatedPtySessions,
+        terminationErrors,
+      }));
+    } catch (error) {
+      console.error('[API] Error deleting session tree:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to delete session tree' }));
     }
     return;
   }
@@ -230,11 +633,48 @@ async function handleWebhook(
     try {
       const sessionId = deleteSessionMatch[1]!;
       const sessionsRepo = new CliSessionsRepository();
+      const handoffsRepo = new HandoffsRepository();
+      const session = sessionsRepo.findById(sessionId);
+
+      if (!session) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+        return;
+      }
+
+      let terminatedPtySession = false;
+      let terminationError: string | null = null;
+      const isActive = ['pending', 'running', 'waiting_for_input'].includes(session.status);
+      const isTerminalSession = session.type === 'terminal' || session.mac_session_id !== null;
+
+      // Best-effort PTY termination before deleting the DB row.
+      if (isActive && isTerminalSession) {
+        try {
+          const result = await macClient.terminateSession(sessionId);
+          terminatedPtySession = result.success;
+          if (!result.success) {
+            terminationError = result.message;
+          }
+        } catch (error) {
+          terminationError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const deletedHandoffs = handoffsRepo.deleteBySession(sessionId);
       const deleted = sessionsRepo.delete(sessionId);
+
       if (deleted) {
-        console.log(`[API] Deleted session ${sessionId}`);
+        console.log(
+          `[API] Deleted session ${sessionId} (handoffs: ${deletedHandoffs}, terminatedPty: ${terminatedPtySession})`
+        );
+        wsBroadcast.cliSessionDeleted(sessionId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ deleted: true }));
+        res.end(JSON.stringify({
+          deleted: true,
+          deletedHandoffs,
+          terminatedPtySession,
+          terminationError,
+        }));
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Session not found' }));
@@ -348,6 +788,235 @@ async function handleWebhook(
       console.error('[API] Error fetching session messages:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to fetch session messages' }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Models API (OpenRouter proxy with cache)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (req.method === 'GET' && req.url === '/api/models') {
+    try {
+      const now = Date.now();
+      if (!modelsCache || now - modelsCache.timestamp > MODELS_CACHE_TTL) {
+        const response = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: {
+            'Authorization': `Bearer ${OPEN_ROUTER_API_KEY}`,
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`OpenRouter API error: ${response.status}`);
+        }
+        const json = await response.json() as { data: Array<{ id: string; name: string; context_length: number; pricing: { prompt: string; completion: string } }> };
+        // Trim to essential fields and sort by id
+        const models = json.data
+          .map((m) => ({
+            id: m.id,
+            name: m.name,
+            context_length: m.context_length,
+            pricing: m.pricing,
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+        modelsCache = { data: models, timestamp: now };
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(modelsCache.data));
+    } catch (error) {
+      console.error('[API] Error fetching models:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch models' }));
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/config/voice/catalog') {
+    try {
+      const now = Date.now();
+      if (!voiceCatalogCache || now - voiceCatalogCache.timestamp > VOICE_CATALOG_CACHE_TTL) {
+        const authProfiles = loadAuthProfiles();
+        const openaiKey = resolveApiKey('openai', { authProfiles });
+        const deepgramKey = resolveApiKey('deepgram', { authProfiles });
+        const ultravoxKey = resolveApiKey('ultravox', { authProfiles });
+
+        const [openai, deepgram, ultravox] = await Promise.all([
+          fetchOpenAIVoiceCatalog(openaiKey),
+          fetchDeepgramVoiceCatalog(deepgramKey),
+          fetchUltravoxVoiceCatalog(ultravoxKey),
+        ]);
+
+        voiceCatalogCache = {
+          data: {
+            openai,
+            deepgram,
+            ultravox,
+            gemini: {
+              models: ['gemini-2.5-flash-native-audio-preview'],
+              voices: ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Leda', 'Orus', 'Zephyr'],
+            },
+          },
+          timestamp: now,
+        };
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(voiceCatalogCache.data));
+    } catch (error) {
+      console.error('[API] Error fetching voice catalog:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch voice catalog' }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Voice Config API (JSON-backed runtime config + auth profiles)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (req.method === 'GET' && req.url?.startsWith('/api/config/voice/effective')) {
+    try {
+      const requestUrl = new URL(req.url, 'http://localhost');
+      const profileName = (requestUrl.searchParams.get('profile') ?? '').toLowerCase();
+
+      const profile = profiles[profileName] ?? profiles[`hey_${profileName}`];
+      if (!profile) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unknown profile. Use profile=jarvis|marvin|computer|hey_jarvis' }));
+        return;
+      }
+
+      const runtime = resolveVoiceRuntimeConfig(profile);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          profile: profile.name,
+          mode: runtime.mode,
+          provider: runtime.provider,
+          language: runtime.language,
+          voice: runtime.voice,
+          model: runtime.model,
+          decomposed: {
+            stt: `${runtime.decomposedSttProvider}/${runtime.decomposedSttModel}`,
+            llm: `${runtime.decomposedLlmProvider}/${runtime.decomposedLlmModel}`,
+            tts: `${runtime.decomposedTtsProvider}/${runtime.decomposedTtsModel}`,
+          },
+          auth: {
+            openai: maskKey(runtime.auth.openaiApiKey),
+            openrouter: maskKey(runtime.auth.openrouterApiKey),
+            google: maskKey(runtime.auth.googleApiKey),
+            deepgram: maskKey(runtime.auth.deepgramApiKey),
+            ultravox: maskKey(runtime.auth.ultravoxApiKey),
+          },
+          turn: runtime.turn,
+        })
+      );
+    } catch (error) {
+      console.error('[API] Error resolving effective voice config:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to resolve effective voice config' }));
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/config/voice') {
+    try {
+      const voiceConfig = loadVoiceConfig();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: getVoiceConfigPath(), config: voiceConfig }));
+    } catch (error) {
+      console.error('[API] Error loading voice config:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to load voice config' }));
+    }
+    return;
+  }
+
+  if (req.method === 'PUT' && req.url === '/api/config/voice') {
+    try {
+      const body = await readJsonBody<{ config: unknown }>(req);
+      const next = saveVoiceConfig(body.config as never);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: getVoiceConfigPath(), config: next }));
+    } catch (error) {
+      console.error('[API] Error saving voice config:', error);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url?.startsWith('/api/config/auth-profiles')) {
+    try {
+      const requestUrl = new URL(req.url, 'http://localhost');
+      const redacted = requestUrl.searchParams.get('redacted') === 'true';
+      const authProfiles = loadAuthProfiles();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          path: getAuthProfilesPath(),
+          config: redacted ? redactAuthProfiles(authProfiles) : authProfiles,
+        })
+      );
+    } catch (error) {
+      console.error('[API] Error loading auth profiles:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to load auth profiles' }));
+    }
+    return;
+  }
+
+  if (req.method === 'PUT' && req.url === '/api/config/auth-profiles') {
+    try {
+      const body = await readJsonBody<{ config: unknown }>(req);
+      const next = saveAuthProfiles(body.config as never);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: getAuthProfilesPath(), config: redactAuthProfiles(next) }));
+    } catch (error) {
+      console.error('[API] Error saving auth profiles:', error);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/config/auth-profiles/test') {
+    try {
+      const body = await readJsonBody<{
+        provider?: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox';
+        authProfileId?: string;
+      }>(req);
+
+      const authProfiles = loadAuthProfiles();
+
+      let provider = body.provider;
+      if (!provider && body.authProfileId) {
+        provider = authProfiles.profiles[body.authProfileId]?.provider;
+      }
+
+      if (!provider) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'provider or authProfileId is required' }));
+        return;
+      }
+
+      const apiKey = resolveApiKey(provider, {
+        authProfileId: body.authProfileId,
+        authProfiles,
+      });
+
+      if (!apiKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `No API key resolved for provider: ${provider}` }));
+        return;
+      }
+
+      const result = await testProviderAuth(provider, apiKey);
+      res.writeHead(result.ok ? 200 : 502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ provider, ...result }));
+    } catch (error) {
+      console.error('[API] Error testing auth profile:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
     }
     return;
   }
@@ -484,6 +1153,41 @@ async function handleWebhook(
     return;
   }
 
+  // PUT /api/prompts/:id/metadata - Update prompt metadata (model, maxSteps, etc.)
+  const metadataMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)\/metadata$/);
+  if (req.method === 'PUT' && metadataMatch) {
+    const promptId = metadataMatch[1]!;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { metadata } = JSON.parse(body) as { metadata: PromptConfig['metadata'] };
+        if (!metadata) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'metadata is required' }));
+          return;
+        }
+        // Merge with existing metadata
+        const existing = await getPromptConfig(promptId);
+        if (!existing) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Prompt not found' }));
+          return;
+        }
+        const mergedMetadata = { ...existing.metadata, ...metadata };
+        await updatePromptConfig(promptId, { metadata: mergedMetadata });
+        console.log(`[API] Updated metadata for ${promptId}:`, mergedMetadata);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, promptId, metadata: mergedMetadata }));
+      } catch (error) {
+        console.error('[API] Error updating metadata:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to update metadata' }));
+      }
+    });
+    return;
+  }
+
   // POST /api/prompts - Create new prompt
   if (req.method === 'POST' && req.url === '/api/prompts') {
     let body = '';
@@ -540,6 +1244,9 @@ async function handleWebhook(
         if (payload.message) {
           console.log(`  Message: ${payload.message}`);
         }
+
+        // Mirror webhook status into session JSONL logs for replay/debugging.
+        logWebhookStatus(payload.sessionId, payload.status, payload.message, payload.output);
 
         // Update database
         const sessionsRepo = new CliSessionsRepository();
@@ -604,9 +1311,19 @@ export function startWebhookServer(): Promise<void> {
     }
 
     server = http.createServer(handleWebhook);
+    openConnections.clear();
+
+    server.on('connection', (socket) => {
+      openConnections.add(socket);
+      socket.on('close', () => {
+        openConnections.delete(socket);
+      });
+    });
 
     server.on('error', (err) => {
       console.error('[Webhook] Server error:', err);
+      server = null;
+      openConnections.clear();
       reject(err);
     });
 
@@ -628,11 +1345,37 @@ export function stopWebhookServer(): Promise<void> {
       return;
     }
 
-    server.close(() => {
-      console.log('[Webhook] Server stopped');
-      server = null;
+    const currentServer = server;
+    server = null;
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      openConnections.clear();
       resolve();
-    });
+    };
+
+    const timeout = setTimeout(() => {
+      for (const socket of openConnections) {
+        socket.destroy();
+      }
+      openConnections.clear();
+      console.warn('[Webhook] Force shutdown after close timeout');
+      finish();
+    }, 2000);
+
+    try {
+      currentServer.close(() => {
+        clearTimeout(timeout);
+        console.log('[Webhook] Server stopped');
+        finish();
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      console.warn('[Webhook] Error while closing server:', error);
+      finish();
+    }
   });
 }
 

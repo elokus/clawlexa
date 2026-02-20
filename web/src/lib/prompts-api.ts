@@ -4,7 +4,7 @@
  * API client for the prompt management system.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = process.env.PUBLIC_API_URL || '';
 
 export interface PromptConfig {
   name: string;
@@ -110,6 +110,24 @@ export async function setActiveVersion(
   });
   if (!res.ok) {
     throw new Error(`Failed to set active version: ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Update prompt metadata (model, maxSteps, etc.)
+ */
+export async function updateMetadata(
+  id: string,
+  metadata: PromptConfig['metadata']
+): Promise<{ success: boolean; promptId: string; metadata: PromptConfig['metadata'] }> {
+  const res = await fetch(`${API_BASE}/api/prompts/${encodeURIComponent(id)}/metadata`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ metadata }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update metadata: ${res.status}`);
   }
   return res.json();
 }

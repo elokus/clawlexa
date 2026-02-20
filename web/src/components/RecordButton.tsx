@@ -20,7 +20,7 @@ interface ExportedScenario {
   events: unknown[];
 }
 
-// Use relative URLs - Vite proxy handles it in dev, same origin in prod
+// Use relative URLs - dev server proxy handles it in dev, same origin in prod
 const API_BASE = '/api/recording';
 
 export function RecordButton() {

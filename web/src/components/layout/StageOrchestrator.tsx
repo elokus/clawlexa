@@ -21,7 +21,10 @@ import { TerminalStage } from '../stages/TerminalStage';
 import { GlassHUD } from '../overlays/GlassHUD';
 import { EventsOverlay } from '../overlays/EventsOverlay';
 import { ToolsOverlay } from '../overlays/ToolsOverlay';
+import { ToastOverlay } from '../overlays/Toast';
 import { PromptsView } from '../prompts/PromptsView';
+import { useToasts } from '../../stores';
+import { navigateToSession } from '../../hooks/useRouter';
 import type { SessionTreeNode, StageItem } from '../../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -129,6 +132,8 @@ export function StageOrchestrator() {
   // Use the new tree-based focused session
   const focusedSession = useFocusedSession();
   const activeView = useActiveView();
+  const toasts = useToasts();
+  const dismissToast = useUnifiedSessionsStore((s) => s.dismissToast);
 
   // Check for pending subagent (for key generation)
   const subagentActivities = useSubagentActivities();
@@ -288,6 +293,13 @@ export function StageOrchestrator() {
 
                 {/* Glass HUD - shows when viewing terminal and agent is speaking */}
                 <GlassHUD />
+
+                {/* Toast notifications for process completion/errors */}
+                <ToastOverlay
+                  toasts={toasts}
+                  dismissToast={dismissToast}
+                  focusSession={navigateToSession}
+                />
               </div>
             </div>
 

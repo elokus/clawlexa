@@ -78,7 +78,7 @@ function timelineToMessages(timeline: TimelineItem[]): DisplayMessage[] {
           args: tool.args || {},
         },
       ];
-      if (tool.result) {
+      if (tool.result !== undefined) {
         parts.push({
           type: 'tool-result',
           toolName: tool.name,
@@ -204,6 +204,10 @@ function ToolPart({
     developer_session: { label: 'Dev Session', icon: '▣', color: 'text-cyan-400' },
     start_headless_session: { label: 'Headless Session', icon: '▣', color: 'text-cyan-400' },
     start_interactive_session: { label: 'Interactive Session', icon: '▣', color: 'text-cyan-400' },
+    check_coding_session: { label: 'Session Status', icon: '◆', color: 'text-cyan-400' },
+    send_session_feedback: { label: 'Sending Feedback', icon: '◆', color: 'text-cyan-400' },
+    stop_coding_session: { label: 'Stopping Session', icon: '◆', color: 'text-rose-400' },
+    view_past_sessions: { label: 'Past Sessions', icon: '◆', color: 'text-violet-400' },
   };
 
   const config = toolConfig[toolName] || { label: toolName, icon: '◆', color: 'text-muted-foreground' };
@@ -224,6 +228,11 @@ function ToolPart({
           <Loader size={12} className="text-cyan-400" />
         ) : (
           <span className="text-emerald-400 text-[10px]">✓</span>
+        )}
+        {result !== undefined && !isOpen && (
+          <span className="text-[10px] text-emerald-400/60 ml-auto truncate max-w-[200px] font-normal">
+            {typeof result === 'string' ? result.split('\n')[0]!.slice(0, 60) : 'Done'}
+          </span>
         )}
         {linkedSession && onNavigateToSession && (
           <button
@@ -526,44 +535,42 @@ export function AgentStage({ stage }: AgentStageProps) {
         <ConversationScrollButton />
       </Conversation>
 
-      {/* Text input for subagent sessions */}
-      {!isVoiceSession && (
-        <div className="border-t border-white/5 bg-black/20 px-4 py-3">
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={inputRef}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`Message ${title}...`}
-              rows={1}
-              disabled={isSubmitting}
-              className={cn(
-                'flex-1 resize-none bg-surface/50 border border-white/10 rounded-lg px-3 py-2',
-                'text-sm font-mono text-foreground placeholder:text-muted-foreground/50',
-                'focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/30',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
-                'max-h-32 overflow-y-auto'
-              )}
-              style={{ minHeight: '40px' }}
-            />
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!inputValue.trim() || isSubmitting}
-              className={cn(
-                'px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider',
-                'border transition-all duration-200',
-                inputValue.trim() && !isSubmitting
-                  ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20'
-                  : 'bg-surface/30 border-white/5 text-muted-foreground cursor-not-allowed'
-              )}
-            >
-              Send
-            </button>
-          </div>
+      {/* Text input for all sessions (voice + subagent) */}
+      <div className="border-t border-white/5 bg-black/20 px-4 py-3">
+        <div className="flex items-end gap-2">
+          <textarea
+            ref={inputRef}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={isVoiceSession ? 'Message Realtime Agent...' : `Message ${title}...`}
+            rows={1}
+            disabled={isSubmitting}
+            className={cn(
+              'flex-1 resize-none bg-surface/50 border border-white/10 rounded-lg px-3 py-2',
+              'text-sm font-mono text-foreground placeholder:text-muted-foreground/50',
+              'focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/30',
+              'disabled:opacity-50 disabled:cursor-not-allowed',
+              'max-h-32 overflow-y-auto'
+            )}
+            style={{ minHeight: '40px' }}
+          />
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!inputValue.trim() || isSubmitting}
+            className={cn(
+              'px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider',
+              'border transition-all duration-200',
+              inputValue.trim() && !isSubmitting
+                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20'
+                : 'bg-surface/30 border-white/5 text-muted-foreground cursor-not-allowed'
+            )}
+          >
+            Send
+          </button>
         </div>
-      )}
+      </div>
     </motion.div>
   );
 }

@@ -1,0 +1,83 @@
+{"atMs":0,"type":"state","state":"listening"}
+{"atMs":92,"type":"turn_started"}
+{"atMs":93,"type":"state","state":"thinking"}
+{"atMs":552,"type":"state","state":"speaking"}
+{"atMs":775,"type":"assistant_item","itemId":"assistant-0"}
+{"atMs":776,"type":"transcript_delta","role":"assistant","text":"Ja","itemId":"assistant-0"}
+{"atMs":845,"type":"transcript_delta","role":"assistant","text":",","itemId":"assistant-0"}
+{"atMs":1100,"type":"transcript_delta","role":"assistant","text":" was","itemId":"assistant-0"}
+{"atMs":1377,"type":"transcript_delta","role":"assistant","text":" liegt","itemId":"assistant-0"}
+{"atMs":1645,"type":"transcript_delta","role":"assistant","text":" an","itemId":"assistant-0"}
+{"atMs":1727,"type":"transcript_delta","role":"assistant","text":"?","itemId":"assistant-0"}
+{"atMs":1938,"type":"transcript_delta","role":"assistant","text":" ","itemId":"assistant-0"}
+{"atMs":1938,"type":"transcript_final","role":"assistant","text":"Ja, was liegt an?","itemId":"assistant-0"}
+{"atMs":1938,"type":"turn_complete"}
+{"atMs":1939,"type":"state","state":"listening"}
+{"atMs":4694,"type":"state","state":"speaking"}
+{"atMs":4800,"type":"assistant_item","itemId":"assistant-2","previousItemId":"assistant-0"}
+{"atMs":4802,"type":"transcript_delta","role":"assistant","text":"Ja","itemId":"assistant-2"}
+{"atMs":4860,"type":"user_item","itemId":"user-1","previousItemId":"assistant-2"}
+{"atMs":4862,"type":"transcript_final","role":"user","text":"Hi, verstehst Du mich?","itemId":"user-1"}
+{"atMs":5078,"type":"transcript_delta","role":"assistant","text":" klar","itemId":"assistant-2"}
+{"atMs":5103,"type":"transcript_delta","role":"assistant","text":",","itemId":"assistant-2"}
+{"atMs":5206,"type":"transcript_delta","role":"assistant","text":" ich","itemId":"assistant-2"}
+{"atMs":5334,"type":"transcript_delta","role":"assistant","text":" hör","itemId":"assistant-2"}
+{"atMs":5473,"type":"transcript_delta","role":"assistant","text":" dich","itemId":"assistant-2"}
+{"atMs":5869,"type":"transcript_delta","role":"assistant","text":" perfekt","itemId":"assistant-2"}
+{"atMs":5892,"type":"transcript_delta","role":"assistant","text":".","itemId":"assistant-2"}
+{"atMs":6030,"type":"transcript_delta","role":"assistant","text":" Was","itemId":"assistant-2"}
+{"atMs":6380,"type":"transcript_delta","role":"assistant","text":" willst","itemId":"assistant-2"}
+{"atMs":6575,"type":"transcript_delta","role":"assistant","text":" du","itemId":"assistant-2"}
+{"atMs":6669,"type":"transcript_delta","role":"assistant","text":"?","itemId":"assistant-2"}
+{"atMs":6936,"type":"transcript_delta","role":"assistant","text":" ","itemId":"assistant-2"}
+{"atMs":6937,"type":"transcript_final","role":"assistant","text":"Ja klar, ich hör dich perfekt. Was willst du?","itemId":"assistant-2"}
+{"atMs":6937,"type":"turn_complete"}
+{"atMs":6937,"type":"state","state":"listening"}
+{"atMs":11533,"type":"state","state":"speaking"}
+{"atMs":11854,"type":"assistant_item","itemId":"assistant-4","previousItemId":"user-1"}
+{"atMs":11855,"type":"transcript_delta","role":"assistant","text":"Alles","itemId":"assistant-4"}
+{"atMs":11857,"type":"user_item","itemId":"user-3","previousItemId":"assistant-4"}
+{"atMs":11858,"type":"transcript_final","role":"user","text":"Ähm, kannst Du bitte das Stehlicht einschalten?","itemId":"user-3"}
+{"atMs":12184,"type":"transcript_delta","role":"assistant","text":" klar","itemId":"assistant-4"}
+{"atMs":12278,"type":"transcript_delta","role":"assistant","text":".","itemId":"assistant-4"}
+{"atMs":12487,"type":"transcript_delta","role":"assistant","text":" ","itemId":"assistant-4"}
+{"atMs":12489,"type":"transcript_final","role":"assistant","text":"Alles klar.","itemId":"assistant-4"}
+{"atMs":12489,"type":"turn_complete"}
+{"atMs":12489,"type":"turn_started"}
+{"atMs":12489,"type":"state","state":"thinking"}
+{"atMs":12491,"type":"tool_start","name":"control_light","callId":"chatcmpl-tool-ba275475eaeb85a9","args":{"action":"on","device_name":"Stehlampe 1"}}
+{"atMs":12692,"type":"tool_end","name":"control_light","callId":"chatcmpl-tool-ba275475eaeb85a9","result":"Stehlampe 1 wurde eingeschaltet."}
+{"atMs":13276,"type":"state","state":"speaking"}
+{"atMs":13441,"type":"assistant_item","itemId":"assistant-7","previousItemId":"user-3"}
+{"atMs":13441,"type":"transcript_delta","role":"assistant","text":"Die","itemId":"assistant-7"}
+{"atMs":13997,"type":"transcript_delta","role":"assistant","text":" Stehlampe","itemId":"assistant-7"}
+{"atMs":14137,"type":"transcript_delta","role":"assistant","text":" ist","itemId":"assistant-7"}
+{"atMs":14405,"type":"transcript_delta","role":"assistant","text":" jetzt","itemId":"assistant-7"}
+{"atMs":14648,"type":"transcript_delta","role":"assistant","text":" an","itemId":"assistant-7"}
+{"atMs":14729,"type":"transcript_delta","role":"assistant","text":".","itemId":"assistant-7"}
+{"atMs":14972,"type":"transcript_delta","role":"assistant","text":" ","itemId":"assistant-7"}
+{"atMs":14974,"type":"transcript_final","role":"assistant","text":"Die Stehlampe ist jetzt an.","itemId":"assistant-7"}
+{"atMs":14974,"type":"turn_complete"}
+{"atMs":14974,"type":"state","state":"listening"}
+{"atMs":21726,"type":"state","state":"speaking"}
+{"atMs":22126,"type":"assistant_item","itemId":"assistant-9","previousItemId":"assistant-7"}
+{"atMs":22128,"type":"transcript_delta","role":"assistant","text":"Läuft","itemId":"assistant-9"}
+{"atMs":22128,"type":"user_item","itemId":"user-8","previousItemId":"assistant-9"}
+{"atMs":22128,"type":"transcript_final","role":"user","text":"Okay, und sonst? Wie geht's dir?","itemId":"user-8"}
+{"atMs":22151,"type":"transcript_delta","role":"assistant","text":",","itemId":"assistant-9"}
+{"atMs":22289,"type":"transcript_delta","role":"assistant","text":" hab","itemId":"assistant-9"}
+{"atMs":22569,"type":"transcript_delta","role":"assistant","text":" keine","itemId":"assistant-9"}
+{"atMs":22822,"type":"transcript_delta","role":"assistant","text":" Zeit","itemId":"assistant-9"}
+{"atMs":22961,"type":"transcript_delta","role":"assistant","text":" für","itemId":"assistant-9"}
+{"atMs":23554,"type":"transcript_delta","role":"assistant","text":" Smalltalk","itemId":"assistant-9"}
+{"atMs":23646,"type":"transcript_delta","role":"assistant","text":".","itemId":"assistant-9"}
+{"atMs":23787,"type":"transcript_delta","role":"assistant","text":" ","itemId":"assistant-9"}
+{"atMs":23937,"type":"transcript_delta","role":"assistant","text":"Was","itemId":"assistant-9"}
+{"atMs":24240,"type":"transcript_delta","role":"assistant","text":" brauchst","itemId":"assistant-9"}
+{"atMs":24332,"type":"transcript_delta","role":"assistant","text":" du","itemId":"assistant-9"}
+{"atMs":24622,"type":"transcript_delta","role":"assistant","text":" noch","itemId":"assistant-9"}
+{"atMs":24680,"type":"transcript_delta","role":"assistant","text":"?","itemId":"assistant-9"}
+{"atMs":24993,"type":"transcript_delta","role":"assistant","text":" ","itemId":"assistant-9"}
+{"atMs":24994,"type":"transcript_final","role":"assistant","text":"Läuft, hab keine Zeit für Smalltalk. Was brauchst du noch?","itemId":"assistant-9"}
+{"atMs":24994,"type":"turn_complete"}
+{"atMs":24995,"type":"state","state":"listening"}

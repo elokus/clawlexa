@@ -26,6 +26,7 @@ import type {
   OverlayType,
 } from '../types';
 import type { TimelineItem, TranscriptItem, ToolItem } from '../types/timeline';
+import type { ToastItem } from '../components/overlays/Toast';
 import type { PromptInfo } from '../lib/prompts-api';
 import * as promptsApi from '../lib/prompts-api';
 import * as sessionsApi from '../lib/sessions-api';
@@ -56,6 +57,7 @@ export interface Message {
   role: MessageRole;
   parts: MessagePart[];
   createdAt: number;
+  itemId?: string;
 }
 
 /** Session state in the unified model */
@@ -76,7 +78,7 @@ export type AISDKStreamEvent =
   | { type: 'text-delta'; textDelta: string; itemId?: string }
   | { type: 'user-transcript'; text: string; itemId?: string } // Custom extension for voice user messages
   // Placeholders for message ordering (custom extension for voice sessions)
-  | { type: 'user-placeholder'; itemId: string }
+  | { type: 'user-placeholder'; itemId: string; previousItemId?: string }
   | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string }
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
   | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
@@ -87,11 +89,13 @@ export type AISDKStreamEvent =
   | { type: 'start-step' }
   | { type: 'finish-step'; finishReason?: string; usage?: Record<string, number> }
   | { type: 'finish'; finishReason: string }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  | { type: 'process-status'; processName: string; sessionId: string; status: 'completed' | 'error'; summary?: string };
 
 /** Re-export timeline types for message-handler compatibility */
 export type { TimelineItem, TranscriptItem, ToolItem };
 export type { SessionTreeNode, OverlayType };
+export type { ToastItem };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Store Interface
@@ -158,6 +162,11 @@ interface UnifiedSessionsStore {
   activeView: 'sessions' | 'prompts';
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Toast Notifications
+  // ─────────────────────────────────────────────────────────────────────────
+  toasts: ToastItem[];
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Prompts State
   // ─────────────────────────────────────────────────────────────────────────
   prompts: PromptInfo[];
@@ -187,7 +196,7 @@ interface UnifiedSessionsStore {
   setVoiceState: (state: AgentState, profile?: string | null) => void;
   setVoiceActive: (active: boolean) => void;
   clearVoiceTimeline: () => void;
-  addVoiceTimelineItem: (item: TimelineItem) => void;
+  addVoiceTimelineItem: (item: TimelineItem, index?: number) => void;
   updateVoiceTimelineItem: (id: string, updates: Partial<TimelineItem>) => void;
   setCurrentTool: (tool: { name: string; args?: Record<string, unknown> } | null) => void;
 
@@ -237,6 +246,12 @@ interface UnifiedSessionsStore {
   setActiveOverlay: (overlay: OverlayType) => void;
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Toast Actions
+  // ─────────────────────────────────────────────────────────────────────────
+  addToast: (toast: ToastItem) => void;
+  dismissToast: (id: string) => void;
+
+  // ─────────────────────────────────────────────────────────────────────────
   // View & Prompts Actions
   // ─────────────────────────────────────────────────────────────────────────
   setActiveView: (view: 'sessions' | 'prompts') => void;
@@ -246,6 +261,7 @@ interface UnifiedSessionsStore {
   setPromptContent: (content: string) => void;
   savePromptVersion: () => Promise<void>;
   setPromptActiveVersion: (version: string) => Promise<void>;
+  updatePromptMetadata: (id: string, metadata: PromptInfo['metadata']) => Promise<void>;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Reset
@@ -330,6 +346,110 @@ function getAllTreeIds(node: SessionTreeNode): Set<string> {
   return ids;
 }
 
+function parseConversationItemOrder(itemId?: string): number | null {
+  if (!itemId) return null;
+  const uvxMatch = itemId.match(/^(?:assistant|user)-(\d+)$/);
+  if (uvxMatch?.[1]) {
+    const parsed = Number.parseInt(uvxMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  const decomposedMatch = itemId.match(/^decomp-(?:assistant|user|context)-(\d+)-[a-z0-9]+$/i);
+  if (decomposedMatch?.[1]) {
+    const parsed = Number.parseInt(decomposedMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  // Unknown provider-native IDs are treated as unsortable to avoid false reordering.
+  return null;
+}
+
+function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
+  const timeline: TimelineItem[] = [];
+  const toolIndexByCallId = new Map<string, number>();
+  const orderedMessages = messages
+    .map((message, index) => ({
+      message,
+      index,
+      order: parseConversationItemOrder(message.itemId),
+    }))
+    .sort((a, b) => {
+      if (a.order === null || b.order === null) {
+        return a.index - b.index;
+      }
+      if (a.order !== b.order) {
+        return a.order - b.order;
+      }
+      return a.index - b.index;
+    })
+    .map((entry) => entry.message);
+
+  for (const message of orderedMessages) {
+    for (const part of message.parts) {
+      if (part.type === 'text') {
+        timeline.push({
+          id: generateId(),
+          type: 'transcript',
+          role: message.role as 'user' | 'assistant',
+          content: part.text,
+          timestamp: message.createdAt,
+          pending: false,
+          itemId: message.itemId,
+        });
+        continue;
+      }
+
+      if (part.type === 'tool-call') {
+        const toolItem: ToolItem = {
+          id: part.toolCallId,
+          type: 'tool',
+          name: part.toolName,
+          args: part.args as Record<string, unknown>,
+          status: 'running',
+          timestamp: message.createdAt,
+        };
+        toolIndexByCallId.set(part.toolCallId, timeline.length);
+        timeline.push(toolItem);
+        continue;
+      }
+
+      if (part.type === 'tool-result') {
+        const resultText =
+          typeof part.result === 'string'
+            ? part.result
+            : JSON.stringify(part.result, null, 2);
+        const existingIdx = toolIndexByCallId.get(part.toolCallId);
+
+        if (existingIdx !== undefined) {
+          const existing = timeline[existingIdx];
+          if (existing?.type === 'tool') {
+            timeline[existingIdx] = {
+              ...existing,
+              status: 'completed',
+              result: resultText,
+            };
+          }
+        } else {
+          // Keep result visible even when persisted history misses the call event.
+          const fallbackTool: ToolItem = {
+            id: part.toolCallId,
+            type: 'tool',
+            name: part.toolName,
+            args: {},
+            status: 'completed',
+            result: resultText,
+            timestamp: message.createdAt,
+          };
+          toolIndexByCallId.set(part.toolCallId, timeline.length);
+          timeline.push(fallbackTool);
+        }
+      }
+    }
+  }
+
+  return timeline;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Store Implementation
 // ═══════════════════════════════════════════════════════════════════════════
@@ -380,6 +500,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   // View
   activeView: 'sessions',
 
+  // Toasts
+  toasts: [],
+
   // Prompts
   prompts: [],
   selectedPromptId: null,
@@ -423,8 +546,20 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
   clearVoiceTimeline: () => set({ voiceTimeline: [], currentTool: null }),
 
-  addVoiceTimelineItem: (item) =>
-    set((s) => ({ voiceTimeline: [...s.voiceTimeline, item] })),
+  addVoiceTimelineItem: (item, index) =>
+    set((s) => {
+      if (
+        typeof index !== 'number' ||
+        Number.isNaN(index) ||
+        index < 0 ||
+        index >= s.voiceTimeline.length
+      ) {
+        return { voiceTimeline: [...s.voiceTimeline, item] };
+      }
+      const voiceTimeline = [...s.voiceTimeline];
+      voiceTimeline.splice(index, 0, item);
+      return { voiceTimeline };
+    }),
 
   updateVoiceTimelineItem: (id, updates) =>
     set((s) => ({
@@ -833,27 +968,90 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       const messages = [...session.messages];
       const lastMessage = messages[messages.length - 1];
       const isAssistantMessage = lastMessage?.role === 'assistant';
+      const findMessageInsertIndexByItemOrder = (itemId?: string): number | null => {
+        const targetOrder = parseConversationItemOrder(itemId);
+        if (targetOrder === null) return null;
+        for (let idx = 0; idx < messages.length; idx += 1) {
+          const current = messages[idx];
+          if (!current) continue;
+          const currentOrder = parseConversationItemOrder(current.itemId);
+          if (currentOrder === null) continue;
+          if (currentOrder > targetOrder) {
+            return idx;
+          }
+        }
+        return messages.length;
+      };
+      const insertMessage = (message: Message, insertIndex: number | null): void => {
+        if (typeof insertIndex === 'number' && insertIndex >= 0 && insertIndex < messages.length) {
+          messages.splice(insertIndex, 0, message);
+          return;
+        }
+        messages.push(message);
+      };
+      const findMessageIndexByItemId = (
+        role: MessageRole,
+        itemId: string
+      ): number => {
+        for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+          const message = messages[idx];
+          if (message?.role !== role) continue;
+          if (message.itemId !== itemId) continue;
+          return idx;
+        }
+        return -1;
+      };
+      const appendTextToMessage = (index: number, text: string): void => {
+        const target = messages[index];
+        if (!target) return;
+        const targetParts = [...target.parts];
+        const lastPart = targetParts[targetParts.length - 1];
+        if (lastPart?.type === 'text') {
+          targetParts[targetParts.length - 1] = {
+            type: 'text',
+            text: lastPart.text + text,
+          };
+        } else {
+          targetParts.push({ type: 'text', text });
+        }
+        messages[index] = { ...target, parts: targetParts };
+      };
 
       switch (event.type) {
         case 'text-delta': {
-          if (isAssistantMessage) {
-            // Append to existing message
-            const lastPart = lastMessage.parts[lastMessage.parts.length - 1];
-            if (lastPart?.type === 'text') {
-              lastMessage.parts[lastMessage.parts.length - 1] = {
-                type: 'text',
-                text: lastPart.text + event.textDelta,
-              };
-            } else {
-              lastMessage.parts.push({ type: 'text', text: event.textDelta });
+          const deltaText = event.textDelta ?? '';
+
+          if (event.itemId) {
+            const messageIdx = findMessageIndexByItemId('assistant', event.itemId);
+            if (messageIdx >= 0) {
+              appendTextToMessage(messageIdx, deltaText);
+              break;
             }
-            messages[messages.length - 1] = { ...lastMessage };
+
+            // Ignore scaffold-only deltas that do not yet map to a concrete assistant item.
+            if (deltaText.trim().length === 0) {
+              break;
+            }
+
+            const created: Message = {
+              id: generateId(),
+              role: 'assistant',
+              parts: [{ type: 'text', text: deltaText }],
+              createdAt: Date.now(),
+              itemId: event.itemId,
+            };
+            insertMessage(created, findMessageInsertIndexByItemOrder(event.itemId));
+            break;
+          }
+
+          if (isAssistantMessage) {
+            appendTextToMessage(messages.length - 1, deltaText);
           } else {
             // Create new assistant message
             messages.push({
               id: generateId(),
               role: 'assistant',
-              parts: [{ type: 'text', text: event.textDelta }],
+              parts: [{ type: 'text', text: deltaText }],
               createdAt: Date.now(),
             });
           }
@@ -861,13 +1059,26 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         }
 
         case 'user-transcript': {
-          // User transcripts always create a new user message
-          messages.push({
+          if (event.itemId) {
+            const messageIdx = findMessageIndexByItemId('user', event.itemId);
+            if (messageIdx >= 0) {
+              messages[messageIdx] = {
+                ...messages[messageIdx]!,
+                parts: [{ type: 'text', text: event.text }],
+              };
+              break;
+            }
+          }
+
+          // User transcripts create a dedicated user message.
+          const created: Message = {
             id: generateId(),
             role: 'user',
             parts: [{ type: 'text', text: event.text }],
             createdAt: Date.now(),
-          });
+            itemId: event.itemId,
+          };
+          insertMessage(created, findMessageInsertIndexByItemOrder(event.itemId));
           break;
         }
 
@@ -951,6 +1162,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         case 'finish-step':
         case 'reasoning-start':
         case 'reasoning-end':
+        case 'process-status':
           break;
       }
 
@@ -982,31 +1194,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       // For voice sessions, still need to repopulate voiceTimeline from cached messages
       if (sessionType === 'voice') {
         console.log(`[History] Repopulating voiceTimeline from cached messages`);
-        const voiceTimeline: TimelineItem[] = [];
-        for (const message of existing.messages) {
-          for (const part of message.parts) {
-            if (part.type === 'text') {
-              voiceTimeline.push({
-                id: generateId(),
-                type: 'transcript',
-                role: message.role as 'user' | 'assistant',
-                content: part.text,
-                timestamp: message.createdAt,
-                pending: false,
-              });
-            } else if (part.type === 'tool-call') {
-              voiceTimeline.push({
-                id: part.toolCallId,
-                type: 'tool',
-                name: part.toolName,
-                args: part.args as Record<string, unknown>,
-                status: 'completed',
-                timestamp: message.createdAt,
-              });
-            }
-          }
-        }
-        set({ voiceTimeline });
+        set({ voiceTimeline: buildVoiceTimelineFromMessages(existing.messages) });
       }
       return;
     }
@@ -1030,34 +1218,8 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       // For voice sessions, also populate voiceTimeline
       if (sessionType === 'voice') {
         set((s) => {
-          const voiceTimeline: TimelineItem[] = [];
           const session = s.sessions.get(sessionId);
-          if (session?.messages) {
-            for (const message of session.messages) {
-              for (const part of message.parts) {
-                if (part.type === 'text') {
-                  voiceTimeline.push({
-                    id: generateId(),
-                    type: 'transcript',
-                    role: message.role as 'user' | 'assistant',
-                    content: part.text,
-                    timestamp: message.createdAt,
-                    pending: false,
-                  });
-                } else if (part.type === 'tool-call') {
-                  voiceTimeline.push({
-                    id: part.toolCallId,
-                    type: 'tool',
-                    name: part.toolName,
-                    args: part.args as Record<string, unknown>,
-                    status: 'completed',
-                    timestamp: message.createdAt,
-                  });
-                }
-              }
-            }
-          }
-          return { voiceTimeline };
+          return { voiceTimeline: buildVoiceTimelineFromMessages(session?.messages ?? []) };
         });
       }
 
@@ -1097,6 +1259,14 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   },
 
   setActiveOverlay: (overlay) => set({ activeOverlay: overlay }),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Toast Actions
+  // ─────────────────────────────────────────────────────────────────────────
+
+  addToast: (toast) => set((s) => ({ toasts: [...s.toasts, toast] })),
+
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   // ─────────────────────────────────────────────────────────────────────────
   // View & Prompts Actions
@@ -1203,6 +1373,23 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
     }
   },
 
+  updatePromptMetadata: async (id, metadata) => {
+    const { prompts } = get();
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      await promptsApi.updateMetadata(id, metadata);
+      const updatedPrompts = prompts.map((p) =>
+        p.id === id ? { ...p, metadata: { ...p.metadata, ...metadata } } : p
+      );
+      set({ prompts: updatedPrompts, promptsLoading: false });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to update metadata',
+        promptsLoading: false,
+      });
+    }
+  },
+
   // ─────────────────────────────────────────────────────────────────────────
   // Reset
   // ─────────────────────────────────────────────────────────────────────────
@@ -1230,6 +1417,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       subagentActive: false,
       events: [],
       activeOverlay: null,
+      toasts: [],
       activeView: 'sessions',
       prompts: [],
       selectedPromptId: null,
@@ -1374,6 +1562,11 @@ export function usePromptsState() {
       promptDirty: s.promptDirty,
     }))
   );
+}
+
+/** Get toast notifications */
+export function useToasts() {
+  return useUnifiedSessionsStore(useShallow((s) => s.toasts));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
