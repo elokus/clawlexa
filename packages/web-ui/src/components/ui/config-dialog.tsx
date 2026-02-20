@@ -257,11 +257,12 @@ export function ConfigDialog({
         .cfg-section-grid {
           display: grid;
           gap: 12px;
-          align-items: start;
+          align-items: stretch;
         }
 
         .cfg-field {
-          display: grid;
+          display: flex;
+          flex-direction: column;
           gap: 6px;
           min-width: 0;
         }
@@ -283,6 +284,10 @@ export function ConfigDialog({
           font-family: var(--font-ui);
           font-size: 11px;
           line-height: 1.4;
+        }
+
+        .cfg-field-control {
+          margin-top: auto;
         }
 
         .cfg-field-control > select,

@@ -248,33 +248,33 @@ export class VoiceAgent {
 
     // Wire up placeholder events for message ordering
     // These are emitted when conversation.item.added arrives, before transcripts
-    this.runtime.on('userItemCreated', (itemId) => {
-      this.adapter?.userPlaceholder(itemId);
+    this.runtime.on('userItemCreated', (itemId, order) => {
+      this.adapter?.userPlaceholder(itemId, undefined, order);
     });
 
-    this.runtime.on('assistantItemCreated', (itemId, previousItemId) => {
+    this.runtime.on('assistantItemCreated', (itemId, previousItemId, order) => {
       this.benchmark?.onAssistantItemCreated(itemId);
       // Keep provider-native ordering edges only. Synthetic fallback links can invert
       // ordering for providers (e.g. Ultravox) where assistant starts before user transcript.
-      this.adapter?.assistantPlaceholder(itemId, previousItemId);
+      this.adapter?.assistantPlaceholder(itemId, previousItemId, order);
     });
 
-    this.runtime.on('transcript', (text, role, itemId) => {
+    this.runtime.on('transcript', (text, role, itemId, order) => {
       this.benchmark?.onTranscriptFinal(text, role, itemId);
       // Collect transcripts for logging
       this.transcriptBuffer.push(`${role}: ${text}`);
       // Accumulate voice context for HandoffPacket (anti-telephone)
       this.addVoiceContext(role, text);
       // Runtime-level transcript dedupe/normalization ensures this is canonical.
-      this.adapter?.transcript(text, role, itemId);
+      this.adapter?.transcript(text, role, itemId, order);
     });
 
-    this.runtime.on('transcriptDelta', (delta, role, itemId) => {
+    this.runtime.on('transcriptDelta', (delta, role, itemId, order) => {
       this.benchmark?.onTranscriptDelta(delta, role, itemId);
       // Stream assistant transcript deltas in real-time
       // User transcripts don't have deltas (they arrive complete)
       if (role === 'assistant') {
-        this.adapter?.transcript(delta, role, itemId);
+        this.adapter?.transcript(delta, role, itemId, order);
       }
     });
 

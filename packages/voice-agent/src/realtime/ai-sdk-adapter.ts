@@ -34,7 +34,7 @@ export type VoiceEventType =
  */
 export interface VoiceEventPayloads {
   stateChange: { state: 'idle' | 'listening' | 'thinking' | 'speaking'; profile: string | null };
-  transcript: { text: string; role: 'user' | 'assistant'; itemId?: string };
+  transcript: { text: string; role: 'user' | 'assistant'; itemId?: string; order?: number };
   toolStart: { name: string; args: Record<string, unknown>; callId?: string };
   toolEnd: { name: string; result: string; callId?: string };
   error: { message: string };
@@ -83,13 +83,13 @@ function convertToAISDKEvent<T extends VoiceEventType>(
 ): AISDKStreamEvent | null {
   switch (eventType) {
     case 'transcript': {
-      const { text, role, itemId } = payload as VoiceEventPayloads['transcript'];
+      const { text, role, itemId, order } = payload as VoiceEventPayloads['transcript'];
       // User messages use custom 'user-transcript' event
       // Assistant messages use standard AI SDK 'text-delta'
       if (role === 'user') {
-        return { type: 'user-transcript', text, itemId };
+        return { type: 'user-transcript', text, itemId, order };
       }
-      return { type: 'text-delta', textDelta: text, itemId };
+      return { type: 'text-delta', textDelta: text, itemId, order };
     }
 
     case 'toolStart': {
@@ -179,24 +179,39 @@ export function createVoiceAdapter(sessionId: string) {
     /**
      * Emit a user placeholder event (reserves position before transcript arrives).
      */
-    userPlaceholder(itemId: string, previousItemId?: string): void {
-      const chunk = createStreamChunk(sessionId, { type: 'user-placeholder', itemId, previousItemId });
+    userPlaceholder(itemId: string, previousItemId?: string, order?: number): void {
+      const chunk = createStreamChunk(sessionId, {
+        type: 'user-placeholder',
+        itemId,
+        previousItemId,
+        order,
+      });
       broadcastStreamChunk(chunk);
     },
 
     /**
      * Emit an assistant placeholder event (reserves position before transcript arrives).
      */
-    assistantPlaceholder(itemId: string, previousItemId?: string): void {
-      const chunk = createStreamChunk(sessionId, { type: 'assistant-placeholder', itemId, previousItemId });
+    assistantPlaceholder(itemId: string, previousItemId?: string, order?: number): void {
+      const chunk = createStreamChunk(sessionId, {
+        type: 'assistant-placeholder',
+        itemId,
+        previousItemId,
+        order,
+      });
       broadcastStreamChunk(chunk);
     },
 
     /**
      * Emit a transcript event (user or assistant speech).
      */
-    transcript(text: string, role: 'user' | 'assistant', itemId?: string): void {
-      const event = convertToAISDKEvent('transcript', { text, role, itemId });
+    transcript(
+      text: string,
+      role: 'user' | 'assistant',
+      itemId?: string,
+      order?: number
+    ): void {
+      const event = convertToAISDKEvent('transcript', { text, role, itemId, order });
       if (!event) return;
       const chunk = createStreamChunk(sessionId, event);
       broadcastStreamChunk(chunk);

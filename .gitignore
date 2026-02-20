@@ -52,3 +52,8 @@ repomix-output.xml
 .voiceclaw/.sessions
 
 **/.benchmarks
+
+# Test audio recordings (large binary files - record locally)
+packages/voice-runtime/test-audio/*.raw
+packages/voice-runtime/data/test/*.raw
+packages/voice-runtime/data/test/*.wav

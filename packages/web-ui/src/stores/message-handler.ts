@@ -90,30 +90,16 @@ function findTimelineItemByItemId(
   return -1;
 }
 
-function parseConversationItemOrder(itemId?: string): number | null {
-  if (!itemId) return null;
-  const uvxMatch = itemId.match(/^(?:assistant|user)-(\d+)$/);
-  if (uvxMatch?.[1]) {
-    const parsed = Number.parseInt(uvxMatch[1], 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  const decomposedMatch = itemId.match(/^decomp-(?:assistant|user|context)-(\d+)-[a-z0-9]+$/i);
-  if (decomposedMatch?.[1]) {
-    const parsed = Number.parseInt(decomposedMatch[1], 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  // Unknown provider-native IDs are treated as unsortable to avoid false reordering.
-  return null;
+function toOrderValue(order?: number): number | null {
+  return typeof order === 'number' && Number.isFinite(order) ? order : null;
 }
 
 function findVoiceTimelineInsertIndex(
   timeline: TimelineItem[],
-  itemId?: string,
+  order?: number,
   previousItemId?: string
 ): number | undefined {
-  const targetOrder = parseConversationItemOrder(itemId);
+  const targetOrder = toOrderValue(order);
 
   if (previousItemId) {
     for (let idx = timeline.length - 1; idx >= 0; idx -= 1) {
@@ -122,7 +108,7 @@ function findVoiceTimelineInsertIndex(
       if (item.itemId !== previousItemId) continue;
 
       // Use previousItemId as an anchor, but never insert ahead of earlier-order
-      // transcript items. This protects ordering when providers emit stale links.
+      // transcript items.
       let insertIdx = idx + 1;
       if (targetOrder !== null) {
         while (insertIdx < timeline.length) {
@@ -131,7 +117,7 @@ function findVoiceTimelineInsertIndex(
             insertIdx += 1;
             continue;
           }
-          const currentOrder = parseConversationItemOrder(current.itemId);
+          const currentOrder = toOrderValue(current.order);
           if (currentOrder === null) {
             insertIdx += 1;
             continue;
@@ -149,7 +135,7 @@ function findVoiceTimelineInsertIndex(
   for (let idx = 0; idx < timeline.length; idx += 1) {
     const item = timeline[idx];
     if (item.type !== 'transcript') continue;
-    const currentOrder = parseConversationItemOrder(item.itemId);
+    const currentOrder = toOrderValue(item.order);
     if (currentOrder === null) continue;
     if (currentOrder > targetOrder) {
       return idx;
@@ -312,10 +298,11 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               timestamp,
               pending: true,
               itemId: event.itemId,
+              order: event.order,
             };
             const insertIndex = findVoiceTimelineInsertIndex(
               voiceTimeline,
-              event.itemId,
+              event.order,
               event.previousItemId
             );
             store.addVoiceTimelineItem(newItem, insertIndex);
@@ -341,10 +328,11 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               timestamp,
               pending: true,
               itemId: event.itemId,
+              order: event.order,
             };
             const insertIndex = findVoiceTimelineInsertIndex(
               voiceTimeline,
-              event.itemId,
+              event.order,
               event.previousItemId
             );
             store.addVoiceTimelineItem(newItem, insertIndex);
@@ -366,6 +354,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 const item = transcriptItems[idx];
                 store.updateVoiceTimelineItem(item.id, {
                   content: item.content + deltaText,
+                  order: event.order ?? item.order,
                 } as Partial<TranscriptItem>);
                 break;
               }
@@ -385,8 +374,12 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 timestamp,
                 pending: true,
                 itemId: event.itemId,
+                order: event.order,
               };
-              const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.itemId);
+              const insertIndex = findVoiceTimelineInsertIndex(
+                voiceTimeline,
+                event.order
+              );
               store.addVoiceTimelineItem(newItem, insertIndex);
               break;
             }
@@ -400,6 +393,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
             if (lastPendingAssistant) {
               store.updateVoiceTimelineItem(lastPendingAssistant.id, {
                 content: lastPendingAssistant.content + deltaText,
+                order: event.order ?? lastPendingAssistant.order,
               } as Partial<TranscriptItem>);
             } else {
               if (deltaText.trim().length === 0) {
@@ -412,6 +406,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 content: deltaText,
                 timestamp,
                 pending: true,
+                order: event.order,
               };
               store.addVoiceTimelineItem(newItem);
             }
@@ -431,6 +426,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 store.updateVoiceTimelineItem(item.id, {
                   content: event.text,
                   pending: false,
+                  order: event.order ?? item.order,
                 } as Partial<TranscriptItem>);
                 break;
               }
@@ -445,9 +441,13 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               timestamp,
               pending: false,
               itemId: event.itemId,
+              order: event.order,
             };
             const { voiceTimeline } = store;
-            const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.itemId);
+            const insertIndex = findVoiceTimelineInsertIndex(
+              voiceTimeline,
+              event.order
+            );
             store.addVoiceTimelineItem(newItem, insertIndex);
             break;
           }

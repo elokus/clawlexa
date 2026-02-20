@@ -93,30 +93,16 @@ function findTranscriptByItemId(
   return -1;
 }
 
-function parseConversationItemOrder(itemId?: string): number | null {
-  if (!itemId) return null;
-
-  const uvxMatch = itemId.match(/^(?:assistant|user)-(\d+)$/);
-  if (uvxMatch?.[1]) {
-    const parsed = Number.parseInt(uvxMatch[1], 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  const decomposedMatch = itemId.match(/^decomp-(?:assistant|user|context)-(\d+)-[a-z0-9]+$/i);
-  if (decomposedMatch?.[1]) {
-    const parsed = Number.parseInt(decomposedMatch[1], 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
+function toOrderValue(order?: number): number | null {
+  return typeof order === 'number' && Number.isFinite(order) ? order : null;
 }
 
 function findTranscriptInsertIndex(
   transcripts: TranscriptEntry[],
-  itemId?: string,
+  order?: number,
   previousItemId?: string,
 ): number | undefined {
-  const targetOrder = parseConversationItemOrder(itemId);
+  const targetOrder = toOrderValue(order);
 
   if (previousItemId) {
     for (let idx = transcripts.length - 1; idx >= 0; idx--) {
@@ -131,7 +117,7 @@ function findTranscriptInsertIndex(
             insertIdx++;
             continue;
           }
-          const currentOrder = parseConversationItemOrder(current.id);
+          const currentOrder = toOrderValue(current.order);
           if (currentOrder === null) {
             insertIdx++;
             continue;
@@ -149,7 +135,7 @@ function findTranscriptInsertIndex(
   for (let idx = 0; idx < transcripts.length; idx++) {
     const item = transcripts[idx];
     if (!item) continue;
-    const currentOrder = parseConversationItemOrder(item.id);
+    const currentOrder = toOrderValue(item.order);
     if (currentOrder === null) continue;
     if (currentOrder > targetOrder) return idx;
   }
@@ -176,10 +162,20 @@ function ensurePlaceholder(
   transcripts: TranscriptEntry[],
   role: 'user' | 'assistant',
   itemId: string,
+  order?: number,
   previousItemId?: string,
 ): TranscriptEntry[] {
   const existingIdx = findTranscriptByItemId(transcripts, itemId, role);
-  if (existingIdx >= 0) return transcripts;
+  if (existingIdx >= 0) {
+    if (order == null) return transcripts;
+    const existing = transcripts[existingIdx];
+    if (!existing || existing.order === order) return transcripts;
+    return [
+      ...transcripts.slice(0, existingIdx),
+      { ...existing, order },
+      ...transcripts.slice(existingIdx + 1),
+    ];
+  }
 
   const newEntry: TranscriptEntry = {
     id: itemId,
@@ -187,8 +183,9 @@ function ensurePlaceholder(
     text: '',
     isStreaming: true,
     timestamp: Date.now(),
+    order,
   };
-  const insertIndex = findTranscriptInsertIndex(transcripts, itemId, previousItemId);
+  const insertIndex = findTranscriptInsertIndex(transcripts, order, previousItemId);
   return insertTranscriptAt(transcripts, newEntry, insertIndex);
 }
 
@@ -197,6 +194,7 @@ function updateTranscriptDelta(
   role: 'user' | 'assistant',
   delta: string,
   itemId?: string,
+  order?: number,
 ): TranscriptEntry[] {
   if (itemId) {
     const existingIdx = findTranscriptByItemId(transcripts, itemId, role);
@@ -205,7 +203,12 @@ function updateTranscriptDelta(
       if (!existing) return transcripts;
       return [
         ...transcripts.slice(0, existingIdx),
-        { ...existing, text: existing.text + delta, isStreaming: true },
+        {
+          ...existing,
+          text: existing.text + delta,
+          isStreaming: true,
+          order: order ?? existing.order,
+        },
         ...transcripts.slice(existingIdx + 1),
       ];
     }
@@ -221,8 +224,9 @@ function updateTranscriptDelta(
       text: delta,
       isStreaming: true,
       timestamp: Date.now(),
+      order,
     };
-    const insertIndex = findTranscriptInsertIndex(transcripts, itemId);
+    const insertIndex = findTranscriptInsertIndex(transcripts, order);
     return insertTranscriptAt(transcripts, created, insertIndex);
   }
 
@@ -231,7 +235,12 @@ function updateTranscriptDelta(
     if (!current || !current.isStreaming || current.role !== role) continue;
     return [
       ...transcripts.slice(0, i),
-      { ...current, text: current.text + delta, isStreaming: true },
+      {
+        ...current,
+        text: current.text + delta,
+        isStreaming: true,
+        order: order ?? current.order,
+      },
       ...transcripts.slice(i + 1),
     ];
   }
@@ -248,6 +257,7 @@ function updateTranscriptDelta(
       text: delta,
       isStreaming: true,
       timestamp: Date.now(),
+      order,
     },
   ];
 }
@@ -257,6 +267,7 @@ function finalizeTranscript(
   role: 'user' | 'assistant',
   text: string,
   itemId?: string,
+  order?: number,
 ): TranscriptEntry[] {
   if (itemId) {
     const existingIdx = findTranscriptByItemId(transcripts, itemId, role);
@@ -265,7 +276,14 @@ function finalizeTranscript(
       if (!current) return transcripts;
       return [
         ...transcripts.slice(0, existingIdx),
-        { ...current, role, text, isStreaming: false, timestamp: current.timestamp },
+        {
+          ...current,
+          role,
+          text,
+          isStreaming: false,
+          timestamp: current.timestamp,
+          order: order ?? current.order,
+        },
         ...transcripts.slice(existingIdx + 1),
       ];
     }
@@ -276,8 +294,9 @@ function finalizeTranscript(
       text,
       isStreaming: false,
       timestamp: Date.now(),
+      order,
     };
-    const insertIndex = findTranscriptInsertIndex(transcripts, itemId);
+    const insertIndex = findTranscriptInsertIndex(transcripts, order);
     return insertTranscriptAt(transcripts, created, insertIndex);
   }
 
@@ -286,7 +305,14 @@ function finalizeTranscript(
     if (!current || !current.isStreaming || current.role !== role) continue;
     return [
       ...transcripts.slice(0, i),
-      { ...current, role, text, isStreaming: false, timestamp: current.timestamp },
+      {
+        ...current,
+        role,
+        text,
+        isStreaming: false,
+        timestamp: current.timestamp,
+        order: order ?? current.order,
+      },
       ...transcripts.slice(i + 1),
     ];
   }
@@ -299,6 +325,7 @@ function finalizeTranscript(
       text,
       isStreaming: false,
       timestamp: Date.now(),
+      order,
     },
   ];
 }
@@ -430,25 +457,43 @@ export function inspectorReducer(state: InspectorState, action: InspectorAction)
     case 'USER_ITEM_CREATED':
       return {
         ...state,
-        transcripts: ensurePlaceholder(state.transcripts, 'user', action.itemId),
+        transcripts: ensurePlaceholder(state.transcripts, 'user', action.itemId, action.order),
       };
 
     case 'ASSISTANT_ITEM_CREATED':
       return {
         ...state,
-        transcripts: ensurePlaceholder(state.transcripts, 'assistant', action.itemId, action.previousItemId),
+        transcripts: ensurePlaceholder(
+          state.transcripts,
+          'assistant',
+          action.itemId,
+          action.order,
+          action.previousItemId
+        ),
       };
 
     case 'TRANSCRIPT':
       return {
         ...state,
-        transcripts: finalizeTranscript(state.transcripts, action.role, action.text, action.itemId),
+        transcripts: finalizeTranscript(
+          state.transcripts,
+          action.role,
+          action.text,
+          action.itemId,
+          action.order
+        ),
       };
 
     case 'TRANSCRIPT_DELTA':
       return {
         ...state,
-        transcripts: updateTranscriptDelta(state.transcripts, action.role, action.delta, action.itemId),
+        transcripts: updateTranscriptDelta(
+          state.transcripts,
+          action.role,
+          action.delta,
+          action.itemId,
+          action.order
+        ),
       };
 
     case 'TOOL_START':

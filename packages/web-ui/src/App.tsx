@@ -8,13 +8,13 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useConnectionState, useVoiceState, useUnifiedSessionsStore } from './stores';
 import { useAudioSession } from './hooks/useAudioSession';
 import { useVoiceRuntimeConfig } from './hooks/useVoiceRuntimeConfig';
-import { useUrlSessionSync } from './hooks/useRouter';
+import { navigate, useUrlSessionSync } from './hooks/useRouter';
 import { StageOrchestrator } from './components/layout/StageOrchestrator';
 import { ControlBar } from './components/ControlBar';
 import { VoiceRuntimePanel } from './components/VoiceRuntimePanel';
 
 export function App() {
-  const { reconnect, sendFocusSession } = useWebSocket();
+  const { sendFocusSession } = useWebSocket();
   const { connected } = useConnectionState();
   const { voiceState, voiceProfile } = useVoiceState();
   const audioSession = useAudioSession();
@@ -23,6 +23,7 @@ export function App() {
   // Track focused session and sync to backend + URL
   const focusedSessionId = useUnifiedSessionsStore((s) => s.focusedSessionId);
   const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
+  const clearFocusedSession = useUnifiedSessionsStore((s) => s.clearFocusedSession);
   const prevFocusedRef = useRef<string | null>(null);
 
   // Sync URL ↔ focusedSessionId (two-way binding)
@@ -35,6 +36,13 @@ export function App() {
       sendFocusSession(focusedSessionId);
     }
   }, [focusedSessionId, connected, sendFocusSession]);
+
+  const handleReconnect = () => {
+    clearFocusedSession();
+    navigate('/', true);
+    // Force full app reset after backend restarts to avoid stale in-memory UI state.
+    window.location.replace('/');
+  };
 
   const stateConfig = {
     idle: { color: 'rgba(110, 110, 136, 0.8)', glow: 'transparent' },
@@ -350,7 +358,7 @@ export function App() {
             Establishing uplink to VERTEX core...<br/>
             Target: marlon.local
           </div>
-          <button className="reconnect-btn" onClick={reconnect} type="button">
+          <button className="reconnect-btn" onClick={handleReconnect} type="button">
             RECONNECT
           </button>
         </div>

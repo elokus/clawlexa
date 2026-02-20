@@ -220,4 +220,25 @@ describe('UltravoxWsAdapter transcript normalization', () => {
     await waitFor(() => userItems.length === 1);
     expect(userItems).toEqual(['user-1']);
   });
+
+  test('links assistant placeholder to expected prior user item when assistant arrives first', async () => {
+    const adapter = new UltravoxWsAdapter();
+    const assistantItems: Array<{ itemId: string; previousItemId?: string }> = [];
+
+    adapter.on('assistantItemCreated', (itemId, previousItemId) => {
+      assistantItems.push({ itemId, previousItemId });
+    });
+
+    const connectPromise = adapter.connect(createInput());
+    await waitFor(() => sockets.length === 1);
+    const socket = sockets[0];
+    expect(socket).toBeDefined();
+    socket?.open();
+    await connectPromise;
+
+    socket?.emitJson({ type: 'transcript', role: 'assistant', ordinal: 2, delta: 'Ja' });
+
+    await waitFor(() => assistantItems.length === 1);
+    expect(assistantItems).toEqual([{ itemId: 'assistant-2', previousItemId: 'user-1' }]);
+  });
 });

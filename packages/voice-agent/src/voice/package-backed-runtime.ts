@@ -164,20 +164,20 @@ export class PackageBackedVoiceRuntime implements VoiceRuntime {
       this.emit('audioInterrupted');
     });
 
-    this.bind('transcript', session, (text, role, itemId) => {
-      this.emit('transcript', text, role, itemId);
+    this.bind('transcript', session, (text, role, itemId, order) => {
+      this.emit('transcript', text, role, itemId, order);
     });
 
-    this.bind('transcriptDelta', session, (delta, role, itemId) => {
-      this.emit('transcriptDelta', delta, role, itemId);
+    this.bind('transcriptDelta', session, (delta, role, itemId, order) => {
+      this.emit('transcriptDelta', delta, role, itemId, order);
     });
 
-    this.bind('userItemCreated', session, (itemId) => {
-      this.emit('userItemCreated', itemId);
+    this.bind('userItemCreated', session, (itemId, order) => {
+      this.emit('userItemCreated', itemId, order);
     });
 
-    this.bind('assistantItemCreated', session, (itemId, previousItemId) => {
-      this.emit('assistantItemCreated', itemId, previousItemId);
+    this.bind('assistantItemCreated', session, (itemId, previousItemId, order) => {
+      this.emit('assistantItemCreated', itemId, previousItemId, order);
     });
 
     this.bind('historyUpdated', session, (history) => {

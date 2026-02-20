@@ -51,6 +51,13 @@ import {
   getVoiceConfigPath,
   getAuthProfilesPath,
 } from '../voice/settings.js';
+import {
+  fetchRuntimeProviderCatalogFromAuthProfiles,
+  getRuntimeConfigManifest,
+  runtimeAuthKeySetToProviderMap,
+  testRuntimeProviderCredentials,
+  type RuntimeAuthProvider,
+} from '@voiceclaw/voice-runtime';
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3000', 10);
 const OPEN_ROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY ?? '';
@@ -148,237 +155,10 @@ async function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
   });
 }
 
-async function testProviderAuth(
-  provider: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox',
-  apiKey: string
-): Promise<{ ok: boolean; status: number; message: string }> {
-  const headers = (contentType?: string) => ({
-    Authorization: `Bearer ${apiKey}`,
-    ...(contentType ? { 'Content-Type': contentType } : {}),
-  });
-
-  try {
-    switch (provider) {
-      case 'openai': {
-        const res = await fetch('https://api.openai.com/v1/models', {
-          headers: headers(),
-        });
-        return {
-          ok: res.ok,
-          status: res.status,
-          message: res.ok ? 'OpenAI credentials valid' : await res.text(),
-        };
-      }
-      case 'openrouter': {
-        const res = await fetch('https://openrouter.ai/api/v1/models', {
-          headers: headers(),
-        });
-        return {
-          ok: res.ok,
-          status: res.status,
-          message: res.ok ? 'OpenRouter credentials valid' : await res.text(),
-        };
-      }
-      case 'google': {
-        const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
-        url.searchParams.set('key', apiKey);
-        const res = await fetch(url);
-        return {
-          ok: res.ok,
-          status: res.status,
-          message: res.ok ? 'Google credentials valid' : await res.text(),
-        };
-      }
-      case 'deepgram': {
-        const res = await fetch('https://api.deepgram.com/v1/projects', {
-          headers: {
-            Authorization: `Token ${apiKey}`,
-          },
-        });
-        return {
-          ok: res.ok,
-          status: res.status,
-          message: res.ok ? 'Deepgram credentials valid' : await res.text(),
-        };
-      }
-      case 'ultravox': {
-        const res = await fetch('https://api.ultravox.ai/api/models', {
-          headers: {
-            'X-API-Key': apiKey,
-          },
-        });
-        return {
-          ok: res.ok,
-          status: res.status,
-          message: res.ok ? 'Ultravox credentials valid' : await res.text(),
-        };
-      }
-      default:
-        return {
-          ok: false,
-          status: 400,
-          message: `Unsupported provider: ${String(provider)}`,
-        };
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      status: 500,
-      message: (error as Error).message,
-    };
-  }
-}
-
 function maskKey(value: string): string {
   if (!value) return '';
   if (value.length <= 8) return '********';
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
-}
-
-async function fetchOpenAIVoiceCatalog(apiKey: string): Promise<{
-  realtimeModels: string[];
-  textModels: string[];
-  voices: string[];
-}> {
-  const fallback = {
-    realtimeModels: ['gpt-realtime-mini-2025-10-06', 'gpt-realtime'],
-    textModels: ['gpt-4.1', 'gpt-4o-mini'],
-    voices: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'],
-  };
-
-  if (!apiKey) {
-    return fallback;
-  }
-
-  try {
-    const response = await fetch('https://api.openai.com/v1/models', {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!response.ok) return fallback;
-
-    const payload = (await response.json()) as { data?: Array<{ id?: string }> };
-    const ids = (payload.data ?? []).map((m) => m.id ?? '').filter(Boolean);
-
-    const realtimeModels = ids
-      .filter((id) => id.includes('realtime'))
-      .sort();
-    const textModels = ids
-      .filter((id) => id.startsWith('gpt-4') || id.startsWith('gpt-5'))
-      .slice(0, 80)
-      .sort();
-
-    return {
-      realtimeModels: realtimeModels.length > 0 ? realtimeModels : fallback.realtimeModels,
-      textModels: textModels.length > 0 ? textModels : fallback.textModels,
-      voices: fallback.voices,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-async function fetchDeepgramVoiceCatalog(apiKey: string): Promise<{
-  sttModels: string[];
-  ttsVoices: string[];
-}> {
-  const fallback = {
-    sttModels: ['nova-3', 'nova-2'],
-    ttsVoices: ['aura-2-thalia-en', 'aura-2-luna-en', 'aura-2-cora-en'],
-  };
-
-  if (!apiKey) {
-    return fallback;
-  }
-
-  try {
-    const response = await fetch('https://api.deepgram.com/v1/models', {
-      headers: { Authorization: `Token ${apiKey}` },
-    });
-    if (!response.ok) return fallback;
-    const payload = (await response.json()) as {
-      stt?: Array<{ canonical_name?: string; streaming?: boolean }>;
-      tts?: Array<{ canonical_name?: string }>;
-    };
-
-    const sttModels = Array.from(
-      new Set(
-        (payload.stt ?? [])
-          .filter((model) => model.streaming)
-          .map((model) => model.canonical_name ?? '')
-          .filter(Boolean)
-      )
-    ).sort();
-
-    const ttsVoices = Array.from(
-      new Set(
-        (payload.tts ?? [])
-          .map((model) => model.canonical_name ?? '')
-          .filter(Boolean)
-      )
-    ).sort();
-
-    return {
-      sttModels: sttModels.length > 0 ? sttModels : fallback.sttModels,
-      ttsVoices: ttsVoices.length > 0 ? ttsVoices : fallback.ttsVoices,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-async function fetchUltravoxVoiceCatalog(apiKey: string): Promise<{
-  models: string[];
-  voices: Array<{ voiceId: string; name: string; primaryLanguage?: string }>;
-}> {
-  const fallback = {
-    models: ['ultravox-v0.7'],
-    voices: [],
-  };
-
-  if (!apiKey) {
-    return fallback;
-  }
-
-  try {
-    const modelRes = await fetch('https://api.ultravox.ai/api/models', {
-      headers: { 'X-API-Key': apiKey },
-    });
-    const voiceRes = await fetch('https://api.ultravox.ai/api/voices', {
-      headers: { 'X-API-Key': apiKey },
-    });
-
-    let models = fallback.models;
-    if (modelRes.ok) {
-      const modelPayload = (await modelRes.json()) as {
-        results?: Array<{ name?: string }>;
-      };
-      const discovered = (modelPayload.results ?? [])
-        .map((entry) => entry.name ?? '')
-        .filter(Boolean)
-        .sort();
-      if (discovered.length > 0) {
-        models = discovered;
-      }
-    }
-
-    let voices: Array<{ voiceId: string; name: string; primaryLanguage?: string }> = [];
-    if (voiceRes.ok) {
-      const voicePayload = (await voiceRes.json()) as {
-        results?: Array<{ voiceId?: string; name?: string; primaryLanguage?: string }>;
-      };
-      voices = (voicePayload.results ?? [])
-        .filter((voice) => voice.voiceId && voice.name)
-        .map((voice) => ({
-          voiceId: voice.voiceId as string,
-          name: voice.name as string,
-          primaryLanguage: voice.primaryLanguage,
-        }));
-    }
-
-    return { models, voices };
-  } catch {
-    return fallback;
-  }
 }
 
 /**
@@ -835,25 +615,21 @@ async function handleWebhook(
       const now = Date.now();
       if (!voiceCatalogCache || now - voiceCatalogCache.timestamp > VOICE_CATALOG_CACHE_TTL) {
         const authProfiles = loadAuthProfiles();
-        const openaiKey = resolveApiKey('openai', { authProfiles });
-        const deepgramKey = resolveApiKey('deepgram', { authProfiles });
-        const ultravoxKey = resolveApiKey('ultravox', { authProfiles });
+        const runtimeCatalog = await fetchRuntimeProviderCatalogFromAuthProfiles({
+          authProfiles,
+          env: process.env,
+        });
 
-        const [openai, deepgram, ultravox] = await Promise.all([
-          fetchOpenAIVoiceCatalog(openaiKey),
-          fetchDeepgramVoiceCatalog(deepgramKey),
-          fetchUltravoxVoiceCatalog(ultravoxKey),
-        ]);
+        const manifest = getRuntimeConfigManifest();
+        // Auth profile names for dropdown selectors
+        const authProfileNames = Object.keys(authProfiles.profiles);
 
         voiceCatalogCache = {
           data: {
-            openai,
-            deepgram,
-            ultravox,
-            gemini: {
-              models: ['gemini-2.5-flash-native-audio-preview'],
-              voices: ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Leda', 'Orus', 'Zephyr'],
-            },
+            manifest,
+            providerCatalog: runtimeCatalog.entries,
+            providerSchemas: runtimeCatalog.providerSchemas,
+            authProfileNames,
           },
           timestamp: now,
         };
@@ -886,6 +662,10 @@ async function handleWebhook(
       }
 
       const runtime = resolveVoiceRuntimeConfig(profile);
+      const auth = runtimeAuthKeySetToProviderMap(runtime.auth);
+      const redactedAuth = Object.fromEntries(
+        Object.entries(auth).map(([provider, key]) => [provider, maskKey(key)])
+      );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -900,13 +680,7 @@ async function handleWebhook(
             llm: `${runtime.decomposedLlmProvider}/${runtime.decomposedLlmModel}`,
             tts: `${runtime.decomposedTtsProvider}/${runtime.decomposedTtsModel}`,
           },
-          auth: {
-            openai: maskKey(runtime.auth.openaiApiKey),
-            openrouter: maskKey(runtime.auth.openrouterApiKey),
-            google: maskKey(runtime.auth.googleApiKey),
-            deepgram: maskKey(runtime.auth.deepgramApiKey),
-            ultravox: maskKey(runtime.auth.ultravoxApiKey),
-          },
+          auth: redactedAuth,
           turn: runtime.turn,
         })
       );
@@ -982,7 +756,7 @@ async function handleWebhook(
   if (req.method === 'POST' && req.url === '/api/config/auth-profiles/test') {
     try {
       const body = await readJsonBody<{
-        provider?: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox';
+        provider?: RuntimeAuthProvider;
         authProfileId?: string;
       }>(req);
 
@@ -1010,7 +784,7 @@ async function handleWebhook(
         return;
       }
 
-      const result = await testProviderAuth(provider, apiKey);
+      const result = await testRuntimeProviderCredentials(provider, apiKey);
       res.writeHead(result.ok ? 200 : 502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ provider, ...result }));
     } catch (error) {

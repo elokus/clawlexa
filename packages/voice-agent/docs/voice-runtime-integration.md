@@ -12,14 +12,21 @@ This project integrates the package runtime through a thin compatibility layer.
 
 ## Integration Flow
 
-1. `factory.ts` resolves runtime config and tools from profile/context.
-2. It builds a package runtime host with registered adapters.
-3. It creates `SessionInput` (provider id, instructions, model, voice, tool handler, provider config).
-4. Provider config is validated through `parseProviderConfig()` from `@voiceclaw/voice-runtime`.
-5. `PackageBackedVoiceRuntime` wraps package session and maps events to existing `VoiceRuntime` contract.
-6. `LegacyAudioTransportBridge` adapts existing `IAudioTransport` to package `ClientTransport`.
-7. `VoiceAgent` consumes the wrapper and keeps existing orchestration/session-tree behavior.
+1. `voice/config.ts` delegates profile+document resolution to `resolveRuntimeConfigFromDocuments(...)` from runtime.
+2. `factory.ts` builds tools, then delegates `SessionInput` construction to `resolveRuntimeSessionInput(...)`.
+3. `factory.ts` builds the runtime host via `getBuiltInProviderRegistry()` and `createVoiceRuntime(...)`.
+4. `PackageBackedVoiceRuntime` wraps package session and maps events to existing `VoiceRuntime` contract.
+5. `LegacyAudioTransportBridge` adapts existing `IAudioTransport` to package `ClientTransport`.
+6. `VoiceAgent` consumes the wrapper and keeps orchestration/session-tree behavior.
+7. Webhook config endpoints delegate provider catalog/auth checks to runtime control-plane functions.
 8. Optional benchmark capture records session metrics and writes PASS/FAIL JSON reports.
+
+## Boundary Contract (Important)
+
+- Provider-specific protocol handling, transcript normalization, and ordering normalization belong to `@voiceclaw/voice-runtime`.
+- `voice-agent` should only orchestrate profiles, tools, session lifecycle, persistence, and transport wiring.
+- `voice-agent` and downstream UIs should consume normalized runtime events and must not parse provider-native IDs or provider-specific transcript quirks.
+- If provider behavior differs, the fix should be in runtime adapters/session normalization, not in `voice-agent` or UI layers.
 
 ## Why This Layer Exists
 
@@ -29,7 +36,14 @@ This project integrates the package runtime through a thin compatibility layer.
 
 ## Migration Notes
 
-- Legacy provider runtime classes still exist for targeted regression tests and fallback analysis.
-- Active provider selection now resolves to package provider ids in `factory.ts`.
+- Legacy OpenAI-only realtime session wrapper has been removed; runtime-backed voice path is the active integration.
+- Active provider selection and provider `SessionInput` shaping now happen in runtime control-plane helpers.
 - Latency and transcript events are normalized before `VoiceAgent` forwarding.
+- Benchmark provider threshold presets are sourced from runtime control-plane helpers.
 - Benchmark reports can be enabled with `VOICE_BENCHMARK_ENABLED=true` and inspected with `bun run scratch:benchmark`.
+
+### Testing Policy
+
+- Replay contract tests are used for deterministic regression checks.
+- Live audio tests are used for real provider verification with actual audio/tool execution.
+- Passing replay tests alone is not evidence of live provider correctness.

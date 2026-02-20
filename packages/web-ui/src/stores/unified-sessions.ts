@@ -58,6 +58,7 @@ export interface Message {
   parts: MessagePart[];
   createdAt: number;
   itemId?: string;
+  order?: number;
 }
 
 /** Session state in the unified model */
@@ -75,11 +76,11 @@ export interface SessionState {
 
 /** AI SDK stream event types */
 export type AISDKStreamEvent =
-  | { type: 'text-delta'; textDelta: string; itemId?: string }
-  | { type: 'user-transcript'; text: string; itemId?: string } // Custom extension for voice user messages
+  | { type: 'text-delta'; textDelta: string; itemId?: string; order?: number }
+  | { type: 'user-transcript'; text: string; itemId?: string; order?: number } // Custom extension for voice user messages
   // Placeholders for message ordering (custom extension for voice sessions)
-  | { type: 'user-placeholder'; itemId: string; previousItemId?: string }
-  | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string }
+  | { type: 'user-placeholder'; itemId: string; previousItemId?: string; order?: number }
+  | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string; order?: number }
   | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
   | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
   | { type: 'reasoning-start' }
@@ -346,22 +347,19 @@ function getAllTreeIds(node: SessionTreeNode): Set<string> {
   return ids;
 }
 
-function parseConversationItemOrder(itemId?: string): number | null {
-  if (!itemId) return null;
-  const uvxMatch = itemId.match(/^(?:assistant|user)-(\d+)$/);
-  if (uvxMatch?.[1]) {
-    const parsed = Number.parseInt(uvxMatch[1], 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
+function getSessionIdFromPath(pathname: string): string | null {
+  const sessionMatch = pathname.match(/^\/session\/([a-zA-Z0-9_-]+)\/?$/);
+  return sessionMatch?.[1] ?? null;
+}
 
-  const decomposedMatch = itemId.match(/^decomp-(?:assistant|user|context)-(\d+)-[a-z0-9]+$/i);
-  if (decomposedMatch?.[1]) {
-    const parsed = Number.parseInt(decomposedMatch[1], 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
+function replacePath(path: string): void {
+  if (window.location.pathname === path) return;
+  window.history.replaceState(null, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
 
-  // Unknown provider-native IDs are treated as unsortable to avoid false reordering.
-  return null;
+function toOrderValue(order?: number): number | null {
+  return typeof order === 'number' && Number.isFinite(order) ? order : null;
 }
 
 function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
@@ -371,7 +369,7 @@ function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
     .map((message, index) => ({
       message,
       index,
-      order: parseConversationItemOrder(message.itemId),
+      order: toOrderValue(message.order),
     }))
     .sort((a, b) => {
       if (a.order === null || b.order === null) {
@@ -395,6 +393,7 @@ function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
           timestamp: message.createdAt,
           pending: false,
           itemId: message.itemId,
+          order: message.order,
         });
         continue;
       }
@@ -577,8 +576,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   handleSessionTreeUpdate: (payload) => {
     const { tree, trees } = payload;
 
-    // Check if URL has a session - if so, don't auto-focus (URL is source of truth)
-    const urlHasSession = window.location.pathname.startsWith('/session/');
+    // URL is source of truth when a session is present.
+    const urlSessionId = getSessionIdFromPath(window.location.pathname);
+    const urlHasSession = urlSessionId !== null;
 
     if (trees) {
       // Batch update - initial load / reconnect
@@ -587,23 +587,45 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         newAllTrees.set(t.id, t);
       }
 
-      // First tree becomes the active sessionTree, rest go to background
+      // Default to first tree, then override if URL points at a different tree.
       const firstTree = trees[0] ?? null;
-      const backgroundIds = trees.slice(1).map((t) => t.id);
-
-      // Only auto-focus if URL doesn't specify a session
+      let activeTree = firstTree;
       let focusId: string | null = null;
-      if (!urlHasSession) {
+
+      if (urlSessionId) {
+        const matchingRoot = trees.find((candidate) => findSessionById(candidate, urlSessionId));
+        if (matchingRoot) {
+          activeTree = matchingRoot;
+          focusId = urlSessionId;
+        } else {
+          // Stale /session/:id URL (common after backend restart): reset to home.
+          console.log(`[Router] URL session ${urlSessionId.slice(0, 8)} not found, resetting to /`);
+          replacePath('/');
+          const deepest = firstTree ? findDeepestRunning(firstTree) : null;
+          focusId = deepest?.id ?? firstTree?.id ?? null;
+        }
+      } else {
         const deepest = firstTree ? findDeepestRunning(firstTree) : null;
         focusId = deepest?.id ?? firstTree?.id ?? null;
       }
 
+      const backgroundIds = activeTree
+        ? trees.filter((candidate) => candidate.id !== activeTree.id).map((candidate) => candidate.id)
+        : [];
+
       set({
         allTrees: newAllTrees,
-        sessionTree: firstTree,
-        ...(focusId !== null && { focusedSessionId: focusId }),
+        sessionTree: activeTree,
+        focusedSessionId: focusId,
         backgroundTreeIds: backgroundIds,
       });
+
+      if (focusId && activeTree) {
+        const node = findSessionById(activeTree, focusId);
+        if (node) {
+          get().loadSessionHistory(focusId, node.type as SessionType);
+        }
+      }
       return;
     }
 
@@ -968,13 +990,13 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       const messages = [...session.messages];
       const lastMessage = messages[messages.length - 1];
       const isAssistantMessage = lastMessage?.role === 'assistant';
-      const findMessageInsertIndexByItemOrder = (itemId?: string): number | null => {
-        const targetOrder = parseConversationItemOrder(itemId);
+      const findMessageInsertIndexByOrder = (order?: number): number | null => {
+        const targetOrder = toOrderValue(order);
         if (targetOrder === null) return null;
         for (let idx = 0; idx < messages.length; idx += 1) {
           const current = messages[idx];
           if (!current) continue;
-          const currentOrder = parseConversationItemOrder(current.itemId);
+          const currentOrder = toOrderValue(current.order);
           if (currentOrder === null) continue;
           if (currentOrder > targetOrder) {
             return idx;
@@ -1025,6 +1047,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             const messageIdx = findMessageIndexByItemId('assistant', event.itemId);
             if (messageIdx >= 0) {
               appendTextToMessage(messageIdx, deltaText);
+              if (event.order != null && messages[messageIdx]?.order == null) {
+                messages[messageIdx] = { ...messages[messageIdx]!, order: event.order };
+              }
               break;
             }
 
@@ -1039,8 +1064,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               parts: [{ type: 'text', text: deltaText }],
               createdAt: Date.now(),
               itemId: event.itemId,
+              order: event.order,
             };
-            insertMessage(created, findMessageInsertIndexByItemOrder(event.itemId));
+            insertMessage(created, findMessageInsertIndexByOrder(event.order));
             break;
           }
 
@@ -1053,6 +1079,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               role: 'assistant',
               parts: [{ type: 'text', text: deltaText }],
               createdAt: Date.now(),
+              order: event.order,
             });
           }
           break;
@@ -1065,6 +1092,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               messages[messageIdx] = {
                 ...messages[messageIdx]!,
                 parts: [{ type: 'text', text: event.text }],
+                order: event.order ?? messages[messageIdx]?.order,
               };
               break;
             }
@@ -1077,8 +1105,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             parts: [{ type: 'text', text: event.text }],
             createdAt: Date.now(),
             itemId: event.itemId,
+            order: event.order,
           };
-          insertMessage(created, findMessageInsertIndexByItemOrder(event.itemId));
+          insertMessage(created, findMessageInsertIndexByOrder(event.order));
           break;
         }
 

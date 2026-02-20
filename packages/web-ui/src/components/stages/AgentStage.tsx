@@ -505,23 +505,27 @@ export function AgentStage({ stage }: AgentStageProps) {
       />
 
       <Conversation className="flex-1 min-h-0">
-        {messages.length === 0 ? (
-          <ConversationEmptyState
-            title={isVoiceSession ? 'AWAITING INPUT' : 'Waiting for activity'}
-            description={
-              isVoiceSession
-                ? 'Say "Jarvis" or "Computer" to start a conversation'
-                : `${title} is initializing...`
-            }
-            icon={
-              <div className="w-16 h-16 flex items-center justify-center text-4xl text-muted-foreground/30 animate-pulse">
-                {icon}
-              </div>
-            }
-          />
-        ) : (
-          <ConversationContent className="gap-6 py-4 px-4">
-            {messages.map((msg, idx) => (
+        <ConversationContent
+          className={cn(
+            messages.length === 0 ? 'h-full p-0' : 'gap-6 py-4 px-4'
+          )}
+        >
+          {messages.length === 0 ? (
+            <ConversationEmptyState
+              title={isVoiceSession ? 'AWAITING INPUT' : 'Waiting for activity'}
+              description={
+                isVoiceSession
+                  ? 'Say "Jarvis" or "Computer" to start a conversation'
+                  : `${title} is initializing...`
+              }
+              icon={
+                <div className="w-16 h-16 flex items-center justify-center text-4xl text-muted-foreground/30 animate-pulse">
+                  {icon}
+                </div>
+              }
+            />
+          ) : (
+            messages.map((msg, idx) => (
               <MessageBlock
                 key={msg.id}
                 message={msg}
@@ -529,9 +533,9 @@ export function AgentStage({ stage }: AgentStageProps) {
                 childSessions={focusedChildren}
                 onNavigateToSession={focusSession}
               />
-            ))}
-          </ConversationContent>
-        )}
+            ))
+          )}
+        </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
 

@@ -1,0 +1,58 @@
+{
+  "description": "Multi-turn German conversation for provider integration testing. Three turns simulating a greeting, follow-up, and tool request.",
+  "language": "de",
+  "format": {
+    "wav": "PCM16 mono 16kHz signed-integer (with WAV header)",
+    "raw": "PCM16 mono 16kHz signed-integer little-endian (headerless)"
+  },
+  "turns": [
+    {
+      "id": "turn-1",
+      "file_wav": "turn-1.wav",
+      "file_raw": "turn-1.raw",
+      "original": "Hallo, wie geht es dir? Kannst du mich hören?.m4a",
+      "transcript": "Hallo, wie geht es dir? Kannst du mich hören?",
+      "translation": "Hello, how are you? Can you hear me?",
+      "duration_sec": 4.35,
+      "purpose": "greeting",
+      "expects": {
+        "agent_responds": true,
+        "language": "de",
+        "tool_call": false
+      }
+    },
+    {
+      "id": "turn-2",
+      "file_wav": "turn-2.wav",
+      "file_raw": "turn-2.raw",
+      "original": "Ja super ich wollte nur wissen wie es dir geht.m4a",
+      "transcript": "Ja super, ich wollte nur wissen wie es dir geht.",
+      "translation": "Yeah great, I just wanted to know how you're doing.",
+      "duration_sec": 5.76,
+      "purpose": "context_followup",
+      "expects": {
+        "agent_responds": true,
+        "language": "de",
+        "tool_call": false,
+        "context_from_turn": "turn-1"
+      }
+    },
+    {
+      "id": "turn-3",
+      "file_wav": "turn-3.wav",
+      "file_raw": "turn-3.raw",
+      "original": "Ja kannst du mir helfen und die Stehlampe einschalten.m4a",
+      "transcript": "Ja, kannst du mir helfen und die Stehlampe einschalten?",
+      "translation": "Yes, can you help me and turn on the floor lamp?",
+      "duration_sec": 8.70,
+      "purpose": "tool_request",
+      "expects": {
+        "agent_responds": true,
+        "language": "de",
+        "tool_call": true,
+        "tool_name": "toggle_light",
+        "tool_args_contains": "Stehlampe"
+      }
+    }
+  ]
+}

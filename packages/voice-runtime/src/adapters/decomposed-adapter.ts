@@ -8,6 +8,7 @@ import type {
   EventHandler,
   ProviderAdapter,
   ProviderCapabilities,
+  ProviderConfigSchema,
   SessionInput,
   ToolCallContext,
   ToolDefinition,
@@ -154,6 +155,48 @@ interface ConversationEntry {
   content: string;
 }
 
+const DECOMPOSED_CONFIG_SCHEMA: ProviderConfigSchema = {
+  providerId: 'decomposed',
+  displayName: 'Decomposed (STT + LLM + TTS)',
+  fields: [
+    {
+      key: 'turn.silenceMs',
+      label: 'Silence Threshold (ms)',
+      type: 'number',
+      group: 'vad',
+      min: 100,
+      max: 3000,
+      step: 50,
+      defaultValue: 700,
+      description: 'Duration of silence before finalizing a turn.',
+    },
+    {
+      key: 'turn.minSpeechMs',
+      label: 'Minimum Speech (ms)',
+      type: 'number',
+      group: 'vad',
+      min: 50,
+      max: 2000,
+      step: 50,
+      defaultValue: 350,
+      description: 'Minimum speech duration to process a turn.',
+    },
+    {
+      key: 'turn.minRms',
+      label: 'Minimum RMS Level',
+      type: 'number',
+      group: 'vad',
+      min: 0.001,
+      max: 0.1,
+      step: 0.001,
+      defaultValue: 0.015,
+      description: 'Audio level threshold for speech detection.',
+    },
+    // LLM completion fields (enabled, shortTimeoutMs, longTimeoutMs) are managed
+    // by the dedicated turn.llmCompletion section in voice.config.json, not providerSettings.
+  ],
+};
+
 export class DecomposedAdapter implements ProviderAdapter {
   readonly id = 'decomposed' as const;
 
@@ -179,9 +222,14 @@ export class DecomposedAdapter implements ProviderAdapter {
     return DECOMPOSED_CAPABILITIES;
   }
 
+  configSchema(): ProviderConfigSchema {
+    return DECOMPOSED_CONFIG_SCHEMA;
+  }
+
   async connect(input: SessionInput): Promise<AudioNegotiation> {
     this.input = input;
     this.options = this.resolveOptions(input);
+    console.log(`[DecomposedAdapter] Turn completion markers: ${this.options.llmCompletionEnabled ? 'enabled' : 'disabled'}`);
     this.history = [];
     this.speechChunks = [];
     this.speechStartedAtMs = null;
@@ -290,6 +338,7 @@ export class DecomposedAdapter implements ProviderAdapter {
 
   private clearCompletionTimer(): void {
     if (!this.completionTimer) return;
+    console.log('[DecomposedAdapter] Re-engagement cancelled (user speech or interruption)');
     clearTimeout(this.completionTimer);
     this.completionTimer = null;
   }
@@ -479,23 +528,11 @@ export class DecomposedAdapter implements ProviderAdapter {
     let llmDurationMs = 0;
 
     try {
-      const llmStartMs = Date.now();
-      if (this.options.llmCompletionEnabled) {
-        const responseText = await this.generateAssistantText(systemPrompt);
-        const parsed = parseMarker(responseText, this.options.llmCompletionEnabled);
-        marker = parsed.marker;
-        assistantText = parsed.text;
-        if (assistantText) {
-          this.events.emit('transcriptDelta', assistantText, 'assistant', assistantId);
-        }
-        llmDurationMs = Date.now() - llmStartMs;
-      } else {
-        const streamed = await this.generateAssistantResponseStreaming(systemPrompt, assistantId);
-        assistantText = streamed.text;
-        marker = streamed.marker;
-        spokeWhileStreaming = streamed.spokeAudio;
-        llmDurationMs = streamed.llmDurationMs;
-      }
+      const streamed = await this.generateAssistantResponseStreaming(systemPrompt, assistantId);
+      assistantText = streamed.text;
+      marker = streamed.marker;
+      spokeWhileStreaming = streamed.spokeAudio;
+      llmDurationMs = streamed.llmDurationMs;
     } catch (error) {
       this.events.emit('error', error as Error);
       this.setState('listening');
@@ -549,27 +586,91 @@ export class DecomposedAdapter implements ProviderAdapter {
     assistantId: string
   ): Promise<{ marker: TurnMarker; text: string; spokeAudio: boolean; llmDurationMs: number }> {
     if (!this.options) {
-      return {
-        marker: '✓',
-        text: '',
-        spokeAudio: false,
-        llmDurationMs: 0,
-      };
+      return { marker: '✓', text: '', spokeAudio: false, llmDurationMs: 0 };
     }
 
     if (this.toolsEnabled()) {
       return this.generateAssistantResponseWithTools(systemPrompt, assistantId);
     }
 
-    if (this.options.ttsProvider === 'deepgram') {
-      const request = this.deepgramTtsRequestQueue.then(() =>
-        this.generateAssistantResponseStreamingWithDeepgram(systemPrompt, assistantId)
-      );
-      this.deepgramTtsRequestQueue = request.then(() => undefined).catch(() => undefined);
-      return request;
+    // Create text stream; detect turn-completion marker when enabled
+    const llmStartedAtMs = Date.now();
+    let textStream: AsyncGenerator<string> = this.generateAssistantTextStream(systemPrompt);
+    let marker: TurnMarker = '✓';
+
+    if (this.options.llmCompletionEnabled) {
+      const peek = await this.peekStreamForMarker(textStream);
+      marker = peek.marker;
+      if (marker !== '✓') {
+        const label = marker === '○' ? 'incomplete-short' : 'incomplete-long';
+        console.log(`[DecomposedAdapter] Turn marker: ${marker} (${label}) — suppressing response`);
+        return { marker, text: '', spokeAudio: false, llmDurationMs: Date.now() - llmStartedAtMs };
+      }
+      console.log(`[DecomposedAdapter] Turn marker: ✓ (complete) — streaming response`);
+      textStream = peek.stream;
     }
 
-    const llmStartedAtMs = Date.now();
+    if (this.options.ttsProvider === 'deepgram') {
+      const request = this.deepgramTtsRequestQueue.then(() =>
+        this.streamTextWithDeepgramTts(textStream, assistantId, llmStartedAtMs)
+      );
+      this.deepgramTtsRequestQueue = request.then(() => undefined).catch(() => undefined);
+      const result = await request;
+      return { ...result, marker };
+    }
+
+    const result = await this.streamTextWithInlineTts(textStream, assistantId, llmStartedAtMs);
+    return { ...result, marker };
+  }
+
+  /**
+   * Reads initial tokens from a text stream to detect a turn-completion marker.
+   * Buffers until the first non-whitespace character, then:
+   * - ✓ → strips marker, returns stream of remaining text
+   * - ○/◐ → drains stream, returns empty stream
+   * - No marker → treats as ✓, returns full stream
+   */
+  private async peekStreamForMarker(
+    source: AsyncGenerator<string>
+  ): Promise<{ marker: TurnMarker; stream: AsyncGenerator<string> }> {
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await source.next();
+      if (done) {
+        const text = buffer.trimStart();
+        return { marker: '✓', stream: singleValueGenerator(text) };
+      }
+
+      buffer += value;
+      const trimmed = buffer.trimStart();
+      if (trimmed.length === 0) continue;
+
+      const first = trimmed[0] as string;
+      if (TURN_MARKERS.includes(first as TurnMarker)) {
+        const marker = first as TurnMarker;
+        if (marker !== '✓') {
+          // Incomplete turn — drain the stream so the HTTP response closes cleanly
+          for await (const _ of source) { /* discard */ }
+          return { marker, stream: emptyAsyncGenerator() };
+        }
+        const afterMarker = trimmed.slice(1).trimStart();
+        return { marker: '✓', stream: prependToAsyncGenerator(afterMarker, source) };
+      }
+
+      // First character is not a marker — treat as complete
+      return { marker: '✓', stream: prependToAsyncGenerator(buffer, source) };
+    }
+  }
+
+  /**
+   * Streams LLM text to TTS via the OpenAI-style segment queue (non-Deepgram path).
+   */
+  private async streamTextWithInlineTts(
+    textStream: AsyncIterable<string>,
+    assistantId: string,
+    llmStartedAtMs: number
+  ): Promise<{ text: string; spokeAudio: boolean; llmDurationMs: number }> {
     let assistantText = '';
     let speechBuffer = '';
     let segmentIndex = 0;
@@ -597,7 +698,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       });
     };
 
-    for await (const delta of this.generateAssistantTextStream(systemPrompt)) {
+    for await (const delta of textStream) {
       if (!delta) continue;
       assistantText += delta;
       this.events.emit('transcriptDelta', delta, 'assistant', assistantId);
@@ -621,12 +722,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.setState('listening');
     }
 
-    return {
-      marker: '✓',
-      text: assistantText,
-      spokeAudio,
-      llmDurationMs,
-    };
+    return { text: assistantText, spokeAudio, llmDurationMs };
   }
 
   private async generateAssistantResponseWithTools(
@@ -634,42 +730,35 @@ export class DecomposedAdapter implements ProviderAdapter {
     assistantId: string
   ): Promise<{ marker: TurnMarker; text: string; spokeAudio: boolean; llmDurationMs: number }> {
     const llmStartedAtMs = Date.now();
-    const text = await this.generateAssistantTextWithTools(systemPrompt);
+    const rawText = await this.generateAssistantTextWithTools(systemPrompt);
+    const { marker, text } = this.options?.llmCompletionEnabled
+      ? parseMarker(rawText, true)
+      : { marker: '✓' as TurnMarker, text: rawText };
     if (text) {
       this.events.emit('transcriptDelta', text, 'assistant', assistantId);
     }
     return {
-      marker: '✓',
+      marker,
       text,
       spokeAudio: false,
       llmDurationMs: Date.now() - llmStartedAtMs,
     };
   }
 
-  private async generateAssistantResponseStreamingWithDeepgram(
-    systemPrompt: string,
-    assistantId: string
-  ): Promise<{ marker: TurnMarker; text: string; spokeAudio: boolean; llmDurationMs: number }> {
+  private async streamTextWithDeepgramTts(
+    textStream: AsyncIterable<string>,
+    assistantId: string,
+    llmStartedAtMs: number
+  ): Promise<{ text: string; spokeAudio: boolean; llmDurationMs: number }> {
     if (!this.options) {
-      return {
-        marker: '✓',
-        text: '',
-        spokeAudio: false,
-        llmDurationMs: 0,
-      };
+      return { text: '', spokeAudio: false, llmDurationMs: 0 };
     }
 
     const connection = await this.ensureDeepgramTtsConnection();
     if (this.interrupted || !this.connected) {
-      return {
-        marker: '✓',
-        text: '',
-        spokeAudio: false,
-        llmDurationMs: 0,
-      };
+      return { text: '', spokeAudio: false, llmDurationMs: 0 };
     }
 
-    const llmStartedAtMs = Date.now();
     const ttsStartedAtMs = Date.now();
     let llmDurationMs = 0;
     let assistantText = '';
@@ -825,7 +914,7 @@ export class DecomposedAdapter implements ProviderAdapter {
 
       void (async () => {
         try {
-          for await (const delta of this.generateAssistantTextStream(systemPrompt)) {
+          for await (const delta of textStream) {
             if (!delta) continue;
             assistantText += delta;
             this.events.emit('transcriptDelta', delta, 'assistant', assistantId);
@@ -880,24 +969,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.setState('listening');
     }
 
-    return {
-      marker: '✓',
-      text: assistantText,
-      spokeAudio,
-      llmDurationMs,
-    };
-  }
-
-  private async generateAssistantText(systemPrompt: string): Promise<string> {
-    if (!this.options) return '';
-    if (this.toolsEnabled()) {
-      return this.generateAssistantTextWithTools(systemPrompt);
-    }
-
-    const payload = await this.requestChatCompletion({
-      messages: this.buildLlmMessages(systemPrompt),
-    });
-    return extractChatCompletionText(payload);
+    return { text: assistantText, spokeAudio, llmDurationMs };
   }
 
   private async *generateAssistantTextStream(systemPrompt: string): AsyncGenerator<string> {
@@ -1195,8 +1267,11 @@ export class DecomposedAdapter implements ProviderAdapter {
     const timeoutMs = marker === '○' ? this.options.llmShortTimeoutMs : this.options.llmLongTimeoutMs;
     const reprompt = marker === '○' ? this.options.llmShortReprompt : this.options.llmLongReprompt;
 
+    console.log(`[DecomposedAdapter] Scheduling re-engagement in ${timeoutMs}ms (marker: ${marker}, reprompt: "${reprompt}")`);
+
     this.completionTimer = setTimeout(() => {
       if (!this.connected || this.processingTurn) return;
+      console.log(`[DecomposedAdapter] Re-engagement fired — reprompting with: "${reprompt}"`);
       void this.runAssistantTurn(reprompt, {
         emitUserTranscript: false,
       });
@@ -1785,6 +1860,22 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+async function* emptyAsyncGenerator(): AsyncGenerator<string> {
+  // yields nothing
+}
+
+async function* singleValueGenerator(value: string): AsyncGenerator<string> {
+  if (value) yield value;
+}
+
+async function* prependToAsyncGenerator(
+  prefix: string,
+  source: AsyncIterable<string>
+): AsyncGenerator<string> {
+  if (prefix) yield prefix;
+  yield* source;
 }
 
 function parseMarker(

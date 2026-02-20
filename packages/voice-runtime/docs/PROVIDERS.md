@@ -16,6 +16,13 @@ The runtime currently supports five adapters.
 - Emit normalized `VoiceSessionEvents`.
 - Convert provider-specific tool calls into normalized `toolStart` and `toolEnd`.
 - Provide negotiated audio rates through `AudioNegotiation`.
+- Normalize provider-specific ordering/role/transcript quirks so higher layers stay provider-agnostic.
+
+## Testing Boundary
+
+- Shared contract and live integration tests validate unified runtime behavior, not provider-specific message shapes.
+- Provider-specific assertions belong in adapter-level tests under `packages/voice-runtime/tests/*adapter*.test.ts`.
+- If a provider fails shared ordering/lifecycle expectations, fix the adapter/runtime normalization path.
 
 ## Capability Patterns
 
@@ -36,7 +43,9 @@ The runtime currently supports five adapters.
 
 To add a provider:
 
-1. Implement `ProviderAdapter` in `packages/voice-runtime/src/adapters/`.
-2. Define explicit capabilities in one constant object.
-3. Emit normalized events only (do not leak wire protocol types).
-4. Register in runtime host creation (`createVoiceRuntime` call site in app integration).
+1. **Start with the [Provider Integration Guide](PROVIDER_INTEGRATION_GUIDE.md)** — research checklist, exploration pipeline, multi-turn test scenarios, and implementation checklist.
+2. Implement `ProviderAdapter` in `packages/voice-runtime/src/adapters/`.
+3. Define explicit capabilities in one constant object.
+4. Emit normalized events only (do not leak wire protocol types).
+5. Register in runtime host creation (`createVoiceRuntime` call site in app integration).
+6. Document in `docs/providers/<PROVIDER>.md` following existing format.

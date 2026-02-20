@@ -1,49 +1,49 @@
 # Codebase Inspection
 
-**Request:** Map files and flows for extracting voice runtime into package with provider adapters and pluggable GUI/TUI transports
+**Request:** Find remaining provider-specific logic hardcoded outside packages/voice-runtime in voice-agent and web-ui, especially ordering, routing, catalog/auth handling.
 
 ---
 
-This analysis maps the current voice architecture and data flows to prepare for the extraction of `@voiceclaw/voice-runtime`.
+This analysis identifies provider-specific logic, hardcoded model identifiers, and ordering heuristics currently residing outside the `packages/voice-runtime` boundary, specifically within `packages/voice-agent` and `packages/web-ui`.
 
-### 1) System Architecture Map
-*   **Orchestration Layer (`VoiceAgent`)**: Resides in `packages/voice-agent`; manages profile switching, session tree hierarchy, and maps high-level intents to the voice runtime.
-*   **Voice Runtime Interface (`VoiceRuntime`)**: A provider-agnostic boundary in `src/voice` that abstracts specific API protocols into a unified set of events (transcripts, state, audio, tools).
-*   **Provider Adapters**: Concrete implementations (OpenAI SDK, Ultravox WebSocket, Decomposed Pipeline) that handle specific wire encodings, auth headers, and VAD quirks.
-*   **Media Plane (`IAudioTransport`)**: Separates hardware-level I/O (`PipeWire`, `sox`) and network-level I/O (`WebSocket`) from the agent logic, allowing for pluggable transports.
-*   **Configuration Hub**: JSON-backed system (`voice.config.json` and `auth-profiles.json`) for resolving API keys and effective runtime settings per profile.
+### 1) Scan & Map
+*   **Three-Plane Architecture**: The system is transitioning to a model where `voice-runtime` owns the **Provider Plane** (protocol/SDKs), `voice-agent` owns the **Control Plane** (orchestration/profiles), and `web-ui` handles the **Presentation Plane**.
+*   **The Bridge Pattern**: `PackageBackedVoiceRuntime` and `LegacyAudioTransportBridge` in `voice-agent` act as translation layers between the new runtime package and legacy app-level expectations (like 24kHz fixed audio).
+*   **Normalized Event Stream**: All agents communicate via the **AI SDK Data Stream Protocol**. The `ai-sdk-adapter` is responsible for converting raw provider events into this unified format.
+*   **State Reducers**: `web-ui` uses a central Zustand store (`unified-sessions.ts`) that reconstructs conversation state from the stream, currently relying on some provider-native metadata for sequence.
+*   **Constraints**: Current effort is focused on "Phase 1: Ordering Contract," moving away from parsing provider IDs (e.g., `assistant-1`) toward using normalized `order` metadata.
 
 ### 2) Existing Flow
-*   **Activation**: Starts at `VoiceAgent.activateProfile()`, which resolves effective config by merging global defaults with profile-specific overrides.
-*   **Provider Instantiation**: The `createVoiceRuntime` factory selects an adapter; for OpenAI, it currently wraps a legacy `VoiceSession` that tightly couples the `@openai/agents` SDK.
-*   **Handshake & Negotiation**: The runtime performs the provider-specific connection (e.g., Ultravox's REST create → WebSocket join) and determines the negotiated audio sample rates.
-*   **Bidirectional Streaming**: Audio flows from `IAudioTransport` through the `VoiceRuntime` to the provider; provider events (deltas) flow back through an adapter to be normalized.
-*   **Event Normalization**: The `VoiceAdapter` (specifically `ai-sdk-adapter.ts`) transforms provider events into the **AI SDK Data Stream Protocol** for UI consumption.
-*   **Handoffs**: On tool calls, a `HandoffPacket` captures current conversation state to allow subagents to resume the task without context loss.
+*   **Initialization**: `VoiceAgent` (agent) uses a factory to create a runtime, passing an `AgentProfile` which contains hardcoded instructions and tool sets.
+*   **Handshake**: The runtime adapter (e.g., `UltravoxWsAdapter`) manages REST-to-WS transitions and negotiates sample rates, providing a `NegotiatedAudioConfig`.
+*   **Streaming**: Real-time events (transcripts/deltas) are passed from the adapter to the `VoiceSessionImpl`, then through the `PackageBackedVoiceRuntime` bridge.
+*   **Adaptation**: The `createVoiceAdapter` (agent) creates `user-placeholder` and `assistant-placeholder` events to reserve timeline positions.
+*   **UI Routing**: The `message-handler` (web) receives these chunks and updates the `voiceTimeline`, using `itemId` and `order` to determine placement.
+*   **Handoff**: Specialized subagents (CLI, Web Search) are triggered via `HandoffPacket`, which carries its own model-specific configurations.
 
 ### 3) Relevant Code Locations
 
-**Entrypoints & Orchestration**
-*   `packages/voice-agent/src/agent/voice-agent.ts`: Central orchestrator; controls session lifecycle and transport hotswapping.
-*   `packages/voice-agent/src/voice/factory.ts`: Current provider selection logic; target for the new runtime host.
+**Entrypoints & Orchestration (voice-agent)**
+*   `packages/voice-agent/src/config.ts`: Contains hardcoded fallback model versions for OpenAI, Gemini, and Decomposed modes (e.g., `gpt-realtime-mini-2025-10-06`).
+*   `packages/voice-agent/src/agent/profiles.ts`: Hardcodes voice selections (`echo`, `ash`) and tool lists per profile.
+*   `packages/voice-agent/src/voice/factory.ts`: Orchestrates the mapping of `AgentProfile` to `SessionInput`, including hardcoded tool execution logic.
+*   `packages/voice-agent/src/voice/settings.ts`: Defines `DEFAULT_VOICE_CONFIG` containing hardcoded provider IDs and model strings.
 
-**Domain & Adapter Logic**
-*   `packages/voice-agent/src/voice/types.ts`: Contains the primary interface definitions; currently suffers from OpenAI SDK type leaks.
-*   `packages/voice-agent/src/voice/openai-realtime-runtime.ts`: The current OpenAI adapter implementation.
-*   `packages/voice-agent/src/voice/ultravox-realtime-runtime.ts`: A protocol-based (non-SDK) adapter with complex transcript accumulation logic.
-*   `packages/voice-agent/src/voice/decomposed-runtime.ts`: Orchestrates a multi-provider pipeline (STT + LLM + TTS).
-*   `packages/voice-agent/src/realtime/ai-sdk-adapter.ts`: The bridge that normalizes voice events into the unified stream protocol.
+**Domain Logic & Bridging (voice-agent)**
+*   `packages/voice-agent/src/realtime/session.ts`: Direct dependency on `@openai/agents/realtime` and hardcoded transcription model strings.
+*   `packages/voice-agent/src/realtime/ai-sdk-adapter.ts`: Defines how tool calls and transcripts are normalized; contains logic for synthetic `voice-tool-N` ID generation.
+*   `packages/voice-agent/src/voice/package-backed-runtime.ts`: Manages the transition from package events to application state, including history mapping.
 
-**Integration & Config**
-*   `packages/voice-agent/src/voice/settings.ts`: JSON loading and Zod validation for runtime and auth profiles.
-*   `packages/voice-agent/src/voice/config.ts`: Effective config resolver (Cascading: Env -> Profile -> File -> Default).
-*   `packages/voice-agent/src/context/handoff.ts`: Defines the data structure for cross-agent context transfer.
+**State & UI (web-ui)**
+*   `packages/web-ui/src/stores/message-handler.ts`: Contains critical ordering logic that parses `itemId` patterns (e.g., `assistant-` prefix) and handles placeholder insertions.
+*   `packages/web-ui/src/stores/unified-sessions.ts`: Logic for `findMessageIndexByItemId` and `updateTranscriptDelta` which relies on provider-specific item identifiers.
+*   `packages/web-ui/src/lib/voice-config-api.ts`: Duplicates `VoiceConfigDocument` and `VoiceMode` types which are functionally hardcoded to match the backend.
+*   `packages/web-ui/src/components/VoiceRuntimePanel.tsx`: Hardcoded logic for path traversal (e.g., `voice.voiceToVoice.provider`) and stage descriptions.
 
-**Media & Transports**
-*   `packages/voice-agent/src/transport/types.ts`: Defines the audio transport contract and hardcoded 24kHz constants.
-*   `packages/voice-agent/src/voice/audio-utils.ts`: Audio processing helpers including PCM resampling and WAV encoding.
-*   `packages/web-ui/public/audio-processor.js`: Browser-side AudioWorklet handling 48k to 24k downsampling.
+**TUI & Subagents (voice-agent)**
+*   `packages/voice-agent/src/tui/inspector/state.ts`: Implements `findTranscriptInsertIndex` using `previousItemId`, mimicking the web UI's provider-specific ordering heuristics.
+*   `packages/voice-agent/src/subagents/cli/config.json`: Hardcoded subagent model `x-ai/grok-code-fast-1`.
+*   `packages/voice-agent/src/subagents/web-search/config.json`: Hardcoded subagent model `x-ai/grok-4.1-fast:online`.
 
-**Tests**
-*   `packages/voice-agent/tests/ultravox-runtime.test.ts`: Unit tests for transcript role mapping and tool invocation sequences.
-*   `packages/voice-agent/tests/audio-utils.test.ts`: Tests for resampling accuracy across different sample rates.
+**Guardrails & Testing**
+*   `scripts/check-runtime-provider-boundary.ts`: An automated list of blocked literals (e.g., `'openai-realtime'`, `'gpt-4o-mini-transcribe'`) currently being enforced as a boundary guard.

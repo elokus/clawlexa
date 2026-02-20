@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   fetchEffectiveVoiceConfig,
   fetchVoiceCatalog,
   type VoiceCatalog,
   type VoiceConfigDocument,
+  type ProviderConfigSchema,
+  type RuntimeFieldBinding,
+  type RuntimeRealtimeProviderManifest,
+  type RuntimeDecomposedStageManifest,
+  type ProviderVoiceEntry,
 } from '../lib/voice-config-api';
 import { ConfigDialog, ConfigField, ConfigSection } from './ui/config-dialog';
+import { ProviderSettingsSection } from './voice-config/ProviderSettingsSection';
+import { VoiceSelector } from './voice-config/VoiceSelector';
 
 interface VoiceRuntimePanelProps {
   config: VoiceConfigDocument | null;
@@ -15,9 +22,6 @@ interface VoiceRuntimePanelProps {
   saving: boolean;
   error: string | null;
 }
-
-const OPENAI_TRANSCRIBE_MODELS = ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'];
-const OPENROUTER_LLM_MODELS = ['openai/gpt-4.1', 'openai/gpt-4o-mini', 'google/gemini-2.5-flash'];
 
 function withCurrent(options: string[], current: string): string[] {
   if (!current) return options;
@@ -33,7 +37,170 @@ function parseNumeric(value: string, fallback: number, min?: number): number {
 
 function pickMatchingOrFirst(options: string[], current: string, fallback = ''): string {
   if (options.length === 0) return fallback;
-  return options.includes(current) ? current : options[0];
+  return options.includes(current) ? current : options[0]!;
+}
+
+function getPathValue(obj: unknown, path: string): unknown {
+  if (!path) return undefined;
+  const segments = path.split('.');
+  let cursor: unknown = obj;
+  for (const segment of segments) {
+    if (!cursor || typeof cursor !== 'object') return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
+}
+
+function setPathValue<T extends object>(obj: T, path: string, value: unknown): T {
+  const segments = path.split('.');
+  if (segments.length === 0) return obj;
+
+  const root = { ...(obj as Record<string, unknown>) };
+  let cursor: Record<string, unknown> = root;
+  let source: unknown = obj;
+
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const segment = segments[i]!;
+    const sourceObj = source && typeof source === 'object'
+      ? (source as Record<string, unknown>)
+      : undefined;
+    const sourceNext = sourceObj?.[segment];
+
+    const next = sourceNext && typeof sourceNext === 'object' && !Array.isArray(sourceNext)
+      ? { ...(sourceNext as Record<string, unknown>) }
+      : {};
+
+    cursor[segment] = next;
+    cursor = next;
+    source = sourceNext;
+  }
+
+  cursor[segments[segments.length - 1]!] = value;
+  return root as T;
+}
+
+function asString(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return fallback;
+}
+
+function asVoiceList(catalog: VoiceCatalog | null, key: string | undefined): ProviderVoiceEntry[] {
+  if (!catalog || !key) return [];
+  return catalog.providerCatalog[key]?.voices ?? [];
+}
+
+function asModelList(catalog: VoiceCatalog | null, key: string | undefined): string[] {
+  if (!catalog || !key) return [];
+  return catalog.providerCatalog[key]?.models ?? [];
+}
+
+function AuthProfileSelect({
+  value,
+  onChange,
+  profileNames,
+  placeholder,
+}: {
+  value: string | undefined;
+  onChange: (value: string | undefined) => void;
+  profileNames: string[];
+  placeholder?: string;
+}) {
+  return (
+    <ConfigField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
+      <select
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value || undefined)}
+      >
+        <option value="">{placeholder ?? '(provider default)'}</option>
+        {profileNames.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </ConfigField>
+  );
+}
+
+function renderRuntimeField(args: {
+  field: RuntimeFieldBinding;
+  value: unknown;
+  language: string;
+  catalog: VoiceCatalog | null;
+  authProfileNames: string[];
+  onChange: (value: unknown) => void;
+}) {
+  const { field, value, language, catalog, authProfileNames, onChange } = args;
+  const current = asString(value);
+
+  if (field.kind === 'model') {
+    const options = withCurrent(asModelList(catalog, field.catalogKey), current);
+    return (
+      <ConfigField label={field.label}>
+        <select value={current} onChange={(event) => onChange(event.target.value)}>
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </ConfigField>
+    );
+  }
+
+  if (field.kind === 'voice') {
+    const voices = asVoiceList(catalog, field.catalogKey);
+    return (
+      <VoiceSelector
+        label={field.label}
+        voices={voices}
+        value={current}
+        onChange={(voiceId) => onChange(voiceId)}
+        languageFilter={language}
+      />
+    );
+  }
+
+  if (field.kind === 'auth') {
+    return (
+      <AuthProfileSelect
+        value={current || undefined}
+        onChange={(next) => onChange(next)}
+        profileNames={authProfileNames}
+      />
+    );
+  }
+
+  if (field.kind === 'select') {
+    return (
+      <ConfigField label={field.label}>
+        <select value={current} onChange={(event) => onChange(event.target.value)}>
+          {(field.options ?? []).map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </ConfigField>
+    );
+  }
+
+  return (
+    <ConfigField label={field.label}>
+      <input
+        value={current}
+        placeholder={field.placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </ConfigField>
+  );
+}
+
+function stageDescription(stage: RuntimeDecomposedStageManifest): string {
+  if (stage.id === 'stt') return 'Transcribes user audio input before LLM routing.';
+  if (stage.id === 'llm') return 'Runs reasoning and tool logic on each completed transcript turn.';
+  return 'Synthesizes assistant responses back to audio.';
 }
 
 export function VoiceRuntimePanel({
@@ -48,7 +215,6 @@ export function VoiceRuntimePanel({
   const [catalog, setCatalog] = useState<VoiceCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [effectiveSummary, setEffectiveSummary] = useState<Record<string, string>>({});
-  const currentVoice = config?.voice.voiceToVoice.voice ?? '';
 
   useEffect(() => {
     let cancelled = false;
@@ -97,12 +263,221 @@ export function VoiceRuntimePanel({
     };
   }, [open]);
 
-  const ultravoxVoiceOptions = useMemo(() => {
-    const voices = catalog?.ultravox.voices ?? [];
-    if (!currentVoice) return voices;
-    const hasCurrent = voices.some((voice) => voice.voiceId === currentVoice);
-    return hasCurrent ? voices : [{ voiceId: currentVoice, name: currentVoice }, ...voices];
-  }, [catalog?.ultravox.voices, currentVoice]);
+  const manifest = catalog?.manifest;
+  const modeOptions = manifest?.modes ?? ['voice-to-voice', 'decomposed'];
+  const realtimeProviderPath = manifest?.realtimeProviderPath ?? 'voice.voiceToVoice.provider';
+  const realtimeProviders = manifest?.realtimeProviders ?? [];
+
+  const selectedRealtimeProviderId = config
+    ? asString(getPathValue(config, realtimeProviderPath), config.voice.voiceToVoice.provider)
+    : '';
+  const selectedRealtimeProvider =
+    realtimeProviders.find((provider) => provider.id === selectedRealtimeProviderId) ??
+    realtimeProviders[0];
+
+  const isDecomposed = config?.voice.mode === 'decomposed';
+  const activeProviderKey = isDecomposed
+    ? 'decomposed'
+    : selectedRealtimeProvider?.id ?? selectedRealtimeProviderId;
+
+  const providerSettings = config?.voice.providerSettings?.[activeProviderKey] ?? {};
+  const activeSchema = catalog?.providerSchemas?.[activeProviderKey] as ProviderConfigSchema | undefined;
+  const authProfileNames = catalog?.authProfileNames ?? [];
+
+  const updatePath = useCallback(
+    (path: string, value: unknown) => {
+      if (!config) return;
+      setConfig(setPathValue(config, path, value));
+    },
+    [config, setConfig]
+  );
+
+  const updateMany = useCallback(
+    (updates: Array<{ path: string; value: unknown }>) => {
+      if (!config) return;
+      let next = config;
+      for (const update of updates) {
+        next = setPathValue(next, update.path, update.value);
+      }
+      setConfig(next);
+    },
+    [config, setConfig]
+  );
+
+  const updateTurn = (patch: Partial<VoiceConfigDocument['voice']['turn']>) => {
+    if (!config) return;
+    setConfig({
+      ...config,
+      voice: {
+        ...config.voice,
+        turn: {
+          ...config.voice.turn,
+          ...patch,
+        },
+      },
+    });
+  };
+
+  const updateLlmCompletion = (
+    patch: Partial<VoiceConfigDocument['voice']['turn']['llmCompletion']>
+  ) => {
+    if (!config) return;
+    setConfig({
+      ...config,
+      voice: {
+        ...config.voice,
+        turn: {
+          ...config.voice.turn,
+          llmCompletion: {
+            ...config.voice.turn.llmCompletion,
+            ...patch,
+          },
+        },
+      },
+    });
+  };
+
+  const updateProviderSetting = useCallback(
+    (key: string, value: unknown) => {
+      if (!config) return;
+      const currentSettings = config.voice.providerSettings ?? {};
+      const currentProvider = currentSettings[activeProviderKey] ?? {};
+      setConfig({
+        ...config,
+        voice: {
+          ...config.voice,
+          providerSettings: {
+            ...currentSettings,
+            [activeProviderKey]: {
+              ...currentProvider,
+              [key]: value,
+            },
+          },
+        },
+      });
+    },
+    [activeProviderKey, config, setConfig]
+  );
+
+  const runtimeSummary = useMemo(() => {
+    if (!config) {
+      return loading
+        ? 'Loading voice runtime configuration...'
+        : error || 'Voice runtime configuration unavailable.';
+    }
+
+    if (isDecomposed) {
+      const parts = (manifest?.decomposedStages ?? []).map((stage) => {
+        const provider = asString(getPathValue(config, stage.providerPath), 'n/a');
+        const model = asString(getPathValue(config, stage.modelPath), 'n/a');
+        return `${stage.id.toUpperCase()} ${provider}:${model}`;
+      });
+      return `Decomposed • ${parts.join(' -> ')}`;
+    }
+
+    if (!selectedRealtimeProvider) {
+      return `Realtime • ${selectedRealtimeProviderId}`;
+    }
+
+    const fieldSummary = selectedRealtimeProvider.fields
+      .filter((field) => field.kind === 'model' || field.kind === 'voice' || field.kind === 'string' || field.kind === 'select')
+      .slice(0, 2)
+      .map((field) => `${field.label} ${asString(getPathValue(config, field.path), 'n/a')}`)
+      .join(' • ');
+
+    return fieldSummary
+      ? `Realtime • ${selectedRealtimeProvider.id} • ${fieldSummary}`
+      : `Realtime • ${selectedRealtimeProvider.id}`;
+  }, [
+    config,
+    error,
+    isDecomposed,
+    loading,
+    manifest?.decomposedStages,
+    selectedRealtimeProvider,
+    selectedRealtimeProviderId,
+  ]);
+
+  const overridesText = config
+    ? Object.entries(config.voice.profileOverrides)
+        .map(([name, override]) => {
+          const parts = [override.mode, override.provider, override.voice].filter(Boolean);
+          return parts.length ? `${name}: ${parts.join(' / ')}` : null;
+        })
+        .filter(Boolean)
+        .join(' | ')
+    : '';
+
+  const handleRealtimeProviderChange = (nextProviderId: string) => {
+    if (!config) return;
+    const provider = realtimeProviders.find((entry) => entry.id === nextProviderId);
+    if (!provider) {
+      updatePath(realtimeProviderPath, nextProviderId);
+      return;
+    }
+
+    const updates: Array<{ path: string; value: unknown }> = [
+      { path: realtimeProviderPath, value: nextProviderId },
+    ];
+
+    for (const field of provider.fields) {
+      if (field.kind !== 'model' && field.kind !== 'voice') continue;
+      const current = asString(getPathValue(config, field.path));
+
+      if (field.kind === 'model') {
+        const options = asModelList(catalog, field.catalogKey);
+        const next = pickMatchingOrFirst(options, current, current);
+        if (next) updates.push({ path: field.path, value: next });
+        continue;
+      }
+
+      const voiceOptions = asVoiceList(catalog, field.catalogKey).map((voice) => voice.id);
+      const next = pickMatchingOrFirst(voiceOptions, current, current);
+      if (next) updates.push({ path: field.path, value: next });
+    }
+
+    updateMany(updates);
+  };
+
+  const handleDecomposedProviderChange = (stage: RuntimeDecomposedStageManifest, nextProviderId: string) => {
+    if (!config) return;
+    const provider = stage.providers.find((entry) => entry.id === nextProviderId);
+    const updates: Array<{ path: string; value: unknown }> = [
+      { path: stage.providerPath, value: nextProviderId },
+    ];
+
+    if (provider?.modelCatalogKey) {
+      const modelOptions = asModelList(catalog, provider.modelCatalogKey);
+      const currentModel = asString(getPathValue(config, stage.modelPath));
+      const nextModel = pickMatchingOrFirst(modelOptions, currentModel, currentModel);
+      if (nextModel) updates.push({ path: stage.modelPath, value: nextModel });
+    }
+
+    if (provider?.voiceCatalogKey && stage.voicePath) {
+      const voiceOptions = asVoiceList(catalog, provider.voiceCatalogKey).map((voice) => voice.id);
+      const currentVoice = asString(getPathValue(config, stage.voicePath));
+      const nextVoice = pickMatchingOrFirst(voiceOptions, currentVoice, currentVoice);
+      if (nextVoice) {
+        updates.push({ path: stage.voicePath, value: nextVoice });
+        updates.push({ path: stage.modelPath, value: nextVoice });
+      }
+    }
+
+    updateMany(updates);
+  };
+
+  const handleSave = () => {
+    void (async () => {
+      try {
+        await save();
+        setOpen(false);
+      } catch {
+        // Save errors are surfaced through the existing error state.
+      }
+    })();
+  };
+
+  const statusMessage = error || catalogError || 'Saved settings apply when you start the next voice session.';
 
   if (!config) {
     return (
@@ -120,211 +495,6 @@ export function VoiceRuntimePanel({
       </div>
     );
   }
-
-  const isDecomposed = config.voice.mode === 'decomposed';
-  const provider = config.voice.voiceToVoice.provider;
-  const realtimeModel = config.voice.voiceToVoice.model;
-  const realtimeVoice = config.voice.voiceToVoice.voice;
-
-  const openAIRealtimeModels = withCurrent(catalog?.openai.realtimeModels ?? [], realtimeModel);
-  const openAIVoices = withCurrent(catalog?.openai.voices ?? [], realtimeVoice);
-  const openAITextModels = withCurrent(catalog?.openai.textModels ?? [], config.voice.decomposed.llm.model);
-  const deepgramSttModels = withCurrent(catalog?.deepgram.sttModels ?? [], config.voice.decomposed.stt.model);
-  const deepgramTtsVoices = withCurrent(catalog?.deepgram.ttsVoices ?? [], config.voice.decomposed.tts.model);
-  const ultravoxModels = withCurrent(catalog?.ultravox.models ?? [], config.voice.voiceToVoice.ultravoxModel);
-  const geminiModels = withCurrent(catalog?.gemini.models ?? [], config.voice.voiceToVoice.geminiModel);
-  const geminiVoices = withCurrent(catalog?.gemini.voices ?? [], config.voice.voiceToVoice.geminiVoice);
-
-  const overridesText = Object.entries(config.voice.profileOverrides)
-    .map(([name, override]) => {
-      const parts = [override.mode, override.provider, override.voice].filter(Boolean);
-      return parts.length ? `${name}: ${parts.join(' / ')}` : null;
-    })
-    .filter(Boolean)
-    .join(' | ');
-
-  const updateVoiceToVoice = (patch: Partial<VoiceConfigDocument['voice']['voiceToVoice']>) => {
-    setConfig({
-      ...config,
-      voice: {
-        ...config.voice,
-        voiceToVoice: {
-          ...config.voice.voiceToVoice,
-          ...patch,
-        },
-      },
-    });
-  };
-
-  const updateStt = (patch: Partial<VoiceConfigDocument['voice']['decomposed']['stt']>) => {
-    setConfig({
-      ...config,
-      voice: {
-        ...config.voice,
-        decomposed: {
-          ...config.voice.decomposed,
-          stt: {
-            ...config.voice.decomposed.stt,
-            ...patch,
-          },
-        },
-      },
-    });
-  };
-
-  const updateLlm = (patch: Partial<VoiceConfigDocument['voice']['decomposed']['llm']>) => {
-    setConfig({
-      ...config,
-      voice: {
-        ...config.voice,
-        decomposed: {
-          ...config.voice.decomposed,
-          llm: {
-            ...config.voice.decomposed.llm,
-            ...patch,
-          },
-        },
-      },
-    });
-  };
-
-  const updateTts = (patch: Partial<VoiceConfigDocument['voice']['decomposed']['tts']>) => {
-    setConfig({
-      ...config,
-      voice: {
-        ...config.voice,
-        decomposed: {
-          ...config.voice.decomposed,
-          tts: {
-            ...config.voice.decomposed.tts,
-            ...patch,
-          },
-        },
-      },
-    });
-  };
-
-  const updateTurn = (patch: Partial<VoiceConfigDocument['voice']['turn']>) => {
-    setConfig({
-      ...config,
-      voice: {
-        ...config.voice,
-        turn: {
-          ...config.voice.turn,
-          ...patch,
-        },
-      },
-    });
-  };
-
-  const updateLlmCompletion = (
-    patch: Partial<VoiceConfigDocument['voice']['turn']['llmCompletion']>
-  ) => {
-    setConfig({
-      ...config,
-      voice: {
-        ...config.voice,
-        turn: {
-          ...config.voice.turn,
-          llmCompletion: {
-            ...config.voice.turn.llmCompletion,
-            ...patch,
-          },
-        },
-      },
-    });
-  };
-
-  const realtimeSummary = (() => {
-    if (provider === 'openai-realtime') {
-      return `${provider} • model ${realtimeModel} • voice ${realtimeVoice}`;
-    }
-    if (provider === 'ultravox-realtime') {
-      return `${provider} • model ${config.voice.voiceToVoice.ultravoxModel} • voice ${realtimeVoice}`;
-    }
-    if (provider === 'gemini-live') {
-      return `${provider} • model ${config.voice.voiceToVoice.geminiModel} • voice ${config.voice.voiceToVoice.geminiVoice}`;
-    }
-    return `${provider} • server ${config.voice.voiceToVoice.pipecatServerUrl} • transport ${config.voice.voiceToVoice.pipecatTransport}`;
-  })();
-
-  const runtimeSummary = isDecomposed
-    ? `Decomposed • STT ${config.voice.decomposed.stt.provider}:${config.voice.decomposed.stt.model} -> LLM ${config.voice.decomposed.llm.provider}:${config.voice.decomposed.llm.model} -> TTS ${config.voice.decomposed.tts.provider}:${config.voice.decomposed.tts.model}`
-    : `Realtime • ${realtimeSummary}`;
-
-  const handleProviderChange = (
-    nextProvider: VoiceConfigDocument['voice']['voiceToVoice']['provider']
-  ) => {
-    const currentVoiceToVoice = config.voice.voiceToVoice;
-
-    if (nextProvider === 'openai-realtime') {
-      const openAiModels = catalog?.openai.realtimeModels ?? [];
-      const openAiVoices = catalog?.openai.voices ?? [];
-      updateVoiceToVoice({
-        provider: nextProvider,
-        model: pickMatchingOrFirst(openAiModels, currentVoiceToVoice.model, currentVoiceToVoice.model),
-        voice: pickMatchingOrFirst(openAiVoices, currentVoiceToVoice.voice, openAiVoices[0] ?? ''),
-      });
-      return;
-    }
-
-    if (nextProvider === 'ultravox-realtime') {
-      const ultravoxModelOptions = catalog?.ultravox.models ?? [];
-      const ultravoxVoiceIds = (catalog?.ultravox.voices ?? []).map((voice) => voice.voiceId);
-      updateVoiceToVoice({
-        provider: nextProvider,
-        ultravoxModel: pickMatchingOrFirst(
-          ultravoxModelOptions,
-          currentVoiceToVoice.ultravoxModel,
-          currentVoiceToVoice.ultravoxModel
-        ),
-        voice: pickMatchingOrFirst(ultravoxVoiceIds, currentVoiceToVoice.voice, ultravoxVoiceIds[0] ?? ''),
-      });
-      return;
-    }
-
-    if (nextProvider === 'pipecat-rtvi') {
-      const openAiModels = catalog?.openai.realtimeModels ?? [];
-      const openAiVoices = catalog?.openai.voices ?? [];
-      updateVoiceToVoice({
-        provider: nextProvider,
-        model: pickMatchingOrFirst(openAiModels, currentVoiceToVoice.model, currentVoiceToVoice.model),
-        voice: pickMatchingOrFirst(openAiVoices, currentVoiceToVoice.voice, currentVoiceToVoice.voice),
-      });
-      return;
-    }
-
-    const geminiModelOptions = catalog?.gemini.models ?? [];
-    const geminiVoiceOptions = catalog?.gemini.voices ?? [];
-    const nextGeminiVoice = pickMatchingOrFirst(
-      geminiVoiceOptions,
-      currentVoiceToVoice.geminiVoice,
-      geminiVoiceOptions[0] ?? currentVoiceToVoice.geminiVoice
-    );
-    updateVoiceToVoice({
-      provider: nextProvider,
-      geminiModel: pickMatchingOrFirst(
-        geminiModelOptions,
-        currentVoiceToVoice.geminiModel,
-        currentVoiceToVoice.geminiModel
-      ),
-      geminiVoice: nextGeminiVoice,
-      voice: nextGeminiVoice,
-    });
-  };
-
-  const handleSave = () => {
-    void (async () => {
-      try {
-        await save();
-        setOpen(false);
-      } catch {
-        // Save errors are surfaced through the existing error state.
-      }
-    })();
-  };
-
-  const statusMessage = error || catalogError || 'Saved settings apply when you start the next voice session.';
 
   return (
     <>
@@ -439,34 +609,30 @@ export function VoiceRuntimePanel({
             <select
               value={config.voice.mode}
               onChange={(event) => {
-                setConfig({
-                  ...config,
-                  voice: {
-                    ...config.voice,
-                    mode: event.target.value as VoiceConfigDocument['voice']['mode'],
-                  },
-                });
+                updatePath('voice.mode', event.target.value);
               }}
             >
-              <option value="voice-to-voice">voice-to-voice</option>
-              <option value="decomposed">decomposed</option>
+              {modeOptions.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
             </select>
           </ConfigField>
 
           {!isDecomposed ? (
             <ConfigField label="Provider">
               <select
-                value={config.voice.voiceToVoice.provider}
+                value={selectedRealtimeProvider?.id ?? selectedRealtimeProviderId}
                 onChange={(event) => {
-                  handleProviderChange(
-                    event.target.value as VoiceConfigDocument['voice']['voiceToVoice']['provider']
-                  );
+                  handleRealtimeProviderChange(event.target.value);
                 }}
               >
-                <option value="openai-realtime">openai-realtime</option>
-                <option value="ultravox-realtime">ultravox-realtime</option>
-                <option value="gemini-live">gemini-live</option>
-                <option value="pipecat-rtvi">pipecat-rtvi</option>
+                {realtimeProviders.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.label}
+                  </option>
+                ))}
               </select>
             </ConfigField>
           ) : (
@@ -479,466 +645,257 @@ export function VoiceRuntimePanel({
             <input
               value={config.voice.language}
               onChange={(event) => {
-                setConfig({
-                  ...config,
-                  voice: {
-                    ...config.voice,
-                    language: event.target.value,
-                  },
-                });
+                updatePath('voice.language', event.target.value);
               }}
             />
           </ConfigField>
         </ConfigSection>
 
-        {!isDecomposed && (
+        {!isDecomposed && selectedRealtimeProvider && (
           <ConfigSection
             title="Realtime Provider Settings"
-            description="Use the original model and voice options from the selected realtime provider endpoint."
+            description="Rendered from runtime manifest + provider catalog."
             columns={3}
           >
-            {provider === 'openai-realtime' && (
-              <>
-                <ConfigField label="OpenAI Realtime Model">
-                  <select
-                    value={config.voice.voiceToVoice.model}
-                    onChange={(event) => updateVoiceToVoice({ model: event.target.value })}
-                  >
-                    {openAIRealtimeModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="OpenAI Voice">
-                  <select
-                    value={config.voice.voiceToVoice.voice}
-                    onChange={(event) => updateVoiceToVoice({ voice: event.target.value })}
-                  >
-                    {openAIVoices.map((voice) => (
-                      <option key={voice} value={voice}>
-                        {voice}
-                      </option>
-                    ))}
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
-                  <input
-                    value={config.voice.voiceToVoice.authProfile || ''}
-                    placeholder="openai-default"
-                    onChange={(event) => updateVoiceToVoice({ authProfile: event.target.value || undefined })}
-                  />
-                </ConfigField>
-              </>
-            )}
-
-            {provider === 'ultravox-realtime' && (
-              <>
-                <ConfigField label="Ultravox Model">
-                  <select
-                    value={config.voice.voiceToVoice.ultravoxModel}
-                    onChange={(event) => updateVoiceToVoice({ ultravoxModel: event.target.value })}
-                  >
-                    {ultravoxModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="Ultravox Voice">
-                  <select
-                    value={config.voice.voiceToVoice.voice}
-                    onChange={(event) => updateVoiceToVoice({ voice: event.target.value })}
-                  >
-                    {ultravoxVoiceOptions.map((voice) => (
-                      <option key={voice.voiceId} value={voice.voiceId}>
-                        {voice.name}
-                        {voice.primaryLanguage ? ` (${voice.primaryLanguage})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
-                  <input
-                    value={config.voice.voiceToVoice.authProfile || ''}
-                    placeholder="ultravox-default"
-                    onChange={(event) => updateVoiceToVoice({ authProfile: event.target.value || undefined })}
-                  />
-                </ConfigField>
-              </>
-            )}
-
-            {provider === 'gemini-live' && (
-              <>
-                <ConfigField label="Gemini Live Model">
-                  <select
-                    value={config.voice.voiceToVoice.geminiModel}
-                    onChange={(event) => updateVoiceToVoice({ geminiModel: event.target.value })}
-                  >
-                    {geminiModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="Gemini Voice">
-                  <select
-                    value={config.voice.voiceToVoice.geminiVoice}
-                    onChange={(event) =>
-                      updateVoiceToVoice({
-                        geminiVoice: event.target.value,
-                        voice: event.target.value,
-                      })
-                    }
-                  >
-                    {geminiVoices.map((voice) => (
-                      <option key={voice} value={voice}>
-                        {voice}
-                      </option>
-                    ))}
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
-                  <input
-                    value={config.voice.voiceToVoice.authProfile || ''}
-                    placeholder="google-default"
-                    onChange={(event) => updateVoiceToVoice({ authProfile: event.target.value || undefined })}
-                  />
-                </ConfigField>
-              </>
-            )}
-
-            {provider === 'pipecat-rtvi' && (
-              <>
-                <ConfigField label="Pipecat Server URL">
-                  <input
-                    value={config.voice.voiceToVoice.pipecatServerUrl}
-                    onChange={(event) => updateVoiceToVoice({ pipecatServerUrl: event.target.value })}
-                    placeholder="ws://localhost:7860"
-                  />
-                </ConfigField>
-
-                <ConfigField label="Pipecat Transport">
-                  <select
-                    value={config.voice.voiceToVoice.pipecatTransport}
-                    onChange={(event) =>
-                      updateVoiceToVoice({
-                        pipecatTransport: event.target.value as VoiceConfigDocument['voice']['voiceToVoice']['pipecatTransport'],
-                      })
-                    }
-                  >
-                    <option value="websocket">websocket</option>
-                    <option value="webrtc">webrtc</option>
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="Pipecat Bot ID" hint="Optional bot selector for RTVI server.">
-                  <input
-                    value={config.voice.voiceToVoice.pipecatBotId || ''}
-                    onChange={(event) => updateVoiceToVoice({ pipecatBotId: event.target.value || undefined })}
-                    placeholder="voice-bot-1"
-                  />
-                </ConfigField>
-
-                <ConfigField label="Bootstrap Model">
-                  <select
-                    value={config.voice.voiceToVoice.model}
-                    onChange={(event) => updateVoiceToVoice({ model: event.target.value })}
-                  >
-                    {openAIRealtimeModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                </ConfigField>
-
-                <ConfigField label="Bootstrap Voice">
-                  <input
-                    value={config.voice.voiceToVoice.voice}
-                    onChange={(event) => updateVoiceToVoice({ voice: event.target.value })}
-                    placeholder="echo"
-                  />
-                </ConfigField>
-              </>
-            )}
+            {selectedRealtimeProvider.fields.map((field) => {
+              const value = getPathValue(config, field.path);
+              return (
+                <div key={field.path}>
+                  {renderRuntimeField({
+                    field,
+                    value,
+                    language: config.voice.language,
+                    catalog,
+                    authProfileNames,
+                    onChange: (nextValue) => updatePath(field.path, nextValue),
+                  })}
+                </div>
+              );
+            })}
           </ConfigSection>
         )}
 
-        {isDecomposed && (
-          <>
+        {isDecomposed && (manifest?.decomposedStages ?? []).map((stage) => {
+          const selectedProviderId = asString(getPathValue(config, stage.providerPath));
+          const selectedProvider =
+            stage.providers.find((provider) => provider.id === selectedProviderId) ??
+            stage.providers[0];
+          const modelOptions = selectedProvider?.modelCatalogKey
+            ? withCurrent(
+                asModelList(catalog, selectedProvider.modelCatalogKey),
+                asString(getPathValue(config, stage.modelPath))
+              )
+            : [];
+          const voiceOptions = selectedProvider?.voiceCatalogKey
+            ? asVoiceList(catalog, selectedProvider.voiceCatalogKey)
+            : [];
+
+          return (
             <ConfigSection
-              title="Speech-To-Text (STT)"
-              description="Transcribes user audio input before LLM routing."
+              key={stage.id}
+              title={stage.label}
+              description={stageDescription(stage)}
               columns={3}
             >
               <ConfigField label="Provider">
                 <select
-                  value={config.voice.decomposed.stt.provider}
+                  value={selectedProvider?.id ?? selectedProviderId}
                   onChange={(event) => {
-                    updateStt({
-                      provider: event.target.value as VoiceConfigDocument['voice']['decomposed']['stt']['provider'],
-                    });
+                    handleDecomposedProviderChange(stage, event.target.value);
                   }}
                 >
-                  <option value="deepgram">deepgram</option>
-                  <option value="openai">openai</option>
-                </select>
-              </ConfigField>
-
-              <ConfigField label="Model">
-                <select
-                  value={config.voice.decomposed.stt.model}
-                  onChange={(event) => updateStt({ model: event.target.value })}
-                >
-                  {(config.voice.decomposed.stt.provider === 'deepgram'
-                    ? deepgramSttModels
-                    : withCurrent(OPENAI_TRANSCRIBE_MODELS, config.voice.decomposed.stt.model)
-                  ).map((model) => (
-                    <option key={model} value={model}>
-                      {model}
+                  {stage.providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.label}
                     </option>
                   ))}
                 </select>
               </ConfigField>
 
-              <ConfigField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
-                <input
-                  value={config.voice.decomposed.stt.authProfile || ''}
-                  placeholder="deepgram-default"
-                  onChange={(event) => updateStt({ authProfile: event.target.value || undefined })}
-                />
-              </ConfigField>
-            </ConfigSection>
-
-            <ConfigSection
-              title="Language Model (LLM)"
-              description="Runs reasoning and tool logic on each completed transcript turn."
-              columns={3}
-            >
-              <ConfigField label="Provider">
-                <select
-                  value={config.voice.decomposed.llm.provider}
-                  onChange={(event) => {
-                    updateLlm({
-                      provider: event.target.value as VoiceConfigDocument['voice']['decomposed']['llm']['provider'],
-                    });
+              {stage.voicePath ? (
+                <VoiceSelector
+                  label="Voice / Model"
+                  voices={voiceOptions}
+                  value={asString(getPathValue(config, stage.voicePath), asString(getPathValue(config, stage.modelPath)))}
+                  onChange={(voiceId) => {
+                    const voicePath = stage.voicePath as string;
+                    updateMany([
+                      { path: stage.modelPath, value: voiceId },
+                      { path: voicePath, value: voiceId },
+                    ]);
                   }}
-                >
-                  <option value="openai">openai</option>
-                  <option value="openrouter">openrouter</option>
-                </select>
-              </ConfigField>
-
-              <ConfigField label="Model">
-                <select
-                  value={config.voice.decomposed.llm.model}
-                  onChange={(event) => updateLlm({ model: event.target.value })}
-                >
-                  {(config.voice.decomposed.llm.provider === 'openai'
-                    ? openAITextModels
-                    : withCurrent(OPENROUTER_LLM_MODELS, config.voice.decomposed.llm.model)
-                  ).map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </select>
-              </ConfigField>
-
-              <ConfigField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
-                <input
-                  value={config.voice.decomposed.llm.authProfile || ''}
-                  placeholder="openai-default"
-                  onChange={(event) => updateLlm({ authProfile: event.target.value || undefined })}
+                  languageFilter={config.voice.language}
                 />
-              </ConfigField>
+              ) : (
+                <ConfigField label="Model">
+                  <select
+                    value={asString(getPathValue(config, stage.modelPath))}
+                    onChange={(event) => updatePath(stage.modelPath, event.target.value)}
+                  >
+                    {modelOptions.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                </ConfigField>
+              )}
+
+              <AuthProfileSelect
+                value={asString(getPathValue(config, stage.authPath), '') || undefined}
+                onChange={(next) => updatePath(stage.authPath, next)}
+                profileNames={authProfileNames}
+              />
             </ConfigSection>
+          );
+        })}
 
-            <ConfigSection
-              title="Text-To-Speech (TTS)"
-              description="Synthesizes assistant responses back to audio."
-              columns={3}
-            >
-              <ConfigField label="Provider">
-                <select
-                  value={config.voice.decomposed.tts.provider}
-                  onChange={(event) => {
-                    updateTts({
-                      provider: event.target.value as VoiceConfigDocument['voice']['decomposed']['tts']['provider'],
-                    });
-                  }}
-                >
-                  <option value="deepgram">deepgram</option>
-                  <option value="openai">openai</option>
-                </select>
-              </ConfigField>
-
-              <ConfigField label="Voice / Model">
-                <select
-                  value={config.voice.decomposed.tts.model}
-                  onChange={(event) => {
-                    updateTts({
-                      model: event.target.value,
-                      voice: event.target.value,
-                    });
-                  }}
-                >
-                  {(config.voice.decomposed.tts.provider === 'deepgram'
-                    ? deepgramTtsVoices
-                    : openAIVoices
-                  ).map((voice) => (
-                    <option key={voice} value={voice}>
-                      {voice}
-                    </option>
-                  ))}
-                </select>
-              </ConfigField>
-
-              <ConfigField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
-                <input
-                  value={config.voice.decomposed.tts.authProfile || ''}
-                  placeholder="deepgram-default"
-                  onChange={(event) => updateTts({ authProfile: event.target.value || undefined })}
-                />
-              </ConfigField>
-            </ConfigSection>
-          </>
+        {activeSchema && (
+          <ProviderSettingsSection
+            schema={activeSchema}
+            values={providerSettings}
+            onChange={updateProviderSetting}
+            group="vad"
+            title="Voice Activity Detection"
+            description={`VAD settings for ${activeSchema.displayName}. These are passed directly to the provider.`}
+          />
         )}
 
-        <ConfigSection
-          title="Turn Detection"
-          description="Tune speech turn completion and optional LLM completion fallbacks."
-          columns={3}
-        >
-          <ConfigField label="Strategy">
-            <select
-              value={config.voice.turn.strategy}
-              onChange={(event) => {
-                updateTurn({
-                  strategy: event.target.value as VoiceConfigDocument['voice']['turn']['strategy'],
-                });
-              }}
-            >
-              <option value="provider-native">provider-native</option>
-              <option value="layered">layered</option>
-            </select>
-          </ConfigField>
+        {isDecomposed && (
+          <ConfigSection
+            title="Turn Detection"
+            description="Local RMS-based turn detection and LLM completion fallbacks for decomposed mode."
+            columns={3}
+          >
+            <ConfigField label="Strategy">
+              <select
+                value={config.voice.turn.strategy}
+                onChange={(event) => {
+                  updateTurn({
+                    strategy: event.target.value as VoiceConfigDocument['voice']['turn']['strategy'],
+                  });
+                }}
+              >
+                <option value="provider-native">provider-native</option>
+                <option value="layered">layered</option>
+              </select>
+            </ConfigField>
 
-          <ConfigField label="Silence Threshold (ms)">
-            <input
-              type="number"
-              value={config.voice.turn.silenceMs}
-              onChange={(event) => {
-                updateTurn({
-                  silenceMs: parseNumeric(event.target.value, config.voice.turn.silenceMs, 0),
-                });
-              }}
-            />
-          </ConfigField>
+            <ConfigField label="Silence Threshold (ms)">
+              <input
+                type="number"
+                value={config.voice.turn.silenceMs}
+                onChange={(event) => {
+                  updateTurn({
+                    silenceMs: parseNumeric(event.target.value, config.voice.turn.silenceMs, 0),
+                  });
+                }}
+              />
+            </ConfigField>
 
-          <ConfigField label="Minimum Speech (ms)">
-            <input
-              type="number"
-              value={config.voice.turn.minSpeechMs}
-              onChange={(event) => {
-                updateTurn({
-                  minSpeechMs: parseNumeric(event.target.value, config.voice.turn.minSpeechMs, 0),
-                });
-              }}
-            />
-          </ConfigField>
+            <ConfigField label="Minimum Speech (ms)">
+              <input
+                type="number"
+                value={config.voice.turn.minSpeechMs}
+                onChange={(event) => {
+                  updateTurn({
+                    minSpeechMs: parseNumeric(event.target.value, config.voice.turn.minSpeechMs, 0),
+                  });
+                }}
+              />
+            </ConfigField>
 
-          <ConfigField label="Minimum RMS">
-            <input
-              type="number"
-              step="0.01"
-              value={config.voice.turn.minRms}
-              onChange={(event) => {
-                updateTurn({
-                  minRms: parseNumeric(event.target.value, config.voice.turn.minRms),
-                });
-              }}
-            />
-          </ConfigField>
+            <ConfigField label="Minimum RMS">
+              <input
+                type="number"
+                step="0.01"
+                value={config.voice.turn.minRms}
+                onChange={(event) => {
+                  updateTurn({
+                    minRms: parseNumeric(event.target.value, config.voice.turn.minRms),
+                  });
+                }}
+              />
+            </ConfigField>
 
-          <ConfigField label="LLM Completion Marker">
-            <select
-              value={config.voice.turn.llmCompletion.enabled ? 'enabled' : 'disabled'}
-              onChange={(event) => {
-                updateLlmCompletion({
-                  enabled: event.target.value === 'enabled',
-                });
-              }}
-            >
-              <option value="disabled">disabled</option>
-              <option value="enabled">enabled</option>
-            </select>
-          </ConfigField>
+            <ConfigField label="LLM Completion Marker">
+              <select
+                value={config.voice.turn.llmCompletion.enabled ? 'enabled' : 'disabled'}
+                onChange={(event) => {
+                  updateLlmCompletion({
+                    enabled: event.target.value === 'enabled',
+                  });
+                }}
+              >
+                <option value="disabled">disabled</option>
+                <option value="enabled">enabled</option>
+              </select>
+            </ConfigField>
 
-          <ConfigField label="Short Timeout (ms)">
-            <input
-              type="number"
-              value={config.voice.turn.llmCompletion.shortTimeoutMs}
-              onChange={(event) => {
-                updateLlmCompletion({
-                  shortTimeoutMs: parseNumeric(
-                    event.target.value,
-                    config.voice.turn.llmCompletion.shortTimeoutMs,
-                    0
-                  ),
-                });
-              }}
-            />
-          </ConfigField>
+            <ConfigField label="Short Timeout (ms)">
+              <input
+                type="number"
+                value={config.voice.turn.llmCompletion.shortTimeoutMs}
+                onChange={(event) => {
+                  updateLlmCompletion({
+                    shortTimeoutMs: parseNumeric(
+                      event.target.value,
+                      config.voice.turn.llmCompletion.shortTimeoutMs,
+                      0
+                    ),
+                  });
+                }}
+              />
+            </ConfigField>
 
-          <ConfigField label="Long Timeout (ms)">
-            <input
-              type="number"
-              value={config.voice.turn.llmCompletion.longTimeoutMs}
-              onChange={(event) => {
-                updateLlmCompletion({
-                  longTimeoutMs: parseNumeric(
-                    event.target.value,
-                    config.voice.turn.llmCompletion.longTimeoutMs,
-                    0
-                  ),
-                });
-              }}
-            />
-          </ConfigField>
+            <ConfigField label="Long Timeout (ms)">
+              <input
+                type="number"
+                value={config.voice.turn.llmCompletion.longTimeoutMs}
+                onChange={(event) => {
+                  updateLlmCompletion({
+                    longTimeoutMs: parseNumeric(
+                      event.target.value,
+                      config.voice.turn.llmCompletion.longTimeoutMs,
+                      0
+                    ),
+                  });
+                }}
+              />
+            </ConfigField>
 
-          <ConfigField label="Short Reprompt" fullWidth>
-            <textarea
-              value={config.voice.turn.llmCompletion.shortReprompt}
-              onChange={(event) => {
-                updateLlmCompletion({
-                  shortReprompt: event.target.value,
-                });
-              }}
-            />
-          </ConfigField>
+            <ConfigField label="Short Reprompt" fullWidth>
+              <textarea
+                value={config.voice.turn.llmCompletion.shortReprompt}
+                onChange={(event) => {
+                  updateLlmCompletion({
+                    shortReprompt: event.target.value,
+                  });
+                }}
+              />
+            </ConfigField>
 
-          <ConfigField label="Long Reprompt" fullWidth>
-            <textarea
-              value={config.voice.turn.llmCompletion.longReprompt}
-              onChange={(event) => {
-                updateLlmCompletion({
-                  longReprompt: event.target.value,
-                });
-              }}
-            />
-          </ConfigField>
-        </ConfigSection>
+            <ConfigField label="Long Reprompt" fullWidth>
+              <textarea
+                value={config.voice.turn.llmCompletion.longReprompt}
+                onChange={(event) => {
+                  updateLlmCompletion({
+                    longReprompt: event.target.value,
+                  });
+                }}
+              />
+            </ConfigField>
+          </ConfigSection>
+        )}
+
+        {activeSchema && (
+          <ProviderSettingsSection
+            schema={activeSchema}
+            values={providerSettings}
+            onChange={updateProviderSetting}
+            group="advanced"
+          />
+        )}
 
         <ConfigSection
           title="Profile Resolution"
@@ -954,7 +911,7 @@ export function VoiceRuntimePanel({
             {overridesText ? `Profile overrides: ${overridesText}` : 'Profile overrides: none'}
           </p>
           <p className="voice-runtime-info">
-            Realtime provider configuration maps to adapter providerConfig at session creation time.
+            Runtime config UI is rendered from runtime manifest/catalog metadata. Provider protocol logic stays in voice-runtime.
           </p>
         </ConfigSection>
       </ConfigDialog>

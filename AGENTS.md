@@ -29,7 +29,15 @@ Provider-agnostic voice runtime package. Provides a stable `VoiceSession` API ac
 
 **Does NOT own:** wake word, session persistence, DB, WebSocket broadcasting, profile orchestration, config resolution.
 
+**Boundary rule (strict):**
+- `voice-runtime` must expose one provider-agnostic session/event contract to all consumers.
+- Provider quirks (ordering, role mapping, transcript protocol differences, tool wire format) must be normalized in adapters/runtime internals.
+- `voice-agent`, `web-ui`, and TUI must not contain provider-specific parsing or fallback logic.
+- Shared integration/contract tests must assert unified behavior; provider-specific assertions belong only in adapter-focused tests.
+
 **Adapters:** `openai-sdk`, `ultravox-ws`, `gemini-live`, `decomposed`, `pipecat-rtvi`
+
+**Adding a new provider?** Start with the [Provider Integration Guide](packages/voice-runtime/docs/PROVIDER_INTEGRATION_GUIDE.md) — research checklist, test scenarios, and implementation pipeline.
 
 See: [`packages/voice-runtime/docs/`](packages/voice-runtime/docs/)
 
@@ -191,6 +199,7 @@ packages/voice-runtime/docs/       # Voice runtime internals
 ├── README.md                      # Package overview and reading order
 ├── ARCHITECTURE.md                # Three-plane model (control/media/provider)
 ├── PROVIDERS.md                   # Adapter catalog and capabilities
+├── PROVIDER_INTEGRATION_GUIDE.md  # ★ Adding new providers: research pipeline & test scenarios
 ├── CONFIGURATION.md               # App-level config and control APIs
 ├── INTERRUPTION_TRACKING.md       # Spoken text vs full text alignment
 ├── BENCHMARKS.md                  # Metrics, thresholds, report workflow

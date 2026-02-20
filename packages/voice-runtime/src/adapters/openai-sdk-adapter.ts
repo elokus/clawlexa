@@ -15,6 +15,7 @@ import type {
   OpenAIProviderConfig,
   ProviderAdapter,
   ProviderCapabilities,
+  ProviderConfigSchema,
   SessionInput,
   ToolCallContext,
   ToolCallResult,
@@ -84,6 +85,97 @@ const OPENAI_SDK_CAPABILITIES: ProviderCapabilities = {
   wordLevelTimestamps: false,
 };
 
+const OPENAI_CONFIG_SCHEMA: ProviderConfigSchema = {
+  providerId: 'openai-sdk',
+  displayName: 'OpenAI Realtime',
+  fields: [
+    {
+      key: 'turnDetection',
+      label: 'Turn Detection Mode',
+      type: 'select',
+      group: 'vad',
+      options: [
+        { value: 'semantic_vad', label: 'Semantic VAD (recommended)' },
+        { value: 'server_vad', label: 'Server VAD (threshold-based)' },
+      ],
+      defaultValue: 'semantic_vad',
+      description: 'Semantic VAD uses a model to detect turn boundaries. Server VAD uses silence detection.',
+    },
+    {
+      key: 'vad.eagerness',
+      label: 'Eagerness',
+      type: 'select',
+      group: 'vad',
+      options: [
+        { value: 'low', label: 'Low (patient, 8s max)' },
+        { value: 'medium', label: 'Medium (4s max)' },
+        { value: 'high', label: 'High (responsive, 2s max)' },
+        { value: 'auto', label: 'Auto' },
+      ],
+      defaultValue: 'auto',
+      dependsOn: { field: 'turnDetection', value: 'semantic_vad' },
+      description: 'How eager the model is to respond. Low = more patient with pauses.',
+    },
+    {
+      key: 'vad.threshold',
+      label: 'VAD Threshold',
+      type: 'range',
+      group: 'vad',
+      min: 0.0,
+      max: 1.0,
+      step: 0.05,
+      defaultValue: 0.5,
+      dependsOn: { field: 'turnDetection', value: 'server_vad' },
+      description: 'Activation threshold. Higher = requires louder audio.',
+    },
+    {
+      key: 'vad.silenceDurationMs',
+      label: 'Silence Duration (ms)',
+      type: 'number',
+      group: 'vad',
+      min: 100,
+      max: 5000,
+      step: 50,
+      defaultValue: 500,
+      dependsOn: { field: 'turnDetection', value: 'server_vad' },
+      description: 'Silence required to detect end of speech.',
+    },
+    {
+      key: 'vad.prefixPaddingMs',
+      label: 'Prefix Padding (ms)',
+      type: 'number',
+      group: 'vad',
+      min: 0,
+      max: 2000,
+      step: 50,
+      defaultValue: 300,
+      dependsOn: { field: 'turnDetection', value: 'server_vad' },
+      description: 'Audio included before detected speech start.',
+    },
+    {
+      key: 'transcriptionModel',
+      label: 'Transcription Model',
+      type: 'select',
+      group: 'advanced',
+      options: [
+        { value: 'gpt-4o-mini-transcribe', label: 'gpt-4o-mini-transcribe' },
+        { value: 'gpt-4o-transcribe', label: 'gpt-4o-transcribe' },
+      ],
+      defaultValue: 'gpt-4o-mini-transcribe',
+    },
+  ],
+  voices: [
+    { id: 'alloy', name: 'Alloy', language: 'multi', gender: 'neutral' },
+    { id: 'ash', name: 'Ash', language: 'multi', gender: 'male' },
+    { id: 'ballad', name: 'Ballad', language: 'multi', gender: 'male' },
+    { id: 'coral', name: 'Coral', language: 'multi', gender: 'female' },
+    { id: 'echo', name: 'Echo', language: 'multi', gender: 'male' },
+    { id: 'sage', name: 'Sage', language: 'multi', gender: 'female' },
+    { id: 'shimmer', name: 'Shimmer', language: 'multi', gender: 'female' },
+    { id: 'verse', name: 'Verse', language: 'multi', gender: 'male' },
+  ],
+};
+
 export class OpenAISdkAdapter implements ProviderAdapter {
   readonly id = 'openai-sdk' as const;
 
@@ -95,6 +187,10 @@ export class OpenAISdkAdapter implements ProviderAdapter {
 
   capabilities(): ProviderCapabilities {
     return OPENAI_SDK_CAPABILITIES;
+  }
+
+  configSchema(): ProviderConfigSchema {
+    return OPENAI_CONFIG_SCHEMA;
   }
 
   async connect(input: SessionInput): Promise<AudioNegotiation> {
@@ -121,6 +217,18 @@ export class OpenAISdkAdapter implements ProviderAdapter {
           ? null
           : providerConfig.turnDetection ?? 'semantic_vad';
 
+    const buildTurnDetection = () => {
+      if (!turnDetectionType) return null;
+      const td: Record<string, unknown> = { type: turnDetectionType };
+      if (input.vad?.silenceDurationMs != null) td.silence_duration_ms = input.vad.silenceDurationMs;
+      if (input.vad?.threshold != null) td.threshold = input.vad.threshold;
+      if (input.vad?.prefixPaddingMs != null) td.prefix_padding_ms = input.vad.prefixPaddingMs;
+      if (input.vad?.eagerness != null) td.eagerness = input.vad.eagerness;
+      return td;
+    };
+
+    const turnDetection = buildTurnDetection();
+
     const sessionConfig: Record<string, unknown> = {
       // Legacy config keys supported by the SDK.
       inputAudioFormat: 'pcm16',
@@ -130,14 +238,8 @@ export class OpenAISdkAdapter implements ProviderAdapter {
       audio: {
         input: {
           format: { type: 'audio/pcm', rate: 24000 },
-          ...(turnDetectionType
-            ? {
-                turn_detection: {
-                  type: turnDetectionType,
-                  silence_duration_ms: input.vad?.silenceDurationMs,
-                  threshold: input.vad?.threshold,
-                },
-              }
+          ...(turnDetection
+            ? { turn_detection: turnDetection }
             : { turn_detection: null }),
         },
         output: {
@@ -150,14 +252,8 @@ export class OpenAISdkAdapter implements ProviderAdapter {
         model: providerConfig.transcriptionModel ?? 'gpt-4o-mini-transcribe',
         language: input.language ?? providerConfig.language,
       },
-      ...(turnDetectionType
-        ? {
-            turnDetection: {
-              type: turnDetectionType,
-              silence_duration_ms: input.vad?.silenceDurationMs,
-              threshold: input.vad?.threshold,
-            },
-          }
+      ...(turnDetection
+        ? { turnDetection }
         : { turnDetection: null }),
     };
 

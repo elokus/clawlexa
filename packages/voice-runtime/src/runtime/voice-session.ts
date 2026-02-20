@@ -31,6 +31,10 @@ export class VoiceSessionImpl implements VoiceSession {
   private readonly interruptionTracker = new InterruptionTracker();
   private readonly assistantDeltaItemIds = new Set<string>();
   private assistantDeltaSeenThisTurn = false;
+  private nextConversationOrder = 1;
+  private readonly conversationOrderByItemId = new Map<string, number>();
+  private lastUserConversationOrder: number | undefined;
+  private lastAssistantConversationOrder: number | undefined;
 
   constructor(adapter: ProviderAdapter, input: SessionInput) {
     this.adapter = adapter;
@@ -41,6 +45,7 @@ export class VoiceSessionImpl implements VoiceSession {
 
   async connect(): Promise<void> {
     if (this.connected) return;
+    this.resetConversationOrderState();
     this.negotiation = await this.adapter.connect(this.input);
     this.connected = true;
     if (this.clientTransport) {
@@ -58,6 +63,7 @@ export class VoiceSessionImpl implements VoiceSession {
     this.state = 'idle';
     this.interruptionTracker.reset();
     this.resetAssistantTranscriptDedup();
+    this.resetConversationOrderState();
   }
 
   async attachClientTransport(transport: ClientTransport): Promise<void> {
@@ -263,6 +269,7 @@ export class VoiceSessionImpl implements VoiceSession {
       this.state = 'idle';
       this.interruptionTracker.reset();
       this.resetAssistantTranscriptDedup();
+      this.resetConversationOrderState();
       this.events.emit('disconnected', reason);
     });
 
@@ -297,7 +304,8 @@ export class VoiceSessionImpl implements VoiceSession {
           this.assistantDeltaItemIds.delete(itemId);
         }
       }
-      this.events.emit('transcript', text, role, itemId);
+      const order = this.resolveConversationOrder(role, itemId);
+      this.events.emit('transcript', text, role, itemId, order);
     });
 
     this.adapter.on('transcriptDelta', (delta, role, itemId) => {
@@ -308,18 +316,23 @@ export class VoiceSessionImpl implements VoiceSession {
           this.assistantDeltaItemIds.add(itemId);
         }
       }
-      this.events.emit('transcriptDelta', delta, role, itemId);
+      const order = this.resolveConversationOrder(role, itemId);
+      this.events.emit('transcriptDelta', delta, role, itemId, order);
     });
 
     this.adapter.on('userItemCreated', (itemId) => {
-      this.events.emit('userItemCreated', itemId);
+      const order = this.getOrCreateConversationOrder(itemId);
+      this.lastUserConversationOrder = order;
+      this.events.emit('userItemCreated', itemId, order);
     });
 
     this.adapter.on('assistantItemCreated', (itemId, previousItemId) => {
       this.interruptionTracker.beginAssistantItem(itemId);
       this.assistantDeltaSeenThisTurn = false;
       this.assistantDeltaItemIds.delete(itemId);
-      this.events.emit('assistantItemCreated', itemId, previousItemId);
+      const order = this.getOrCreateConversationOrderAfter(itemId, previousItemId);
+      this.lastAssistantConversationOrder = order;
+      this.events.emit('assistantItemCreated', itemId, previousItemId, order);
     });
 
     this.adapter.on('historyUpdated', (history) => {
@@ -373,5 +386,61 @@ export class VoiceSessionImpl implements VoiceSession {
   private resetAssistantTranscriptDedup(): void {
     this.assistantDeltaItemIds.clear();
     this.assistantDeltaSeenThisTurn = false;
+  }
+
+  private getOrCreateConversationOrder(itemId: string): number {
+    const existing = this.conversationOrderByItemId.get(itemId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const allocated = this.nextConversationOrder;
+    this.nextConversationOrder = Math.max(this.nextConversationOrder, allocated + 1);
+    this.conversationOrderByItemId.set(itemId, allocated);
+    return allocated;
+  }
+
+  private getOrCreateConversationOrderAfter(
+    itemId: string,
+    previousItemId?: string
+  ): number {
+    const existing = this.conversationOrderByItemId.get(itemId);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    let allocated = this.nextConversationOrder;
+    if (previousItemId) {
+      const previousOrder = this.getOrCreateConversationOrder(previousItemId);
+      allocated = Math.max(allocated, previousOrder + 1);
+    }
+
+    this.nextConversationOrder = Math.max(this.nextConversationOrder, allocated + 1);
+    this.conversationOrderByItemId.set(itemId, allocated);
+    return allocated;
+  }
+
+  private resolveConversationOrder(
+    role: 'user' | 'assistant',
+    itemId?: string
+  ): number | undefined {
+    if (itemId) {
+      const order = this.getOrCreateConversationOrder(itemId);
+      if (role === 'assistant') {
+        this.lastAssistantConversationOrder = order;
+      } else {
+        this.lastUserConversationOrder = order;
+      }
+      return order;
+    }
+    return role === 'assistant'
+      ? this.lastAssistantConversationOrder
+      : this.lastUserConversationOrder;
+  }
+
+  private resetConversationOrderState(): void {
+    this.nextConversationOrder = 1;
+    this.conversationOrderByItemId.clear();
+    this.lastUserConversationOrder = undefined;
+    this.lastAssistantConversationOrder = undefined;
   }
 }

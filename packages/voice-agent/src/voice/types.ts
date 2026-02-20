@@ -1,14 +1,14 @@
 import type { IAudioTransport } from '../transport/types.js';
+import type {
+  RuntimeProviderName,
+  RuntimeResolvedConfig,
+  RuntimeVoiceMode,
+} from '@voiceclaw/voice-runtime';
 
 export type AgentState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
-export type VoiceMode = 'voice-to-voice' | 'decomposed';
-export type VoiceProviderName =
-  | 'openai-realtime'
-  | 'gemini-live'
-  | 'ultravox-realtime'
-  | 'pipecat-rtvi'
-  | 'decomposed';
+export type VoiceMode = RuntimeVoiceMode;
+export type VoiceProviderName = RuntimeProviderName;
 
 export interface VoiceRuntimeAudio {
   data: ArrayBuffer;
@@ -27,10 +27,24 @@ export interface VoiceRuntimeEvents {
   stateChange: (state: AgentState) => void;
   audio: (audio: VoiceRuntimeAudio) => void;
   audioInterrupted: () => void;
-  transcript: (text: string, role: 'user' | 'assistant', itemId?: string) => void;
-  transcriptDelta: (delta: string, role: 'user' | 'assistant', itemId?: string) => void;
-  userItemCreated: (itemId: string) => void;
-  assistantItemCreated: (itemId: string, previousItemId?: string) => void;
+  transcript: (
+    text: string,
+    role: 'user' | 'assistant',
+    itemId?: string,
+    order?: number
+  ) => void;
+  transcriptDelta: (
+    delta: string,
+    role: 'user' | 'assistant',
+    itemId?: string,
+    order?: number
+  ) => void;
+  userItemCreated: (itemId: string, order?: number) => void;
+  assistantItemCreated: (
+    itemId: string,
+    previousItemId?: string,
+    order?: number
+  ) => void;
   historyUpdated: (history: VoiceRuntimeHistoryItem[]) => void;
   error: (error: Error) => void;
   connected: () => void;
@@ -67,52 +81,5 @@ export interface VoiceRuntime {
   on<K extends keyof VoiceRuntimeEvents>(event: K, handler: VoiceRuntimeEvents[K]): void;
 }
 
-export interface DecomposedTurnConfig {
-  strategy: 'provider-native' | 'layered';
-  silenceMs: number;
-  minSpeechMs: number;
-  minRms: number;
-  llmCompletionEnabled: boolean;
-  llmShortTimeoutMs: number;
-  llmLongTimeoutMs: number;
-  llmShortReprompt: string;
-  llmLongReprompt: string;
-}
-
-export interface VoiceRuntimeConfig {
-  mode: VoiceMode;
-  provider: VoiceProviderName;
-
-  // Common
-  language: string;
-  voice: string;
-
-  // Voice-to-voice providers
-  model: string;
-  geminiModel: string;
-  geminiVoice: string;
-  ultravoxModel: string;
-  pipecatServerUrl: string;
-  pipecatTransport: 'websocket' | 'webrtc';
-  pipecatBotId?: string;
-
-  // Decomposed providers
-  decomposedSttProvider: 'deepgram' | 'openai';
-  decomposedSttModel: string;
-  decomposedLlmProvider: 'openai' | 'openrouter';
-  decomposedLlmModel: string;
-  decomposedTtsProvider: 'deepgram' | 'openai';
-  decomposedTtsModel: string;
-  decomposedTtsVoice: string;
-
-  // Auth resolution
-  auth: {
-    openaiApiKey: string;
-    openrouterApiKey: string;
-    googleApiKey: string;
-    deepgramApiKey: string;
-    ultravoxApiKey: string;
-  };
-
-  turn: DecomposedTurnConfig;
-}
+export type DecomposedTurnConfig = RuntimeResolvedConfig['turn'];
+export type VoiceRuntimeConfig = RuntimeResolvedConfig;

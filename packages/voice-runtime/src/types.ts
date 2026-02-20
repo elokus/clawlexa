@@ -133,10 +133,24 @@ export interface VoiceSessionEvents {
   audio: (frame: AudioFrame) => void;
   audioInterrupted: () => void;
 
-  transcript: (text: string, role: 'user' | 'assistant', itemId?: string) => void;
-  transcriptDelta: (delta: string, role: 'user' | 'assistant', itemId?: string) => void;
-  userItemCreated: (itemId: string) => void;
-  assistantItemCreated: (itemId: string, previousItemId?: string) => void;
+  transcript: (
+    text: string,
+    role: 'user' | 'assistant',
+    itemId?: string,
+    order?: number
+  ) => void;
+  transcriptDelta: (
+    delta: string,
+    role: 'user' | 'assistant',
+    itemId?: string,
+    order?: number
+  ) => void;
+  userItemCreated: (itemId: string, order?: number) => void;
+  assistantItemCreated: (
+    itemId: string,
+    previousItemId?: string,
+    order?: number
+  ) => void;
 
   historyUpdated: (history: VoiceHistoryItem[]) => void;
 
@@ -186,6 +200,9 @@ export interface SessionInput {
     silenceDurationMs?: number;
     threshold?: number;
     eagerness?: 'low' | 'medium' | 'high' | 'auto';
+    prefixPaddingMs?: number;
+    startOfSpeechSensitivity?: 'high' | 'low';
+    endOfSpeechSensitivity?: 'high' | 'low';
     autoResponse?: boolean;
     autoInterrupt?: boolean;
   };
@@ -215,6 +232,7 @@ export interface ClientTransport {
 export interface ProviderAdapter {
   readonly id: VoiceProviderId;
   capabilities(): ProviderCapabilities;
+  configSchema?(): ProviderConfigSchema;
 
   connect(input: SessionInput): Promise<AudioNegotiation>;
   disconnect(): Promise<void>;
@@ -284,6 +302,43 @@ export interface ProviderDescriptor {
   capabilities: ProviderCapabilities;
 }
 
+// ─── Provider Config Schema (UI metadata) ───────────────────────────────────
+
+export type ConfigFieldType = 'select' | 'number' | 'boolean' | 'string' | 'range';
+
+export interface ConfigFieldOption {
+  value: string;
+  label: string;
+}
+
+export interface ConfigFieldDescriptor {
+  key: string;
+  label: string;
+  type: ConfigFieldType;
+  group: 'vad' | 'advanced' | 'audio';
+  description?: string;
+  options?: ConfigFieldOption[];
+  min?: number;
+  max?: number;
+  step?: number;
+  defaultValue?: string | number | boolean;
+  dependsOn?: { field: string; value: string | boolean };
+}
+
+export interface ProviderVoiceEntry {
+  id: string;
+  name: string;
+  language?: string;
+  gender?: string;
+}
+
+export interface ProviderConfigSchema {
+  providerId: VoiceProviderId;
+  displayName: string;
+  fields: ConfigFieldDescriptor[];
+  voices?: ProviderVoiceEntry[];
+}
+
 export interface VoiceRuntime {
   listProviders(): ProviderDescriptor[];
   createSession(input: SessionInput): Promise<VoiceSession>;
@@ -310,6 +365,12 @@ export interface GeminiProviderConfig extends Record<string, unknown> {
   apiKey?: string;
   endpoint?: string;
   apiVersion?: 'v1alpha' | 'v1beta';
+  vadMode?: 'server' | 'manual';
+  vadSilenceDurationMs?: number;
+  vadPrefixPaddingMs?: number;
+  vadThreshold?: number;
+  vadStartOfSpeechSensitivity?: 'high' | 'low';
+  vadEndOfSpeechSensitivity?: 'high' | 'low';
   enableInputTranscription?: boolean;
   enableOutputTranscription?: boolean;
   noInterruption?: boolean;

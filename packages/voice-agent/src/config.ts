@@ -1,8 +1,11 @@
 import { config as loadEnv } from 'dotenv';
 import { resolve } from 'path';
+import { createDefaultRuntimeVoiceConfig } from '@voiceclaw/voice-runtime';
 
 // Load .env from repo root (two levels up from packages/voice-agent)
 loadEnv({ path: resolve(process.cwd(), '../../.env') });
+
+const runtimeVoiceDefaults = createDefaultRuntimeVoiceConfig(process.env).voice;
 
 export const config = {
   openai: {
@@ -27,7 +30,7 @@ export const config = {
   },
   agent: {
     defaultVoice: 'ash' as const,
-    model: 'gpt-realtime-mini-2025-10-06',
+    model: process.env.AGENT_MODEL ?? runtimeVoiceDefaults.voiceToVoice.model,
     conversationTimeout: 60_000, // 60 seconds
   },
   porcupine: {
@@ -37,17 +40,17 @@ export const config = {
     apiKey: process.env.GOVEE_API_KEY ?? '',
   },
   voice: {
-    mode: process.env.VOICE_MODE ?? 'voice-to-voice',
-    provider: process.env.VOICE_PROVIDER ?? 'openai-realtime',
+    mode: process.env.VOICE_MODE ?? runtimeVoiceDefaults.mode,
+    provider: process.env.VOICE_PROVIDER ?? runtimeVoiceDefaults.voiceToVoice.provider,
     language: process.env.VOICE_LANGUAGE ?? 'de',
     gemini: {
-      model: process.env.GEMINI_LIVE_MODEL ?? 'gemini-2.5-flash-native-audio-preview',
-      voice: process.env.GEMINI_VOICE ?? 'Puck',
+      model: process.env.GEMINI_LIVE_MODEL ?? runtimeVoiceDefaults.voiceToVoice.geminiModel,
+      voice: process.env.GEMINI_VOICE ?? runtimeVoiceDefaults.voiceToVoice.geminiVoice,
     },
     decomposed: {
-      sttModel: process.env.DECOMPOSED_STT_MODEL ?? 'gpt-4o-mini-transcribe',
-      llmModel: process.env.DECOMPOSED_LLM_MODEL ?? 'openai/gpt-4o-mini',
-      ttsModel: process.env.DECOMPOSED_TTS_MODEL ?? 'gpt-4o-mini-tts',
+      sttModel: process.env.DECOMPOSED_STT_MODEL ?? runtimeVoiceDefaults.decomposed.stt.model,
+      llmModel: process.env.DECOMPOSED_LLM_MODEL ?? runtimeVoiceDefaults.decomposed.llm.model,
+      ttsModel: process.env.DECOMPOSED_TTS_MODEL ?? runtimeVoiceDefaults.decomposed.tts.model,
     },
     turn: {
       silenceMs: parseInt(process.env.VOICE_TURN_SILENCE_MS ?? '700', 10),

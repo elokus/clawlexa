@@ -10,6 +10,13 @@ Provider-agnostic realtime voice runtime package for voice agent applications.
 - Framework-level interruption resolution.
 - Benchmark recording and evaluation.
 
+## Boundary Contract
+
+- `voice-runtime` is the only layer that may understand provider-specific protocol details.
+- Adapters must normalize provider quirks into unified `VoiceSessionEvents`.
+- Consumers (`voice-agent`, `web-ui`, TUI) must rely only on runtime contract fields and must not parse provider-native IDs/messages.
+- When behavior diverges by provider, fix adapter/runtime normalization instead of adding consumer-side provider branches.
+
 ## Implemented Adapters
 
 | Adapter | Transport | Use Case |
@@ -35,7 +42,11 @@ Provider-agnostic realtime voice runtime package for voice agent applications.
 bunx tsc -p packages/voice-runtime/tsconfig.json --noEmit
 bun test packages/voice-runtime/tests/*.test.ts
 bun test packages/voice-runtime/tests/provider-contract-replay.test.ts
+# Opt-in live audio/provider test (not part of default test runs)
+VOICE_RUNTIME_LIVE_PROVIDERS=openai-sdk bun run --cwd packages/voice-runtime test:live-ordering
 ```
+
+`test:live-ordering` loads environment values from repo root `../../.env`.
 
 ## Documentation
 

@@ -18,6 +18,8 @@ export interface ProviderConfigById {
 
 const OPENAI_TURN_DETECTIONS = ['server_vad', 'semantic_vad'] as const;
 const GEMINI_API_VERSIONS = ['v1alpha', 'v1beta'] as const;
+const GEMINI_VAD_MODES = ['server', 'manual'] as const;
+const GEMINI_SPEECH_SENSITIVITIES = ['high', 'low'] as const;
 const PIPECAT_TRANSPORTS = ['websocket', 'webrtc'] as const;
 const PIPECAT_AUDIO_INPUT_ENCODINGS = ['binary-pcm16', 'client-message-base64'] as const;
 const DECOMPOSED_STT_PROVIDERS = ['openai', 'deepgram'] as const;
@@ -117,6 +119,7 @@ function parseModelRef(
 export function parseOpenAIProviderConfig(raw: unknown): OpenAIProviderConfig {
   const object = toObject(raw, 'providerConfig');
   return {
+    ...object,
     apiKey: optionalString(object, 'apiKey', 'providerConfig'),
     language: optionalString(object, 'language', 'providerConfig'),
     transcriptionModel: optionalString(object, 'transcriptionModel', 'providerConfig'),
@@ -132,6 +135,7 @@ export function parseOpenAIProviderConfig(raw: unknown): OpenAIProviderConfig {
 export function parseUltravoxProviderConfig(raw: unknown): UltravoxProviderConfig {
   const object = toObject(raw, 'providerConfig');
   return {
+    ...object,
     apiKey: optionalString(object, 'apiKey', 'providerConfig'),
     apiBaseUrl: optionalString(object, 'apiBaseUrl', 'providerConfig'),
     model: optionalString(object, 'model', 'providerConfig'),
@@ -144,10 +148,44 @@ export function parseUltravoxProviderConfig(raw: unknown): UltravoxProviderConfi
 
 export function parseGeminiProviderConfig(raw: unknown): GeminiProviderConfig {
   const object = toObject(raw, 'providerConfig');
+  const vadMode =
+    optionalEnum(object, 'vadMode', 'providerConfig', GEMINI_VAD_MODES) ??
+    optionalEnum(object, 'vad.mode', 'providerConfig', GEMINI_VAD_MODES);
+  const vadSilenceDurationMs = optionalPositiveNumber(
+    object,
+    'vad.silenceDurationMs',
+    'providerConfig'
+  );
+  const vadPrefixPaddingMs = optionalNonNegativeNumber(
+    object,
+    'vad.prefixPaddingMs',
+    'providerConfig'
+  );
+  const vadThreshold = optionalPositiveNumber(object, 'vad.threshold', 'providerConfig');
+  const vadStartOfSpeechSensitivity = optionalEnum(
+    object,
+    'vad.startOfSpeechSensitivity',
+    'providerConfig',
+    GEMINI_SPEECH_SENSITIVITIES
+  );
+  const vadEndOfSpeechSensitivity = optionalEnum(
+    object,
+    'vad.endOfSpeechSensitivity',
+    'providerConfig',
+    GEMINI_SPEECH_SENSITIVITIES
+  );
+
   return {
+    ...object,
     apiKey: optionalString(object, 'apiKey', 'providerConfig'),
     endpoint: optionalString(object, 'endpoint', 'providerConfig'),
     apiVersion: optionalEnum(object, 'apiVersion', 'providerConfig', GEMINI_API_VERSIONS),
+    vadMode,
+    vadSilenceDurationMs,
+    vadPrefixPaddingMs,
+    vadThreshold,
+    vadStartOfSpeechSensitivity,
+    vadEndOfSpeechSensitivity,
     enableInputTranscription: optionalBoolean(
       object,
       'enableInputTranscription',
@@ -201,6 +239,7 @@ function parseDecomposedTurnConfig(raw: unknown): DecomposedProviderConfig['turn
 export function parseDecomposedProviderConfig(raw: unknown): DecomposedProviderConfig {
   const object = toObject(raw, 'providerConfig');
   return {
+    ...object,
     openaiApiKey: optionalString(object, 'openaiApiKey', 'providerConfig'),
     openrouterApiKey: optionalString(object, 'openrouterApiKey', 'providerConfig'),
     deepgramApiKey: optionalString(object, 'deepgramApiKey', 'providerConfig'),
@@ -238,6 +277,7 @@ export function parsePipecatProviderConfig(raw: unknown): PipecatProviderConfig 
     : undefined;
 
   return {
+    ...object,
     serverUrl: optionalString(object, 'serverUrl', 'providerConfig'),
     transport:
       optionalEnum(object, 'transport', 'providerConfig', PIPECAT_TRANSPORTS) ?? 'websocket',

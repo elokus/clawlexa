@@ -106,13 +106,9 @@ Configure via `GeminiProviderConfig.contextWindowCompressionTokens` (number of t
 
 ## 7. Proactivity
 
-When enabled, Gemini can proactively generate audio without user input:
+`setup.proactivity` is currently rejected on this endpoint/model set (`1007 Unknown name "proactivity"`).
 
-```typescript
-setup.proactivity = { proactiveAudio: true };
-```
-
-Configure via `GeminiProviderConfig.proactivity: true`.
+Adapter behavior: do not send `setup.proactivity` for now, even if configured, and treat proactivity as unsupported until Google adds the field for this API variant.
 
 ## 8. Transcript Handling
 
@@ -204,9 +200,74 @@ The server may send `goAway` with a `timeLeft` field indicating the session will
 | `apiKey` | (required) | Google AI API key |
 | `endpoint` | Gemini Live WS endpoint | Custom WebSocket URL |
 | `useEphemeralToken` | `false` | Treat apiKey as ephemeral token |
+| `vadMode` / `vad.mode` | `manual` | VAD mode override (`manual` recommended, `server` available) |
+| `vadSilenceDurationMs` / `vad.silenceDurationMs` | `450` | Silence threshold for local manual VAD end-of-activity |
+| `vadPrefixPaddingMs` / `vad.prefixPaddingMs` | `120` | Pre-roll audio kept before manual activity start |
+| `vadThreshold` / `vad.threshold` | `0.005` | RMS threshold for local manual speech detection |
 | `noInterruption` | `false` | Use `NO_INTERRUPTION` activity handling |
 | `enableInputTranscription` | `true` | Enable user speech transcription |
 | `enableOutputTranscription` | `true` | Enable model speech transcription |
 | `sessionResumptionHandle` | (none) | Resume handle from previous session |
 | `contextWindowCompressionTokens` | (none) | Target token count for sliding window |
-| `proactivity` | `false` | Enable proactive audio generation |
+| `proactivity` | `false` | Parsed for compatibility, but currently not sent (setup field rejected) |
+
+## 13. Known Issues & Workarounds
+
+### Input Transcription Returns Wrong Language (Native-Audio Models)
+
+**Symptom**: `inputTranscription.text` contains Arabic, Persian, or other random language fragments instead of actual speech content. The model's audio comprehension is unaffected — it responds correctly.
+
+**Cause**: Auto VAD (`automaticActivityDetection: { disabled: false }`) triggers premature `interrupted` events during audio streaming, corrupting the transcription pipeline. This is a known server-side bug on `gemini-2.5-flash-native-audio` models.
+
+**Fix**: Use manual VAD with explicit activity signals:
+```typescript
+// 1. Disable auto VAD in setup:
+realtimeInputConfig: {
+  automaticActivityDetection: { disabled: true },
+}
+
+// 2. Send activityStart before audio:
+ws.send(JSON.stringify({ realtimeInput: { activityStart: {} } }));
+
+// 3. Send audio chunks...
+
+// 4. Send activityEnd after audio:
+ws.send(JSON.stringify({ realtimeInput: { activityEnd: {} } }));
+```
+
+### languageCode Rejected on Native-Audio Models
+
+`speechConfig.languageCode` with non-English codes (e.g., `de`) causes immediate WebSocket close with code 1007. Set language via system instruction instead.
+
+### Only audio/pcm Accepted for realtimeInput
+
+WAV, M4A, FLAC etc. are rejected for `realtimeInput.audio`. Only `audio/pcm` or `audio/pcm;rate=XXXXX` is accepted. Other formats may work via `clientContent` on non-native models.
+
+### Tool Schemas With `$...` Keys and `additionalProperties` Fail Setup
+
+Gemini rejects unsupported JSON-schema metadata in `functionDeclarations.parameters` (for example `$schema` and `additionalProperties`) and closes setup with `1007`.
+
+Adapter workaround: sanitize tool schemas before setup and strip `$...` keys recursively.
+
+### `proactivity` Field Rejected During Setup
+
+`setup.proactivity` currently causes setup close `1007` (`Unknown name "proactivity" at 'setup'`).
+
+Adapter workaround: ignore this field for now and keep proactivity disabled.
+
+### Deprecated Model Alias Fails Setup
+
+`models/gemini-2.5-flash-native-audio-preview` now closes setup with `1008` (model not found for `bidiGenerateContent`).
+
+Adapter workaround: normalize this alias to `models/gemini-2.5-flash-native-audio-latest`.
+
+### Available Models
+
+As of 2026-02-20, only native-audio models support `bidiGenerateContent`:
+- `models/gemini-2.5-flash-native-audio-latest` (recommended)
+- `models/gemini-2.5-flash-native-audio-preview-12-2025`
+- `models/gemini-2.5-flash-native-audio-preview-09-2025` (deprecated March 2026)
+
+The old `gemini-2.0-flash-*` live models are no longer available.
+
+See also: [PROVIDER_INTEGRATION_GUIDE.md Section 7](../PROVIDER_INTEGRATION_GUIDE.md#7-gemini-live-current-state--findings) for full experiment results.

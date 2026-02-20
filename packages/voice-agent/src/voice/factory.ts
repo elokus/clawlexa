@@ -2,45 +2,17 @@ import type { AgentProfile } from '../agent/profiles.js';
 import type { VoiceAgent } from '../agent/voice-agent.js';
 import {
   createVoiceRuntime as createPackageVoiceRuntime,
-  DecomposedAdapter,
-  GeminiLiveAdapter,
-  OpenAISdkAdapter,
-  parseProviderConfig,
-  PipecatRtviAdapter,
-  type SessionInput as PackageSessionInput,
+  getBuiltInProviderRegistry,
+  resolveRuntimeSessionInput,
   type ToolCallHandler as PackageToolCallHandler,
   type ToolDefinition as PackageToolDefinition,
-  UltravoxWsAdapter,
 } from '@voiceclaw/voice-runtime';
 import type { FunctionTool } from '@openai/agents-core';
 import { RunContext } from '@openai/agents-core';
 import { resolveVoiceRuntimeConfig } from './config.js';
 import { PackageBackedVoiceRuntime } from './package-backed-runtime.js';
 import { getToolsForSession } from '../tools/index.js';
-import type { VoiceProviderName, VoiceRuntime } from './types.js';
-
-type ResolvedRuntimeConfig = ReturnType<typeof resolveVoiceRuntimeConfig>;
-
-function providerIdForRuntime(
-  provider: VoiceProviderName
-): PackageSessionInput['provider'] {
-  if (provider === 'ultravox-realtime') return 'ultravox-ws';
-  if (provider === 'gemini-live') return 'gemini-live';
-  if (provider === 'pipecat-rtvi') return 'pipecat-rtvi';
-  if (provider === 'decomposed') return 'decomposed';
-  return 'openai-sdk';
-}
-
-function modelForProvider(
-  provider: VoiceProviderName,
-  runtimeConfig: ResolvedRuntimeConfig
-): string {
-  if (provider === 'ultravox-realtime') return runtimeConfig.ultravoxModel;
-  if (provider === 'gemini-live') return runtimeConfig.geminiModel;
-  if (provider === 'pipecat-rtvi') return runtimeConfig.model;
-  if (provider === 'decomposed') return runtimeConfig.decomposedLlmModel;
-  return runtimeConfig.model;
-}
+import type { VoiceRuntime } from './types.js';
 
 function normalizeToolOutput(output: unknown): string {
   if (typeof output === 'string') return output;
@@ -99,62 +71,6 @@ function buildTooling(
   };
 }
 
-function providerConfigFor(
-  provider: VoiceProviderName,
-  runtimeConfig: ResolvedRuntimeConfig
-): unknown {
-  if (provider === 'ultravox-realtime') {
-    return {
-      apiKey: runtimeConfig.auth.ultravoxApiKey,
-      model: runtimeConfig.ultravoxModel,
-      voice: runtimeConfig.voice,
-    };
-  }
-
-  if (provider === 'gemini-live') {
-    return {
-      apiKey: runtimeConfig.auth.googleApiKey,
-      enableInputTranscription: true,
-      enableOutputTranscription: true,
-      contextWindowCompressionTokens: 10000,
-      proactivity: false,
-    };
-  }
-
-  if (provider === 'decomposed') {
-    return {
-      openaiApiKey: runtimeConfig.auth.openaiApiKey,
-      openrouterApiKey: runtimeConfig.auth.openrouterApiKey,
-      deepgramApiKey: runtimeConfig.auth.deepgramApiKey,
-      sttProvider: runtimeConfig.decomposedSttProvider,
-      sttModel: runtimeConfig.decomposedSttModel,
-      llmProvider: runtimeConfig.decomposedLlmProvider,
-      llmModel: runtimeConfig.decomposedLlmModel,
-      ttsProvider: runtimeConfig.decomposedTtsProvider,
-      ttsModel: runtimeConfig.decomposedTtsModel,
-      ttsVoice: runtimeConfig.decomposedTtsVoice,
-      turn: runtimeConfig.turn,
-    };
-  }
-
-  if (provider === 'pipecat-rtvi') {
-    return {
-      serverUrl: runtimeConfig.pipecatServerUrl,
-      transport: runtimeConfig.pipecatTransport,
-      botId: runtimeConfig.pipecatBotId,
-      inputSampleRate: 24000,
-      outputSampleRate: 24000,
-      autoToolExecution: true,
-    };
-  }
-
-  return {
-    apiKey: runtimeConfig.auth.openaiApiKey,
-    language: runtimeConfig.language,
-    turnDetection: 'semantic_vad',
-  };
-}
-
 export function createVoiceRuntime(
   profile: AgentProfile,
   sessionId: string,
@@ -169,50 +85,32 @@ export function createVoiceRuntime(
   );
 
   const { tools, toolHandler } = buildTooling(profile, sessionId, voiceAgent);
-  const packageProviderId = providerIdForRuntime(runtimeConfig.provider);
-  const providerConfig = parseProviderConfig(
-    packageProviderId,
-    providerConfigFor(runtimeConfig.provider, runtimeConfig)
-  );
+  const runtimeHost = createPackageVoiceRuntime(getBuiltInProviderRegistry());
 
-  const runtimeHost = createPackageVoiceRuntime([
-    {
-      id: 'openai-sdk',
-      label: 'openai-realtime',
-      createAdapter: () => new OpenAISdkAdapter(),
-    },
-    {
-      id: 'ultravox-ws',
-      label: 'ultravox-realtime',
-      createAdapter: () => new UltravoxWsAdapter(),
-    },
-    {
-      id: 'gemini-live',
-      label: 'gemini-live',
-      createAdapter: () => new GeminiLiveAdapter(),
-    },
-    {
-      id: 'decomposed',
-      label: 'decomposed',
-      createAdapter: () => new DecomposedAdapter(),
-    },
-    {
-      id: 'pipecat-rtvi',
-      label: 'pipecat-rtvi',
-      createAdapter: () => new PipecatRtviAdapter(),
-    },
-  ]);
-
-  const sessionInput: PackageSessionInput = {
-    provider: packageProviderId,
+  const sessionInput = resolveRuntimeSessionInput({
     instructions: profile.instructions,
-    voice: runtimeConfig.voice,
-    model: modelForProvider(runtimeConfig.provider, runtimeConfig),
     language: runtimeConfig.language,
+    voice: runtimeConfig.voice,
+    provider: runtimeConfig.provider,
+    model: runtimeConfig.model,
+    geminiModel: runtimeConfig.geminiModel,
+    ultravoxModel: runtimeConfig.ultravoxModel,
+    pipecatServerUrl: runtimeConfig.pipecatServerUrl,
+    pipecatTransport: runtimeConfig.pipecatTransport,
+    pipecatBotId: runtimeConfig.pipecatBotId,
+    decomposedSttProvider: runtimeConfig.decomposedSttProvider,
+    decomposedSttModel: runtimeConfig.decomposedSttModel,
+    decomposedLlmProvider: runtimeConfig.decomposedLlmProvider,
+    decomposedLlmModel: runtimeConfig.decomposedLlmModel,
+    decomposedTtsProvider: runtimeConfig.decomposedTtsProvider,
+    decomposedTtsModel: runtimeConfig.decomposedTtsModel,
+    decomposedTtsVoice: runtimeConfig.decomposedTtsVoice,
+    turn: runtimeConfig.turn,
+    providerSettings: runtimeConfig.providerSettings,
+    auth: runtimeConfig.auth,
     tools,
     toolHandler,
-    providerConfig,
-  };
+  });
 
   return new PackageBackedVoiceRuntime({
     mode: runtimeConfig.mode,

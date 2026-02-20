@@ -42,6 +42,21 @@ The dashboard `Voice Runtime` panel writes/reads config through:
 - `PUT /api/config/auth-profiles`
 - `POST /api/config/auth-profiles/test`
 
+These HTTP routes are app-owned, but provider behavior should be delegated to runtime control-plane exports:
+
+- `resolveRuntimeConfigFromDocuments(...)`
+- `resolveRuntimeSessionInput(...)`
+- `getBuiltInProviderRegistry()`
+- `fetchRuntimeProviderCatalog(...)`
+- `fetchRuntimeProviderCatalogFromAuthProfiles(...)`
+- `testRuntimeProviderCredentials(...)`
+- `getRuntimeConfigManifest()`
+- `resolveRuntimeAuthKeySet(...)`
+- `runtimeAuthKeySetToProviderMap(...)`
+- `getDefaultRuntimeBenchmarkThresholds(...)`
+
+The manifest/catalog payload (`/api/config/voice/catalog`) is intended to be UI-agnostic so web/TUI clients can render provider config dynamically without provider-specific branching.
+
 ## 4. Consumer Integration
 
 Consumers integrate via the public `SessionInput` API and `parseProviderConfig()` helper. See consumer-specific documentation for integration file details and operational commands.

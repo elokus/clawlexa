@@ -3,6 +3,7 @@ import path from 'path';
 import {
   VoiceBenchmarkRecorder,
   evaluateVoiceBenchmark,
+  getDefaultRuntimeBenchmarkThresholds,
   type VoiceBenchmarkInput,
   type VoiceBenchmarkReport,
   type VoiceBenchmarkThresholds,
@@ -40,44 +41,6 @@ export interface VoiceBenchmarkFinalizeResult {
   outputPath?: string;
 }
 
-export const PROVIDER_THRESHOLDS: Record<VoiceProviderName, VoiceBenchmarkThresholds> = {
-  'openai-realtime': {
-    maxFirstAudioLatencyMs: 1_200,
-    maxP95ChunkGapMs: 240,
-    maxChunkGapMs: 500,
-    maxRealtimeFactor: 1.25,
-    maxInterruptionP95Ms: 180,
-  },
-  'ultravox-realtime': {
-    maxFirstAudioLatencyMs: 1_800,
-    maxP95ChunkGapMs: 360,
-    maxChunkGapMs: 700,
-    maxRealtimeFactor: 1.45,
-    maxInterruptionP95Ms: 260,
-  },
-  'gemini-live': {
-    maxFirstAudioLatencyMs: 1_600,
-    maxP95ChunkGapMs: 320,
-    maxChunkGapMs: 650,
-    maxRealtimeFactor: 1.4,
-    maxInterruptionP95Ms: 240,
-  },
-  'pipecat-rtvi': {
-    maxFirstAudioLatencyMs: 2_000,
-    maxP95ChunkGapMs: 420,
-    maxChunkGapMs: 850,
-    maxRealtimeFactor: 1.55,
-    maxInterruptionP95Ms: 320,
-  },
-  decomposed: {
-    maxFirstAudioLatencyMs: 2_200,
-    maxP95ChunkGapMs: 450,
-    maxChunkGapMs: 900,
-    maxRealtimeFactor: 1.7,
-    maxInterruptionP95Ms: 320,
-  },
-};
-
 function parseNumber(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
@@ -103,7 +66,7 @@ export function mergeThresholds(
   overrides: VoiceBenchmarkThresholds
 ): VoiceBenchmarkThresholds {
   return {
-    ...PROVIDER_THRESHOLDS[provider],
+    ...getDefaultRuntimeBenchmarkThresholds(provider),
     ...overrides,
   };
 }

@@ -21,6 +21,7 @@ export interface TranscriptEntry {
   text: string;
   isStreaming: boolean;
   timestamp: number;
+  order?: number;
 }
 
 // ── Tool Calls ───────────────────────────────────────────────
@@ -186,10 +187,22 @@ export type InspectorAction =
   | { type: 'AUDIO_INPUT_DEVICE_SET'; device: string }
   | { type: 'AUDIO_OUTPUT_DEVICE_SET'; device: string }
   | { type: 'LATENCY'; stage: LatencyStage; durationMs: number }
-  | { type: 'USER_ITEM_CREATED'; itemId: string }
-  | { type: 'ASSISTANT_ITEM_CREATED'; itemId: string; previousItemId?: string }
-  | { type: 'TRANSCRIPT'; role: 'user' | 'assistant'; text: string; itemId?: string }
-  | { type: 'TRANSCRIPT_DELTA'; role: 'user' | 'assistant'; delta: string; itemId?: string }
+  | { type: 'USER_ITEM_CREATED'; itemId: string; order?: number }
+  | { type: 'ASSISTANT_ITEM_CREATED'; itemId: string; previousItemId?: string; order?: number }
+  | {
+      type: 'TRANSCRIPT';
+      role: 'user' | 'assistant';
+      text: string;
+      itemId?: string;
+      order?: number;
+    }
+  | {
+      type: 'TRANSCRIPT_DELTA';
+      role: 'user' | 'assistant';
+      delta: string;
+      itemId?: string;
+      order?: number;
+    }
   | { type: 'TOOL_START'; name: string; args: Record<string, unknown>; callId?: string }
   | { type: 'TOOL_END'; name: string; result: string; callId?: string }
   | { type: 'ERROR'; message: string }

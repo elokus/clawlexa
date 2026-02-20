@@ -8,6 +8,7 @@ import type {
   PipecatProviderConfig,
   ProviderAdapter,
   ProviderCapabilities,
+  ProviderConfigSchema,
   SessionInput,
   ToolCallContext,
   ToolCallResult,
@@ -261,6 +262,36 @@ function parseMetricDurationMs(value: number): number {
   return value;
 }
 
+const PIPECAT_CONFIG_SCHEMA: ProviderConfigSchema = {
+  providerId: 'pipecat-rtvi',
+  displayName: 'Pipecat RTVI',
+  fields: [
+    {
+      key: 'readyTimeoutMs',
+      label: 'Ready Timeout (ms)',
+      type: 'number',
+      group: 'advanced',
+      min: 1000,
+      max: 60000,
+      step: 1000,
+      defaultValue: 12000,
+      description: 'Timeout waiting for bot-ready signal.',
+    },
+    {
+      key: 'keepAliveIntervalMs',
+      label: 'Keep-Alive Interval (ms)',
+      type: 'number',
+      group: 'advanced',
+      min: 0,
+      max: 60000,
+      step: 1000,
+      defaultValue: 15000,
+      description: 'Ping interval. 0 = disabled.',
+    },
+  ],
+  // Pipecat voices/VAD are configured server-side
+};
+
 export class PipecatRtviAdapter extends BaseWebSocketAdapter implements ProviderAdapter {
   readonly id = 'pipecat-rtvi' as const;
 
@@ -302,6 +333,10 @@ export class PipecatRtviAdapter extends BaseWebSocketAdapter implements Provider
   capabilities(): ProviderCapabilities {
     const transport = this.config?.transport ?? this.options.config?.transport ?? 'websocket';
     return buildCapabilities(transport, this.dynamicCapabilities, this.options.capabilitiesOverride);
+  }
+
+  configSchema(): ProviderConfigSchema {
+    return PIPECAT_CONFIG_SCHEMA;
   }
 
   async connect(input: SessionInput): Promise<AudioNegotiation> {

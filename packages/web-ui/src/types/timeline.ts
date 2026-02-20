@@ -18,6 +18,7 @@ export interface TranscriptItem extends BaseTimelineItem {
   content: string;
   pending?: boolean;
   itemId?: string; // OpenAI item correlation for message ordering
+  order?: number; // Runtime-normalized conversation order
 }
 
 export interface ToolItem extends BaseTimelineItem {

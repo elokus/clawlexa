@@ -8,6 +8,7 @@ import type {
   GeminiProviderConfig,
   ProviderAdapter,
   ProviderCapabilities,
+  ProviderConfigSchema,
   SessionInput,
   ToolCallContext,
   ToolCallResult,
@@ -66,6 +67,7 @@ interface GeminiEnvelope {
   serverContent?: GeminiServerContent;
   toolCall?: GeminiToolCall;
   toolCallCancellation?: GeminiToolCallCancellation;
+  error?: { code?: number; message?: string; status?: string };
   goAway?: { timeLeft?: string };
   sessionResumptionUpdate?: { newHandle?: string; resumable?: boolean };
   usageMetadata?: GeminiUsageMetadata;
@@ -85,10 +87,26 @@ interface GeminiFunctionDeclaration {
   behavior?: 'NON_BLOCKING';
 }
 
+interface ResolvedGeminiVadConfig {
+  mode: 'server' | 'manual';
+  silenceDurationMs?: number;
+  prefixPaddingMs?: number;
+  threshold?: number;
+  startOfSpeechSensitivity?: 'high' | 'low';
+  endOfSpeechSensitivity?: 'high' | 'low';
+}
+
 const GEMINI_ENDPOINT =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 const GEMINI_INPUT_RATE = 16000;
 const GEMINI_OUTPUT_RATE = 24000;
+const GEMINI_MANUAL_VAD_DEFAULT_SILENCE_MS = 450;
+const GEMINI_MANUAL_VAD_DEFAULT_THRESHOLD = 0.005;
+const GEMINI_MANUAL_VAD_MIN_SPEECH_MS = 80;
+const GEMINI_MANUAL_VAD_DEFAULT_PREFIX_PADDING_MS = 120;
+const GEMINI_MODEL_ALIASES: Record<string, string> = {
+  'gemini-2.5-flash-native-audio-preview': 'gemini-2.5-flash-native-audio-latest',
+};
 
 const GEMINI_CAPABILITIES: ProviderCapabilities = {
   toolCalling: true,
@@ -119,12 +137,126 @@ const GEMINI_CAPABILITIES: ProviderCapabilities = {
   callState: false,
   deferredText: false,
   callStages: false,
-  proactivity: true,
+  proactivity: false,
   usageMetrics: true,
   orderedTranscripts: false,
   ephemeralTokens: true,
   nativeTruncation: false,
   wordLevelTimestamps: false,
+};
+
+const GEMINI_CONFIG_SCHEMA: ProviderConfigSchema = {
+  providerId: 'gemini-live',
+  displayName: 'Gemini Live',
+  fields: [
+    {
+      key: 'vad.mode',
+      label: 'VAD Mode',
+      type: 'select',
+      group: 'vad',
+      options: [
+        { value: 'manual', label: 'Manual activity signals (recommended)' },
+        { value: 'server', label: 'Server VAD (auto detection)' },
+      ],
+      defaultValue: 'manual',
+      description:
+        'Manual mode sends activityStart/activityEnd from the runtime to improve transcript quality.',
+    },
+    {
+      key: 'noInterruption',
+      label: 'Interruption Mode',
+      type: 'select',
+      group: 'vad',
+      options: [
+        { value: 'false', label: 'Allow interruptions (barge-in)' },
+        { value: 'true', label: 'No interruption' },
+      ],
+      defaultValue: 'false',
+      description: 'Whether user speech can interrupt the agent.',
+    },
+    {
+      key: 'vad.startOfSpeechSensitivity',
+      label: 'Start-of-Speech Sensitivity',
+      type: 'select',
+      group: 'vad',
+      options: [
+        { value: 'high', label: 'High (more triggers)' },
+        { value: 'low', label: 'Low (fewer false starts)' },
+      ],
+      defaultValue: 'high',
+      description: 'How readily speech start is detected.',
+    },
+    {
+      key: 'vad.endOfSpeechSensitivity',
+      label: 'End-of-Speech Sensitivity',
+      type: 'select',
+      group: 'vad',
+      options: [
+        { value: 'high', label: 'High (faster response)' },
+        { value: 'low', label: 'Low (more patient)' },
+      ],
+      defaultValue: 'high',
+      description: 'How readily speech end is detected.',
+    },
+    {
+      key: 'vad.silenceDurationMs',
+      label: 'Silence Duration (ms)',
+      type: 'number',
+      group: 'vad',
+      min: 50,
+      max: 5000,
+      step: 50,
+      defaultValue: 450,
+      description: 'Silence required to commit end-of-speech.',
+    },
+    {
+      key: 'vad.threshold',
+      label: 'Manual VAD Threshold',
+      type: 'number',
+      group: 'vad',
+      min: 0.001,
+      max: 0.05,
+      step: 0.001,
+      defaultValue: 0.005,
+      description: 'RMS threshold used for local speech detection in manual VAD mode.',
+      dependsOn: { field: 'vad.mode', value: 'manual' },
+    },
+    {
+      key: 'contextWindowCompressionTokens',
+      label: 'Context Compression (tokens)',
+      type: 'number',
+      group: 'advanced',
+      min: 0,
+      max: 50000,
+      step: 1000,
+      defaultValue: 10000,
+      description: 'Sliding window token count for long conversations. 0 = disabled.',
+    },
+    {
+      key: 'enableInputTranscription',
+      label: 'Transcribe User Audio',
+      type: 'boolean',
+      group: 'advanced',
+      defaultValue: true,
+    },
+    {
+      key: 'enableOutputTranscription',
+      label: 'Transcribe Agent Audio',
+      type: 'boolean',
+      group: 'advanced',
+      defaultValue: true,
+    },
+  ],
+  voices: [
+    { id: 'Puck', name: 'Puck', language: 'multi', gender: 'male' },
+    { id: 'Charon', name: 'Charon', language: 'multi', gender: 'male' },
+    { id: 'Kore', name: 'Kore', language: 'multi', gender: 'female' },
+    { id: 'Fenrir', name: 'Fenrir', language: 'multi', gender: 'male' },
+    { id: 'Aoede', name: 'Aoede', language: 'multi', gender: 'female' },
+    { id: 'Leda', name: 'Leda', language: 'multi', gender: 'female' },
+    { id: 'Orus', name: 'Orus', language: 'multi', gender: 'male' },
+    { id: 'Zephyr', name: 'Zephyr', language: 'multi', gender: 'neutral' },
+  ],
 };
 
 export class GeminiLiveAdapter implements ProviderAdapter {
@@ -145,9 +277,24 @@ export class GeminiLiveAdapter implements ProviderAdapter {
   private resolveSetup: (() => void) | null = null;
   private rejectSetup: ((error: Error) => void) | null = null;
   private pendingResumeHandle: string | null = null;
+  private manualVadEnabled = false;
+  private manualVadActive = false;
+  private manualVadThreshold = GEMINI_MANUAL_VAD_DEFAULT_THRESHOLD;
+  private manualVadSilenceDurationMs = GEMINI_MANUAL_VAD_DEFAULT_SILENCE_MS;
+  private manualVadPrefixPaddingMs = GEMINI_MANUAL_VAD_DEFAULT_PREFIX_PADDING_MS;
+  private manualVadPendingSpeechMs = 0;
+  private manualVadPendingSilenceMs = 0;
+  private manualVadPrerollFrames: AudioFrame[] = [];
+  private manualVadPrerollDurationMs = 0;
+  private manualVadAutoEndTimer: ReturnType<typeof setTimeout> | null = null;
+  private turnCompletionEmitted = false;
 
   capabilities(): ProviderCapabilities {
     return GEMINI_CAPABILITIES;
+  }
+
+  configSchema(): ProviderConfigSchema {
+    return GEMINI_CONFIG_SCHEMA;
   }
 
   async connect(input: SessionInput): Promise<AudioNegotiation> {
@@ -159,8 +306,10 @@ export class GeminiLiveAdapter implements ProviderAdapter {
     this.activeUserText = '';
     this.activeAssistantItemId = null;
     this.activeAssistantText = '';
+    this.turnCompletionEmitted = false;
 
     const providerConfig = this.getProviderConfig(input);
+    this.resetManualVadState(input, providerConfig);
     const apiKey = providerConfig.apiKey;
     if (!apiKey) {
       throw new Error('Gemini adapter requires providerConfig.apiKey');
@@ -210,6 +359,12 @@ export class GeminiLiveAdapter implements ProviderAdapter {
   async disconnect(): Promise<void> {
     this.finalizeActiveUserTranscript();
     this.finalizeAssistantTranscript();
+    this.endManualActivity();
+    this.clearManualVadTimer();
+    this.manualVadPrerollFrames = [];
+    this.manualVadPrerollDurationMs = 0;
+    this.manualVadPendingSpeechMs = 0;
+    this.manualVadPendingSilenceMs = 0;
 
     if (!this.socket) {
       this.setState('idle');
@@ -231,14 +386,11 @@ export class GeminiLiveAdapter implements ProviderAdapter {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     const providerFrame =
       frame.sampleRate === GEMINI_INPUT_RATE ? frame : resamplePcm16Mono(frame, GEMINI_INPUT_RATE);
-    this.sendJson({
-      realtimeInput: {
-        audio: {
-          data: encodeBase64(providerFrame.data),
-          mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}`,
-        },
-      },
-    });
+    if (this.manualVadEnabled) {
+      this.sendAudioWithManualVad(providerFrame);
+      return;
+    }
+    this.sendRealtimeAudio(providerFrame);
   }
 
   sendText(text: string, options?: { defer?: boolean }): void {
@@ -334,7 +486,15 @@ export class GeminiLiveAdapter implements ProviderAdapter {
       void this.handleRawMessage(event.data);
     });
 
-    this.socket.addEventListener('close', () => {
+    this.socket.addEventListener('close', (event: CloseEvent) => {
+      if (this.rejectSetup) {
+        const reason = event.reason ? ` ${event.reason}` : '';
+        this.rejectSetup(
+          new Error(`Gemini websocket closed during setup (${event.code})${reason}`)
+        );
+        this.resolveSetup = null;
+        this.rejectSetup = null;
+      }
       this.setState('idle');
       this.events.emit('disconnected', 'socket_closed');
     });
@@ -379,6 +539,19 @@ export class GeminiLiveAdapter implements ProviderAdapter {
   }
 
   private handleEnvelope(message: GeminiEnvelope): void {
+    if (message.error) {
+      const code = typeof message.error.code === 'number' ? message.error.code : 'unknown';
+      const details = message.error.message ?? message.error.status ?? 'Unknown Gemini error';
+      const error = new Error(`Gemini Live error (${code}): ${details}`);
+      if (this.rejectSetup) {
+        this.rejectSetup(error);
+        this.resolveSetup = null;
+        this.rejectSetup = null;
+      }
+      this.events.emit('error', error);
+      return;
+    }
+
     if (message.setupComplete && this.resolveSetup) {
       this.resolveSetup();
       this.resolveSetup = null;
@@ -440,21 +613,23 @@ export class GeminiLiveAdapter implements ProviderAdapter {
       this.setState('listening');
     }
 
-    const inputText = content.inputTranscription?.text?.trim();
+    const inputText = content.inputTranscription?.text;
     if (inputText) {
       this.ensureActiveUserItem();
-      const delta = computeDelta(this.activeUserText, inputText);
-      this.activeUserText = inputText;
+      const next = mergeTranscript(this.activeUserText, inputText);
+      this.activeUserText = next.combined;
+      const delta = next.delta;
       if (delta) {
         this.events.emit('transcriptDelta', delta, 'user', this.activeUserItemId ?? undefined);
       }
     }
 
-    const outputText = content.outputTranscription?.text?.trim();
+    const outputText = content.outputTranscription?.text;
     if (outputText) {
       this.ensureActiveAssistantItem();
-      const delta = computeDelta(this.activeAssistantText, outputText);
-      this.activeAssistantText = outputText;
+      const next = mergeTranscript(this.activeAssistantText, outputText);
+      this.activeAssistantText = next.combined;
+      const delta = next.delta;
       if (delta) {
         this.events.emit(
           'transcriptDelta',
@@ -481,23 +656,16 @@ export class GeminiLiveAdapter implements ProviderAdapter {
         });
       }
 
-      if (part.text) {
-        this.ensureActiveAssistantItem();
-        this.activeAssistantText += part.text;
-        this.events.emit(
-          'transcriptDelta',
-          part.text,
-          'assistant',
-          this.activeAssistantItemId ?? undefined
-        );
-      }
     }
 
     if (content.turnComplete || content.generationComplete) {
       this.finalizeActiveUserTranscript();
       this.finalizeAssistantTranscript();
       this.setState('listening');
-      this.events.emit('turnComplete');
+      if (!this.turnCompletionEmitted) {
+        this.events.emit('turnComplete');
+        this.turnCompletionEmitted = true;
+      }
     }
   }
 
@@ -575,6 +743,7 @@ export class GeminiLiveAdapter implements ProviderAdapter {
 
   private ensureActiveUserItem(): void {
     if (this.activeUserItemId) return;
+    this.turnCompletionEmitted = false;
     this.activeUserItemId = this.nextUserItemId();
     this.activeUserText = '';
     this.events.emit('userItemCreated', this.activeUserItemId);
@@ -599,6 +768,7 @@ export class GeminiLiveAdapter implements ProviderAdapter {
 
   private ensureActiveAssistantItem(): void {
     if (this.activeAssistantItemId) return;
+    this.turnCompletionEmitted = false;
     this.finalizeActiveUserTranscript();
     this.activeAssistantItemId = this.nextAssistantItemId();
     this.activeAssistantText = '';
@@ -645,16 +815,186 @@ export class GeminiLiveAdapter implements ProviderAdapter {
     this.socket.send(JSON.stringify(payload));
   }
 
+  private resetManualVadState(input: SessionInput, config: GeminiProviderConfig): void {
+    const resolvedVad = this.resolveVadConfig(input, config);
+    this.manualVadEnabled = resolvedVad.mode === 'manual';
+    this.manualVadActive = false;
+    this.manualVadPendingSpeechMs = 0;
+    this.manualVadPendingSilenceMs = 0;
+    this.manualVadPrerollFrames = [];
+    this.manualVadPrerollDurationMs = 0;
+    this.clearManualVadTimer();
+
+    const threshold = resolvedVad.threshold;
+    this.manualVadThreshold =
+      typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0
+        ? threshold
+        : GEMINI_MANUAL_VAD_DEFAULT_THRESHOLD;
+
+    const silenceDurationMs = resolvedVad.silenceDurationMs;
+    this.manualVadSilenceDurationMs =
+      typeof silenceDurationMs === 'number' &&
+      Number.isFinite(silenceDurationMs) &&
+      silenceDurationMs > 0
+        ? silenceDurationMs
+        : GEMINI_MANUAL_VAD_DEFAULT_SILENCE_MS;
+
+    const prefixPaddingMs = resolvedVad.prefixPaddingMs;
+    this.manualVadPrefixPaddingMs =
+      typeof prefixPaddingMs === 'number' &&
+      Number.isFinite(prefixPaddingMs) &&
+      prefixPaddingMs >= 0
+        ? prefixPaddingMs
+        : GEMINI_MANUAL_VAD_DEFAULT_PREFIX_PADDING_MS;
+  }
+
+  private resolveVadConfig(
+    input: SessionInput,
+    config: GeminiProviderConfig
+  ): ResolvedGeminiVadConfig {
+    const inputMode = input.vad?.mode;
+    const mode: ResolvedGeminiVadConfig['mode'] =
+      inputMode === 'manual'
+        ? 'manual'
+        : inputMode === 'server'
+          ? 'server'
+          : config.vadMode ?? 'manual';
+
+    return {
+      mode,
+      silenceDurationMs: input.vad?.silenceDurationMs ?? config.vadSilenceDurationMs,
+      prefixPaddingMs: input.vad?.prefixPaddingMs ?? config.vadPrefixPaddingMs,
+      threshold: input.vad?.threshold ?? config.vadThreshold,
+      startOfSpeechSensitivity:
+        input.vad?.startOfSpeechSensitivity ?? config.vadStartOfSpeechSensitivity,
+      endOfSpeechSensitivity:
+        input.vad?.endOfSpeechSensitivity ?? config.vadEndOfSpeechSensitivity,
+    };
+  }
+
+  private sendAudioWithManualVad(frame: AudioFrame): void {
+    const frameDurationMs = computeFrameDurationMs(frame);
+    if (frameDurationMs <= 0) return;
+
+    const rms = computeRmsPcm16(frame.data);
+    const hasSpeech = rms >= this.manualVadThreshold;
+
+    if (!this.manualVadActive) {
+      this.enqueueManualPrerollFrame(frame, frameDurationMs);
+      this.manualVadPendingSpeechMs = hasSpeech ? this.manualVadPendingSpeechMs + frameDurationMs : 0;
+
+      if (this.manualVadPendingSpeechMs >= GEMINI_MANUAL_VAD_MIN_SPEECH_MS) {
+        this.manualVadPendingSpeechMs = 0;
+        this.startManualActivity();
+        this.flushManualPrerollFrames();
+        this.armManualVadTimer();
+      }
+      return;
+    }
+
+    this.sendRealtimeAudio(frame);
+
+    if (hasSpeech) {
+      this.manualVadPendingSilenceMs = 0;
+    } else {
+      this.manualVadPendingSilenceMs += frameDurationMs;
+      if (this.manualVadPendingSilenceMs >= this.manualVadSilenceDurationMs) {
+        this.endManualActivity();
+        return;
+      }
+    }
+
+    this.armManualVadTimer();
+  }
+
+  private enqueueManualPrerollFrame(frame: AudioFrame, frameDurationMs: number): void {
+    const copy: AudioFrame = {
+      data: frame.data.slice(0),
+      sampleRate: frame.sampleRate,
+      format: frame.format,
+    };
+    this.manualVadPrerollFrames.push(copy);
+    this.manualVadPrerollDurationMs += frameDurationMs;
+
+    while (
+      this.manualVadPrerollFrames.length > 1 &&
+      this.manualVadPrerollDurationMs > this.manualVadPrefixPaddingMs
+    ) {
+      const oldest = this.manualVadPrerollFrames.shift();
+      if (!oldest) break;
+      this.manualVadPrerollDurationMs -= computeFrameDurationMs(oldest);
+    }
+  }
+
+  private flushManualPrerollFrames(): void {
+    for (const frame of this.manualVadPrerollFrames) {
+      this.sendRealtimeAudio(frame);
+    }
+    this.manualVadPrerollFrames = [];
+    this.manualVadPrerollDurationMs = 0;
+  }
+
+  private startManualActivity(): void {
+    if (this.manualVadActive) return;
+    this.manualVadActive = true;
+    this.manualVadPendingSilenceMs = 0;
+    this.sendJson({
+      realtimeInput: {
+        activityStart: {},
+      },
+    });
+  }
+
+  private endManualActivity(): void {
+    if (!this.manualVadActive) return;
+    this.clearManualVadTimer();
+    this.manualVadActive = false;
+    this.manualVadPendingSpeechMs = 0;
+    this.manualVadPendingSilenceMs = 0;
+    this.sendJson({
+      realtimeInput: {
+        activityEnd: {},
+      },
+    });
+  }
+
+  private armManualVadTimer(): void {
+    if (!this.manualVadActive) return;
+    this.clearManualVadTimer();
+    this.manualVadAutoEndTimer = setTimeout(() => {
+      if (!this.manualVadActive) return;
+      this.endManualActivity();
+    }, this.manualVadSilenceDurationMs);
+  }
+
+  private clearManualVadTimer(): void {
+    if (!this.manualVadAutoEndTimer) return;
+    clearTimeout(this.manualVadAutoEndTimer);
+    this.manualVadAutoEndTimer = null;
+  }
+
+  private sendRealtimeAudio(frame: AudioFrame): void {
+    this.sendJson({
+      realtimeInput: {
+        audio: {
+          data: encodeBase64(frame.data),
+          mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}`,
+        },
+      },
+    });
+  }
+
   private buildSetupMessage(
     input: SessionInput,
     config: GeminiProviderConfig
   ): Record<string, unknown> {
+    const resolvedVad = this.resolveVadConfig(input, config);
     const declarations = (input.tools ?? []).map((tool) =>
       this.toFunctionDeclaration(tool)
     );
 
     const setup: Record<string, unknown> = {
-      model: input.model.startsWith('models/') ? input.model : `models/${input.model}`,
+      model: normalizeGeminiModel(input.model),
       generationConfig: {
         responseModalities: ['AUDIO'],
         temperature: input.temperature ?? 0.8,
@@ -665,7 +1005,9 @@ export class GeminiLiveAdapter implements ProviderAdapter {
               voiceName: input.voice,
             },
           },
-          languageCode: input.language,
+          // Note: languageCode is NOT set here — native-audio models reject
+          // non-English codes (e.g. "de") with WebSocket close 1007.
+          // Set language via systemInstruction instead.
         },
       },
       systemInstruction: {
@@ -673,8 +1015,25 @@ export class GeminiLiveAdapter implements ProviderAdapter {
       },
       realtimeInputConfig: {
         automaticActivityDetection: {
-          disabled: input.vad?.mode === 'manual',
-          silenceDurationMs: input.vad?.silenceDurationMs,
+          disabled: resolvedVad.mode === 'manual',
+          ...(resolvedVad.silenceDurationMs != null ? { silenceDurationMs: resolvedVad.silenceDurationMs } : {}),
+          ...(resolvedVad.prefixPaddingMs != null ? { prefixPaddingMs: resolvedVad.prefixPaddingMs } : {}),
+          ...(resolvedVad.startOfSpeechSensitivity != null
+            ? {
+                startOfSpeechSensitivity:
+                  resolvedVad.startOfSpeechSensitivity === 'high'
+                    ? 'START_SENSITIVITY_HIGH'
+                    : 'START_SENSITIVITY_LOW',
+              }
+            : {}),
+          ...(resolvedVad.endOfSpeechSensitivity != null
+            ? {
+                endOfSpeechSensitivity:
+                  resolvedVad.endOfSpeechSensitivity === 'high'
+                    ? 'END_SENSITIVITY_HIGH'
+                    : 'END_SENSITIVITY_LOW',
+              }
+            : {}),
         },
         activityHandling: config.noInterruption
           ? 'NO_INTERRUPTION'
@@ -705,18 +1064,15 @@ export class GeminiLiveAdapter implements ProviderAdapter {
       };
     }
 
-    if (config.proactivity) {
-      setup.proactivity = { proactiveAudio: true };
-    }
-
     return { setup };
   }
 
   private toFunctionDeclaration(tool: ToolDefinition): GeminiFunctionDeclaration {
+    const parameters = sanitizeGeminiSchema(tool.parameters);
     const declaration: GeminiFunctionDeclaration = {
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters,
+      ...(parameters ? { parameters } : {}),
     };
     if (tool.nonBlocking) {
       declaration.behavior = 'NON_BLOCKING';
@@ -739,6 +1095,30 @@ function parseSampleRate(mimeType?: string): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function normalizeGeminiModel(model: string): string {
+  const bare = model.startsWith('models/') ? model.slice('models/'.length) : model;
+  const normalized = GEMINI_MODEL_ALIASES[bare] ?? bare;
+  return `models/${normalized}`;
+}
+
+function computeFrameDurationMs(frame: AudioFrame): number {
+  if (!Number.isFinite(frame.sampleRate) || frame.sampleRate <= 0) return 0;
+  const samples = frame.data.byteLength / 2;
+  if (!Number.isFinite(samples) || samples <= 0) return 0;
+  return (samples / frame.sampleRate) * 1000;
+}
+
+function computeRmsPcm16(data: ArrayBuffer): number {
+  const pcm = new Int16Array(data);
+  if (pcm.length === 0) return 0;
+  let sumSquares = 0;
+  for (let i = 0; i < pcm.length; i += 1) {
+    const normalized = pcm[i]! / 32768;
+    sumSquares += normalized * normalized;
+  }
+  return Math.sqrt(sumSquares / pcm.length);
+}
+
 function encodeBase64(data: ArrayBuffer): string {
   const bytes = new Uint8Array(data);
   let binary = '';
@@ -757,12 +1137,24 @@ function decodeBase64(data: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-function computeDelta(previous: string, next: string): string {
-  if (!previous) return next;
-  if (next.startsWith(previous)) {
-    return next.slice(previous.length);
+function mergeTranscript(previous: string, nextChunk: string): { combined: string; delta: string } {
+  if (!previous) {
+    return { combined: nextChunk, delta: nextChunk };
   }
-  return next;
+
+  if (nextChunk.startsWith(previous)) {
+    const delta = nextChunk.slice(previous.length);
+    return { combined: nextChunk, delta };
+  }
+
+  if (previous.endsWith(nextChunk)) {
+    return { combined: previous, delta: '' };
+  }
+
+  return {
+    combined: `${previous}${nextChunk}`,
+    delta: nextChunk,
+  };
 }
 
 function toObject(value: unknown): Record<string, unknown> {
@@ -806,6 +1198,88 @@ function normalizeToolResponse(result: ToolCallResult): Record<string, unknown> 
     response.errorMessage = result.errorMessage;
   }
   return response;
+}
+
+function sanitizeGeminiSchema(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const sanitized = sanitizeGeminiValue(value);
+  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) return undefined;
+  return sanitized as Record<string, unknown>;
+}
+
+function sanitizeGeminiValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const sanitized = value
+      .map((item) => sanitizeGeminiValue(item))
+      .filter((item) => item !== undefined);
+    return sanitized.length > 0 ? sanitized : undefined;
+  }
+
+  if (value && typeof value === 'object') {
+    const input = value as Record<string, unknown>;
+    const output: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(input)) {
+      if (key.startsWith('$')) continue;
+      if (isGeminiUnsupportedSchemaKey(key)) continue;
+      const sanitizedChild = sanitizeGeminiValue(child);
+      if (sanitizedChild === undefined) continue;
+      output[key] = sanitizedChild;
+    }
+
+    normalizeGeminiSchemaNode(output);
+    if (Object.keys(output).length === 0) return undefined;
+    return output;
+  }
+
+  return value;
+}
+
+function isGeminiUnsupportedSchemaKey(key: string): boolean {
+  return (
+    key === 'additionalProperties' ||
+    key === 'unevaluatedProperties' ||
+    key === 'patternProperties' ||
+    key === 'propertyNames' ||
+    key === 'dependencies' ||
+    key === 'dependentRequired' ||
+    key === 'dependentSchemas' ||
+    key === 'if' ||
+    key === 'then' ||
+    key === 'else' ||
+    key === 'allOf' ||
+    key === 'not' ||
+    key === 'contains' ||
+    key === 'minContains' ||
+    key === 'maxContains'
+  );
+}
+
+function normalizeGeminiSchemaNode(node: Record<string, unknown>): void {
+  const rawType = node.type;
+  if (Array.isArray(rawType)) {
+    const typeEntries = rawType.filter((entry): entry is string => typeof entry === 'string');
+    if (typeEntries.length > 0) {
+      const nonNull = typeEntries.find((entry) => entry !== 'null');
+      if (nonNull) node.type = nonNull;
+      if (typeEntries.includes('null')) node.nullable = true;
+    } else {
+      delete node.type;
+    }
+  }
+
+  if (Array.isArray(node.required)) {
+    const required = node.required.filter((entry): entry is string => typeof entry === 'string');
+    const properties = node.properties;
+    if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+      const known = new Set(Object.keys(properties as Record<string, unknown>));
+      node.required = required.filter((entry) => known.has(entry));
+    } else {
+      node.required = required;
+    }
+    if ((node.required as string[]).length === 0) {
+      delete node.required;
+    }
+  }
 }
 
 function toGeminiScheduling(

@@ -106,20 +106,20 @@ export function useRuntime(profileName: string, providerOverride?: string): Runt
       dispatch({ type: 'STATE_CHANGE', state });
     });
 
-    mux.on('transcript', (text, role, itemId) => {
-      dispatch({ type: 'TRANSCRIPT', role, text, itemId });
+    mux.on('transcript', (text, role, itemId, order) => {
+      dispatch({ type: 'TRANSCRIPT', role, text, itemId, order });
     });
 
-    mux.on('transcriptDelta', (delta, role, itemId) => {
-      dispatch({ type: 'TRANSCRIPT_DELTA', role, delta, itemId });
+    mux.on('transcriptDelta', (delta, role, itemId, order) => {
+      dispatch({ type: 'TRANSCRIPT_DELTA', role, delta, itemId, order });
     });
 
-    mux.on('userItemCreated', (itemId) => {
-      dispatch({ type: 'USER_ITEM_CREATED', itemId });
+    mux.on('userItemCreated', (itemId, order) => {
+      dispatch({ type: 'USER_ITEM_CREATED', itemId, order });
     });
 
-    mux.on('assistantItemCreated', (itemId, previousItemId) => {
-      dispatch({ type: 'ASSISTANT_ITEM_CREATED', itemId, previousItemId });
+    mux.on('assistantItemCreated', (itemId, previousItemId, order) => {
+      dispatch({ type: 'ASSISTANT_ITEM_CREATED', itemId, previousItemId, order });
     });
 
     mux.on('latency', (metric) => {

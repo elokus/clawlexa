@@ -2,27 +2,55 @@ const API_BASE = process.env.PUBLIC_API_URL || '';
 
 export type VoiceMode = 'voice-to-voice' | 'decomposed';
 
+// Provider config schema types (mirrored from @voiceclaw/voice-runtime)
+export type ConfigFieldType = 'select' | 'number' | 'boolean' | 'string' | 'range';
+
+export interface ConfigFieldOption {
+  value: string;
+  label: string;
+}
+
+export interface ConfigFieldDescriptor {
+  key: string;
+  label: string;
+  type: ConfigFieldType;
+  group: 'vad' | 'advanced' | 'audio';
+  description?: string;
+  options?: ConfigFieldOption[];
+  min?: number;
+  max?: number;
+  step?: number;
+  defaultValue?: string | number | boolean;
+  dependsOn?: { field: string; value: string | boolean };
+}
+
+export interface ProviderVoiceEntry {
+  id: string;
+  name: string;
+  language?: string;
+  gender?: string;
+}
+
+export interface ProviderConfigSchema {
+  providerId: string;
+  displayName: string;
+  fields: ConfigFieldDescriptor[];
+  voices?: ProviderVoiceEntry[];
+}
+
 export interface VoiceConfigDocument {
   voice: {
     mode: VoiceMode;
     language: string;
     profileOverrides: Record<string, { mode?: VoiceMode; voice?: string; provider?: string }>;
     voiceToVoice: {
-      provider: 'openai-realtime' | 'gemini-live' | 'ultravox-realtime' | 'pipecat-rtvi';
-      model: string;
-      voice: string;
-      authProfile?: string;
-      ultravoxModel: string;
-      geminiModel: string;
-      geminiVoice: string;
-      pipecatServerUrl: string;
-      pipecatTransport: 'websocket' | 'webrtc';
-      pipecatBotId?: string;
+      provider: string;
+      [key: string]: unknown;
     };
     decomposed: {
-      stt: { provider: 'deepgram' | 'openai'; model: string; language: string; authProfile?: string };
-      llm: { provider: 'openai' | 'openrouter'; model: string; authProfile?: string };
-      tts: { provider: 'deepgram' | 'openai'; model: string; voice: string; authProfile?: string };
+      stt: { provider: string; [key: string]: unknown };
+      llm: { provider: string; [key: string]: unknown };
+      tts: { provider: string; [key: string]: unknown };
     };
     turn: {
       strategy: 'provider-native' | 'layered';
@@ -37,12 +65,13 @@ export interface VoiceConfigDocument {
         longReprompt: string;
       };
     };
+    providerSettings?: Record<string, Record<string, unknown>>;
   };
 }
 
 export interface AuthProfilesDocument {
   profiles: Record<string, {
-    provider: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox';
+    provider: string;
     type: 'api-key' | 'oauth';
     enabled: boolean;
     apiKey?: string;
@@ -53,27 +82,58 @@ export interface AuthProfilesDocument {
       scopes?: string[];
     };
   }>;
-  defaults: Partial<Record<'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox', string>>;
+  defaults: Partial<Record<string, string>>;
+}
+
+export interface RuntimeCatalogEntry {
+  models?: string[];
+  voices?: ProviderVoiceEntry[];
+}
+
+export interface RuntimeFieldBinding {
+  path: string;
+  label: string;
+  kind: 'model' | 'voice' | 'auth' | 'string' | 'select';
+  catalogKey?: string;
+  placeholder?: string;
+  options?: Array<{ value: string; label: string }>;
+}
+
+export interface RuntimeRealtimeProviderManifest {
+  id: string;
+  label: string;
+  fields: RuntimeFieldBinding[];
+}
+
+export interface RuntimeDecomposedStageProviderManifest {
+  id: string;
+  label: string;
+  modelCatalogKey?: string;
+  voiceCatalogKey?: string;
+}
+
+export interface RuntimeDecomposedStageManifest {
+  id: 'stt' | 'llm' | 'tts';
+  label: string;
+  providerPath: string;
+  modelPath: string;
+  voicePath?: string;
+  authPath: string;
+  providers: RuntimeDecomposedStageProviderManifest[];
+}
+
+export interface RuntimeConfigManifest {
+  modes: VoiceMode[];
+  realtimeProviderPath: string;
+  realtimeProviders: RuntimeRealtimeProviderManifest[];
+  decomposedStages: RuntimeDecomposedStageManifest[];
 }
 
 export interface VoiceCatalog {
-  openai: {
-    realtimeModels: string[];
-    textModels: string[];
-    voices: string[];
-  };
-  deepgram: {
-    sttModels: string[];
-    ttsVoices: string[];
-  };
-  ultravox: {
-    models: string[];
-    voices: Array<{ voiceId: string; name: string; primaryLanguage?: string }>;
-  };
-  gemini: {
-    models: string[];
-    voices: string[];
-  };
+  manifest: RuntimeConfigManifest;
+  providerCatalog: Record<string, RuntimeCatalogEntry>;
+  providerSchemas?: Record<string, ProviderConfigSchema>;
+  authProfileNames?: string[];
 }
 
 export async function fetchVoiceConfig(): Promise<VoiceConfigDocument> {
@@ -159,7 +219,7 @@ export async function saveAuthProfiles(config: AuthProfilesDocument): Promise<Au
 }
 
 export async function testAuthProfile(input: {
-  provider?: 'openai' | 'openrouter' | 'google' | 'deepgram' | 'ultravox';
+  provider?: string;
   authProfileId?: string;
 }): Promise<{ provider: string; ok: boolean; status: number; message: string }> {
   const res = await fetch(`${API_BASE}/api/config/auth-profiles/test`, {

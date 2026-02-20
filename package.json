@@ -5,6 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck:voice-runtime": "bunx tsc -p packages/voice-runtime/tsconfig.json --noEmit"
+    "typecheck:voice-runtime": "bunx tsc -p packages/voice-runtime/tsconfig.json --noEmit",
+    "check:runtime-boundary": "bun scripts/check-runtime-provider-boundary.ts"
   }
 }

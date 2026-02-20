@@ -7,6 +7,7 @@ import type {
   EventHandler,
   ProviderAdapter,
   ProviderCapabilities,
+  ProviderConfigSchema,
   SessionInput,
   ToolCallContext,
   ToolCallResult,
@@ -112,6 +113,49 @@ const ULTRAVOX_CAPABILITIES: ProviderCapabilities = {
   wordLevelTimestamps: false,
 };
 
+const ULTRAVOX_CONFIG_SCHEMA: ProviderConfigSchema = {
+  providerId: 'ultravox-ws',
+  displayName: 'Ultravox Realtime',
+  fields: [
+    {
+      key: 'vad.turnEndpointDelay',
+      label: 'Turn Endpoint Delay',
+      type: 'string',
+      group: 'vad',
+      defaultValue: '0.384s',
+      description: 'Time agent waits after user stops speaking before responding. Multiples of 32ms.',
+    },
+    {
+      key: 'vad.minimumTurnDuration',
+      label: 'Minimum Turn Duration',
+      type: 'string',
+      group: 'vad',
+      defaultValue: '0s',
+      description: 'Minimum speech duration to count as a valid turn. Longer values filter brief noise.',
+    },
+    {
+      key: 'vad.minimumInterruptionDuration',
+      label: 'Minimum Interruption Duration',
+      type: 'string',
+      group: 'vad',
+      defaultValue: '0.09s',
+      description: 'Minimum speech to interrupt the agent while speaking.',
+    },
+    {
+      key: 'vad.frameActivationThreshold',
+      label: 'Frame Activation Threshold',
+      type: 'range',
+      group: 'vad',
+      min: 0.1,
+      max: 1.0,
+      step: 0.05,
+      defaultValue: 0.1,
+      description: 'Threshold for considering a 32ms frame as speech. Higher = less sensitive.',
+    },
+  ],
+  // Ultravox voices are fetched dynamically from the API — no static list here
+};
+
 export class UltravoxWsAdapter implements ProviderAdapter {
   readonly id = 'ultravox-ws' as const;
 
@@ -131,6 +175,10 @@ export class UltravoxWsAdapter implements ProviderAdapter {
 
   capabilities(): ProviderCapabilities {
     return ULTRAVOX_CAPABILITIES;
+  }
+
+  configSchema(): ProviderConfigSchema {
+    return ULTRAVOX_CONFIG_SCHEMA;
   }
 
   async connect(input: SessionInput): Promise<AudioNegotiation> {
@@ -174,6 +222,18 @@ export class UltravoxWsAdapter implements ProviderAdapter {
         },
       },
     };
+
+    // Ultravox VAD settings from providerConfig (pass-through from providerSettings)
+    const vadKeys = ['turnEndpointDelay', 'minimumTurnDuration', 'minimumInterruptionDuration', 'frameActivationThreshold'] as const;
+    const vadSettings: Record<string, unknown> = {};
+    for (const key of vadKeys) {
+      const cfgKey = `vad.${key}`;
+      const val = (providerConfig as Record<string, unknown>)[cfgKey] ?? (providerConfig as Record<string, unknown>)[key];
+      if (val != null) vadSettings[key] = val;
+    }
+    if (Object.keys(vadSettings).length > 0) {
+      payload.vadSettings = vadSettings;
+    }
 
     const selectedTools = this.toSelectedTools(input.tools ?? []);
     if (selectedTools.length > 0) {
@@ -500,7 +560,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
         this.events.emit('userItemCreated', itemId);
         accumulator.announced = true;
       } else if (hasMeaningfulText) {
-        this.events.emit('assistantItemCreated', itemId);
+        this.events.emit('assistantItemCreated', itemId, this.resolveAssistantPreviousItemId(ordinal));
         accumulator.announced = true;
       }
     }
@@ -538,7 +598,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
         if (role === 'user') {
           this.events.emit('userItemCreated', itemId);
         } else {
-          this.events.emit('assistantItemCreated', itemId);
+          this.events.emit('assistantItemCreated', itemId, this.resolveAssistantPreviousItemId(ordinal));
         }
         accumulator.announced = true;
       }
@@ -624,6 +684,22 @@ export class UltravoxWsAdapter implements ProviderAdapter {
       return 'assistant';
     }
     return null;
+  }
+
+  private resolveAssistantPreviousItemId(ordinal: number): string | undefined {
+    if (!Number.isFinite(ordinal) || ordinal <= 0) {
+      return undefined;
+    }
+
+    const previousOrdinal = ordinal - 1;
+    const previous = this.transcriptsByOrdinal.get(previousOrdinal);
+    if (previous) {
+      return `${previous.role}-${previousOrdinal}`;
+    }
+
+    // Ultravox can emit assistant transcript activity before user transcript finalization.
+    // Link to the expected prior user item so runtime ordering can stay provider-agnostic.
+    return `user-${previousOrdinal}`;
   }
 
   private setState(next: VoiceState): void {

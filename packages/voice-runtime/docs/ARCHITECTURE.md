@@ -35,6 +35,12 @@ Expose one stable API for voice sessions while keeping provider specifics intern
 - `ProviderCapabilities`: explicit feature matrix for safe runtime behavior.
 - `provider-config` parsers: canonical provider config validation/normalization shared by app and adapters.
 
+## Boundary Enforcement
+
+- Provider-specific behavior is allowed only in the provider plane (adapters + runtime internals).
+- Control/media plane consumers must remain provider-agnostic and consume only normalized runtime contracts.
+- Cross-provider consistency is validated via shared contract/live tests; provider-specific tests are limited to adapter-level coverage.
+
 ## Provider Config Source Of Truth
 
 - `packages/voice-runtime/src/provider-config.ts` owns provider config schemas and runtime validation.

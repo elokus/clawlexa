@@ -31,7 +31,7 @@ src/
 ├── logging/        # Per-session JSONL debug logs
 ├── processes/      # ProcessManager (async background task tracking)
 ├── prompts/        # Centralized prompt directory with versioning
-├── realtime/       # OpenAI Realtime SDK + AI SDK adapter
+├── realtime/       # Runtime event bridge + AI SDK adapter
 ├── scheduler/      # Timer/reminder scheduler
 ├── subagents/      # CLI orchestrator, web search, background tasks
 ├── tools/          # Voice agent tools (todo, timer, light, search, dev session)

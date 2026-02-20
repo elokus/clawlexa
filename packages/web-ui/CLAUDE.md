@@ -119,6 +119,15 @@ usePromptsState()                // { prompts, selectedPromptId, promptContent, 
 | `cli_session_deleted` | Server→Client | Terminal session cleanup |
 | `error` | Server→Client | Error notification |
 
+## Voice Runtime Config Boundary
+
+- Provider protocol logic must stay in `@voiceclaw/voice-runtime`.
+- `web-ui` should render runtime config from backend-provided runtime metadata:
+  - manifest (`catalog.manifest`)
+  - provider catalog entries (`catalog.providerCatalog`)
+  - provider schemas (`catalog.providerSchemas`)
+- `web-ui` must not hardcode provider routing/ordering quirks; if a provider differs, fix runtime normalization instead.
+
 ### Client → Server
 
 | Type | Purpose |
