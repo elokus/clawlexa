@@ -261,4 +261,32 @@ describe('VoiceSessionImpl ordering metadata', () => {
 
     await session.close();
   });
+
+  test('preserves adapter-provided order hints when events arrive out of order', async () => {
+    const adapter = new FakeAdapter();
+    const session = createSession(adapter);
+    const events: Array<{ kind: 'user' | 'assistant'; itemId: string; order?: number }> = [];
+
+    session.on('userItemCreated', (itemId, order) => {
+      events.push({ kind: 'user', itemId, order });
+    });
+    session.on('assistantItemCreated', (itemId, _previousItemId, order) => {
+      events.push({ kind: 'assistant', itemId, order });
+    });
+
+    await session.connect();
+
+    // Provider emits assistant turn before delayed user transcript.
+    adapter.emit('assistantItemCreated', 'assistant-2', 'user-1', 3);
+    adapter.emit('transcriptDelta', 'Ja', 'assistant', 'assistant-2', 3);
+    adapter.emit('userItemCreated', 'user-1', 2);
+    adapter.emit('transcript', 'Hi', 'user', 'user-1', 2);
+
+    expect(events).toEqual([
+      { kind: 'assistant', itemId: 'assistant-2', order: 3 },
+      { kind: 'user', itemId: 'user-1', order: 2 },
+    ]);
+
+    await session.close();
+  });
 });

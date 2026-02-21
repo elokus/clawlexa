@@ -223,10 +223,10 @@ describe('UltravoxWsAdapter transcript normalization', () => {
 
   test('links assistant placeholder to expected prior user item when assistant arrives first', async () => {
     const adapter = new UltravoxWsAdapter();
-    const assistantItems: Array<{ itemId: string; previousItemId?: string }> = [];
+    const assistantItems: Array<{ itemId: string; previousItemId?: string; order?: number }> = [];
 
-    adapter.on('assistantItemCreated', (itemId, previousItemId) => {
-      assistantItems.push({ itemId, previousItemId });
+    adapter.on('assistantItemCreated', (itemId, previousItemId, order) => {
+      assistantItems.push({ itemId, previousItemId, order });
     });
 
     const connectPromise = adapter.connect(createInput());
@@ -239,6 +239,30 @@ describe('UltravoxWsAdapter transcript normalization', () => {
     socket?.emitJson({ type: 'transcript', role: 'assistant', ordinal: 2, delta: 'Ja' });
 
     await waitFor(() => assistantItems.length === 1);
-    expect(assistantItems).toEqual([{ itemId: 'assistant-2', previousItemId: 'user-1' }]);
+    expect(assistantItems).toEqual([{ itemId: 'assistant-2', previousItemId: 'user-1', order: 3 }]);
+  });
+
+  test('does not chain assistant placeholder to non-announced assistant scaffold ordinal', async () => {
+    const adapter = new UltravoxWsAdapter();
+    const assistantItems: Array<{ itemId: string; previousItemId?: string; order?: number }> = [];
+
+    adapter.on('assistantItemCreated', (itemId, previousItemId, order) => {
+      assistantItems.push({ itemId, previousItemId, order });
+    });
+
+    const connectPromise = adapter.connect(createInput());
+    await waitFor(() => sockets.length === 1);
+    const socket = sockets[0];
+    expect(socket).toBeDefined();
+    socket?.open();
+    await connectPromise;
+
+    // Reproduces live Ultravox behavior: assistant scaffold ordinal (whitespace only)
+    // appears before the meaningful assistant item of the interrupted turn.
+    socket?.emitJson({ type: 'transcript', role: 'assistant', ordinal: 1, delta: '\n' });
+    socket?.emitJson({ type: 'transcript', role: 'assistant', ordinal: 2, delta: 'Ja' });
+
+    await waitFor(() => assistantItems.length === 1);
+    expect(assistantItems).toEqual([{ itemId: 'assistant-2', previousItemId: 'user-1', order: 3 }]);
   });
 });

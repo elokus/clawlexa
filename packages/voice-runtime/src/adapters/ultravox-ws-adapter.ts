@@ -522,6 +522,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
 
     const ordinal = typeof message.ordinal === 'number' ? message.ordinal : -1;
     const itemId = ordinal >= 0 ? `${role}-${ordinal}` : `${role}-${Date.now()}`;
+    const order = ordinal >= 0 ? ordinal + 1 : undefined;
     const delta = typeof message.delta === 'string' ? message.delta : '';
     const text = typeof message.text === 'string' ? message.text : '';
 
@@ -557,10 +558,15 @@ export class UltravoxWsAdapter implements ProviderAdapter {
     const hasMeaningfulText = nextText.trim().length > 0;
     if (accumulator && !accumulator.announced) {
       if (role === 'user') {
-        this.events.emit('userItemCreated', itemId);
+        this.events.emit('userItemCreated', itemId, order);
         accumulator.announced = true;
       } else if (hasMeaningfulText) {
-        this.events.emit('assistantItemCreated', itemId, this.resolveAssistantPreviousItemId(ordinal));
+        this.events.emit(
+          'assistantItemCreated',
+          itemId,
+          this.resolveAssistantPreviousItemId(ordinal),
+          order
+        );
         accumulator.announced = true;
       }
     }
@@ -572,7 +578,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
           emittedDelta = nextText.replace(/^\s+/, '');
         }
         if (emittedDelta) {
-          this.events.emit('transcriptDelta', emittedDelta, role, itemId);
+          this.events.emit('transcriptDelta', emittedDelta, role, itemId, order);
         }
       } else if (text && message.final !== true && accumulator?.announced) {
         let computedDelta =
@@ -581,7 +587,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
           computedDelta = text.replace(/^\s+/, '');
         }
         if (computedDelta) {
-          this.events.emit('transcriptDelta', computedDelta, role, itemId);
+          this.events.emit('transcriptDelta', computedDelta, role, itemId, order);
         }
       }
     }
@@ -596,9 +602,14 @@ export class UltravoxWsAdapter implements ProviderAdapter {
 
       if (accumulator && !accumulator.announced) {
         if (role === 'user') {
-          this.events.emit('userItemCreated', itemId);
+          this.events.emit('userItemCreated', itemId, order);
         } else {
-          this.events.emit('assistantItemCreated', itemId, this.resolveAssistantPreviousItemId(ordinal));
+          this.events.emit(
+            'assistantItemCreated',
+            itemId,
+            this.resolveAssistantPreviousItemId(ordinal),
+            order
+          );
         }
         accumulator.announced = true;
       }
@@ -611,7 +622,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
       };
       this.history.push(historyItem);
       this.events.emit('historyUpdated', [...this.history]);
-      this.events.emit('transcript', finalText, role, itemId);
+      this.events.emit('transcript', finalText, role, itemId, order);
     }
   }
 
@@ -694,11 +705,18 @@ export class UltravoxWsAdapter implements ProviderAdapter {
     const previousOrdinal = ordinal - 1;
     const previous = this.transcriptsByOrdinal.get(previousOrdinal);
     if (previous) {
-      return `${previous.role}-${previousOrdinal}`;
+      if (previous.role === 'user') {
+        return `user-${previousOrdinal}`;
+      }
+      // Ignore assistant scaffold ordinals (whitespace/newline only) as chain anchors.
+      // They are protocol artifacts and can invert conversation ordering.
+      if (previous.announced && previous.text.trim().length > 0) {
+        return `assistant-${previousOrdinal}`;
+      }
     }
 
     // Ultravox can emit assistant transcript activity before user transcript finalization.
-    // Link to the expected prior user item so runtime ordering can stay provider-agnostic.
+    // Anchor to the expected preceding user ordinal.
     return `user-${previousOrdinal}`;
   }
 

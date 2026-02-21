@@ -7,15 +7,18 @@ Expose one stable API for voice sessions while keeping provider specifics intern
 ## Three-Plane Model
 
 1. Control plane:
+
 - Stable session API (`createSession`, `connect`, `sendAudio`, `sendText`, `interrupt`).
 - Capability-first feature gating (`ProviderCapabilities`).
 
-2. Media plane:
+1. Media plane:
+
 - Client transport abstraction (`ClientTransport`).
 - Runtime-level audio resampling when client and provider sample rates differ.
 - Playback-position access for interruption accuracy.
 
-3. Provider plane:
+1. Provider plane:
+
 - Provider-specific protocol/SDK handling inside adapters.
 - No provider SDK types leaked into `voice-agent`.
 
@@ -56,3 +59,4 @@ Expose one stable API for voice sessions while keeping provider specifics intern
 - `packages/voice-runtime/src/provider-config.ts`
 - `packages/voice-runtime/src/media/resample-pcm16.ts`
 - `packages/voice-runtime/src/runtime/interruption-tracker.ts`
+

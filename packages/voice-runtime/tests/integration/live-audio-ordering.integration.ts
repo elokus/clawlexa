@@ -379,6 +379,7 @@ function assertLiveRun(providerId: LiveProviderId, turns: TurnManifestEntry[], r
   expect(run.assistantTexts.length).toBeGreaterThan(0);
 
   assertUserTranscriptsMatchInOrder(turns, run.userFinals, USER_TRANSCRIPT_MATCH_MIN);
+  assertUserTurnAssistantOrderInTimeline(turns, run.timeline, USER_TRANSCRIPT_MATCH_MIN);
 
   const thirdTurn = turns[2];
   if (!thirdTurn) {
@@ -438,6 +439,66 @@ function assertLiveRun(providerId: LiveProviderId, turns: TurnManifestEntry[], r
 
   // Keep provider in failure output so major-iteration reports are actionable.
   expect(providerId.length).toBeGreaterThan(0);
+}
+
+function assertUserTurnAssistantOrderInTimeline(
+  turns: TurnManifestEntry[],
+  timeline: TimelineEvent[],
+  minimumRatio: number
+): void {
+  const userFinals = timeline.filter((entry) => entry.kind === 'user_final');
+  let cursor = 0;
+
+  for (const turn of turns) {
+    let matchedEvent: TimelineEvent | null = null;
+    let matchedUserIndex = -1;
+    let matchedRatio = 0;
+
+    for (let index = cursor; index < userFinals.length; index += 1) {
+      const candidate = userFinals[index];
+      const ratio = tokenMatchRatio(turn.transcript, candidate?.text ?? '');
+      if (ratio >= minimumRatio) {
+        matchedEvent = candidate ?? null;
+        matchedUserIndex = index;
+        matchedRatio = ratio;
+        break;
+      }
+      if (ratio > matchedRatio) {
+        matchedRatio = ratio;
+      }
+    }
+
+    if (!matchedEvent || matchedUserIndex < 0) {
+      throw new Error(
+        `Could not locate ordered user turn for ${turn.id} in timeline. ` +
+          `bestRatio=${matchedRatio.toFixed(2)} min=${minimumRatio.toFixed(2)}`
+      );
+    }
+
+    cursor = matchedUserIndex + 1;
+
+    if (typeof matchedEvent.order !== 'number' || !Number.isFinite(matchedEvent.order)) {
+      continue;
+    }
+
+    const nextUserTimelineIndex = userFinals[cursor]?.index ?? Number.POSITIVE_INFINITY;
+    const assistantEvent = timeline.find(
+      (entry) =>
+        entry.index > matchedEvent.index &&
+        entry.index < nextUserTimelineIndex &&
+        (entry.kind === 'assistant_delta' || entry.kind === 'assistant_final')
+    );
+
+    if (!assistantEvent) {
+      throw new Error(`No assistant response found after matched user turn ${turn.id}`);
+    }
+
+    if (typeof assistantEvent.order !== 'number' || !Number.isFinite(assistantEvent.order)) {
+      continue;
+    }
+
+    expect(assistantEvent.order).toBeGreaterThan(matchedEvent.order);
+  }
 }
 
 function assertUserTranscriptsMatchInOrder(

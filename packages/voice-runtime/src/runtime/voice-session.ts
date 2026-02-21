@@ -294,7 +294,7 @@ export class VoiceSessionImpl implements VoiceSession {
       this.events.emit('audioInterrupted');
     });
 
-    this.adapter.on('transcript', (text, role, itemId) => {
+    this.adapter.on('transcript', (text, role, itemId, orderHint) => {
       if (role === 'assistant') {
         this.interruptionTracker.trackAssistantTranscript(text, itemId);
         if (!this.shouldEmitAssistantTranscript(itemId)) {
@@ -304,11 +304,11 @@ export class VoiceSessionImpl implements VoiceSession {
           this.assistantDeltaItemIds.delete(itemId);
         }
       }
-      const order = this.resolveConversationOrder(role, itemId);
+      const order = this.resolveConversationOrder(role, itemId, orderHint);
       this.events.emit('transcript', text, role, itemId, order);
     });
 
-    this.adapter.on('transcriptDelta', (delta, role, itemId) => {
+    this.adapter.on('transcriptDelta', (delta, role, itemId, orderHint) => {
       if (role === 'assistant') {
         this.interruptionTracker.trackAssistantDelta(delta, itemId);
         this.assistantDeltaSeenThisTurn = true;
@@ -316,21 +316,21 @@ export class VoiceSessionImpl implements VoiceSession {
           this.assistantDeltaItemIds.add(itemId);
         }
       }
-      const order = this.resolveConversationOrder(role, itemId);
+      const order = this.resolveConversationOrder(role, itemId, orderHint);
       this.events.emit('transcriptDelta', delta, role, itemId, order);
     });
 
-    this.adapter.on('userItemCreated', (itemId) => {
-      const order = this.getOrCreateConversationOrder(itemId);
+    this.adapter.on('userItemCreated', (itemId, orderHint) => {
+      const order = this.getOrCreateConversationOrder(itemId, orderHint);
       this.lastUserConversationOrder = order;
       this.events.emit('userItemCreated', itemId, order);
     });
 
-    this.adapter.on('assistantItemCreated', (itemId, previousItemId) => {
+    this.adapter.on('assistantItemCreated', (itemId, previousItemId, orderHint) => {
       this.interruptionTracker.beginAssistantItem(itemId);
       this.assistantDeltaSeenThisTurn = false;
       this.assistantDeltaItemIds.delete(itemId);
-      const order = this.getOrCreateConversationOrderAfter(itemId, previousItemId);
+      const order = this.getOrCreateConversationOrderAfter(itemId, previousItemId, orderHint);
       this.lastAssistantConversationOrder = order;
       this.events.emit('assistantItemCreated', itemId, previousItemId, order);
     });
@@ -388,12 +388,12 @@ export class VoiceSessionImpl implements VoiceSession {
     this.assistantDeltaSeenThisTurn = false;
   }
 
-  private getOrCreateConversationOrder(itemId: string): number {
+  private getOrCreateConversationOrder(itemId: string, orderHint?: number): number {
     const existing = this.conversationOrderByItemId.get(itemId);
     if (existing !== undefined) {
       return existing;
     }
-    const allocated = this.nextConversationOrder;
+    const allocated = this.allocateConversationOrder(orderHint);
     this.nextConversationOrder = Math.max(this.nextConversationOrder, allocated + 1);
     this.conversationOrderByItemId.set(itemId, allocated);
     return allocated;
@@ -401,19 +401,26 @@ export class VoiceSessionImpl implements VoiceSession {
 
   private getOrCreateConversationOrderAfter(
     itemId: string,
-    previousItemId?: string
+    previousItemId?: string,
+    orderHint?: number
   ): number {
     const existing = this.conversationOrderByItemId.get(itemId);
     if (existing !== undefined) {
       return existing;
     }
 
-    let allocated = this.nextConversationOrder;
+    let minOrder = 1;
     if (previousItemId) {
-      const previousOrder = this.getOrCreateConversationOrder(previousItemId);
-      allocated = Math.max(allocated, previousOrder + 1);
+      const previousOrder = this.conversationOrderByItemId.get(previousItemId);
+      if (typeof previousOrder === 'number') {
+        minOrder = Math.max(minOrder, previousOrder + 1);
+      } else if (!this.isValidConversationOrder(orderHint)) {
+        const createdPreviousOrder = this.getOrCreateConversationOrder(previousItemId);
+        minOrder = Math.max(minOrder, createdPreviousOrder + 1);
+      }
     }
 
+    const allocated = this.allocateConversationOrder(orderHint, minOrder);
     this.nextConversationOrder = Math.max(this.nextConversationOrder, allocated + 1);
     this.conversationOrderByItemId.set(itemId, allocated);
     return allocated;
@@ -421,10 +428,11 @@ export class VoiceSessionImpl implements VoiceSession {
 
   private resolveConversationOrder(
     role: 'user' | 'assistant',
-    itemId?: string
+    itemId?: string,
+    orderHint?: number
   ): number | undefined {
     if (itemId) {
-      const order = this.getOrCreateConversationOrder(itemId);
+      const order = this.getOrCreateConversationOrder(itemId, orderHint);
       if (role === 'assistant') {
         this.lastAssistantConversationOrder = order;
       } else {
@@ -435,6 +443,43 @@ export class VoiceSessionImpl implements VoiceSession {
     return role === 'assistant'
       ? this.lastAssistantConversationOrder
       : this.lastUserConversationOrder;
+  }
+
+  private allocateConversationOrder(orderHint?: number, minOrder = 1): number {
+    const normalizedHint = this.normalizeConversationOrder(orderHint);
+    if (
+      typeof normalizedHint === 'number' &&
+      normalizedHint >= minOrder &&
+      !this.isConversationOrderTaken(normalizedHint)
+    ) {
+      return normalizedHint;
+    }
+
+    let candidate = Math.max(this.nextConversationOrder, minOrder);
+    while (this.isConversationOrderTaken(candidate)) {
+      candidate += 1;
+    }
+    return candidate;
+  }
+
+  private isConversationOrderTaken(order: number): boolean {
+    for (const existingOrder of this.conversationOrderByItemId.values()) {
+      if (existingOrder === order) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isValidConversationOrder(order: number | undefined): boolean {
+    return typeof order === 'number' && Number.isInteger(order) && order >= 1;
+  }
+
+  private normalizeConversationOrder(order: number | undefined): number | undefined {
+    if (!this.isValidConversationOrder(order)) {
+      return undefined;
+    }
+    return order;
   }
 
   private resetConversationOrderState(): void {
