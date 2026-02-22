@@ -31,6 +31,7 @@ export interface OpenRouterEventMapperState {
   previousReasoning: string;
   emittedToolCalls: Set<string>;
   emittedToolResults: Set<string>;
+  emittedStepStarts: number;
 }
 
 export function createOpenRouterEventMapperState(): OpenRouterEventMapperState {
@@ -39,6 +40,7 @@ export function createOpenRouterEventMapperState(): OpenRouterEventMapperState {
     previousReasoning: '',
     emittedToolCalls: new Set<string>(),
     emittedToolResults: new Set<string>(),
+    emittedStepStarts: 0,
   };
 }
 
@@ -49,6 +51,65 @@ function computeDelta(previous: string, current: string): string {
     return current.slice(previous.length);
   }
   return current;
+}
+
+function selectBestSnapshot(candidates: string[], previous: string): string {
+  if (candidates.length === 0) return '';
+
+  let longest = '';
+  let bestGrowing = '';
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+
+    if (candidate.length > longest.length) {
+      longest = candidate;
+    }
+
+    if (candidate.startsWith(previous) && candidate.length >= previous.length) {
+      if (candidate.length > bestGrowing.length) {
+        bestGrowing = candidate;
+      }
+    }
+  }
+
+  return bestGrowing || longest;
+}
+
+function getStepStartCount(uiMessage: OpenRouterUiMessage): number {
+  let count = 0;
+  for (const part of uiMessage.parts) {
+    if (part.type === 'step-start') {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function getTextSnapshotCandidates(uiMessage: OpenRouterUiMessage): string[] {
+  const segments: string[] = [];
+  for (const part of uiMessage.parts) {
+    if (part.type === 'text' && part.text) {
+      segments.push(part.text);
+    }
+  }
+  if (segments.length > 1) {
+    segments.push(segments.join(''));
+  }
+  return segments;
+}
+
+function getReasoningSnapshotCandidates(uiMessage: OpenRouterUiMessage): string[] {
+  const segments: string[] = [];
+  for (const part of uiMessage.parts) {
+    if (part.type !== 'reasoning') continue;
+    const text = part.text ?? part.reasoning ?? '';
+    if (text) segments.push(text);
+  }
+  if (segments.length > 1) {
+    segments.push(segments.join(''));
+  }
+  return segments;
 }
 
 function mapToolPartToEvents(
@@ -101,33 +162,58 @@ export function mapOpenRouterUiMessageToEvents(
 ): LlmEvent[] {
   const events: LlmEvent[] = [];
 
+  const stepStartCount = getStepStartCount(uiMessage);
+  let pendingStepStarts = Math.max(0, stepStartCount - state.emittedStepStarts);
+  if (stepStartCount > state.emittedStepStarts) {
+    state.emittedStepStarts = stepStartCount;
+  }
+
+  let reasoningDelta = '';
+  const reasoningCandidates = getReasoningSnapshotCandidates(uiMessage);
+  if (reasoningCandidates.length > 0) {
+    const currentReasoning = selectBestSnapshot(reasoningCandidates, state.previousReasoning);
+    reasoningDelta = computeDelta(state.previousReasoning, currentReasoning);
+    state.previousReasoning = currentReasoning;
+  }
+
+  let textDelta = '';
+  const textCandidates = getTextSnapshotCandidates(uiMessage);
+  if (textCandidates.length > 0) {
+    const currentText = selectBestSnapshot(textCandidates, state.previousText);
+    textDelta = computeDelta(state.previousText, currentText);
+    state.previousText = currentText;
+  }
+
+  let emittedReasoning = false;
+  let emittedText = false;
+
   for (const part of uiMessage.parts) {
     if (part.type === 'step-start') {
-      events.push({ type: 'start-step' });
+      if (pendingStepStarts > 0) {
+        events.push({ type: 'start-step' });
+        pendingStepStarts -= 1;
+      }
       continue;
     }
 
     if (part.type === 'reasoning') {
-      const currentReasoning = part.text ?? part.reasoning ?? '';
-      const reasoningDelta = computeDelta(state.previousReasoning, currentReasoning);
-      if (reasoningDelta) {
+      if (!emittedReasoning && reasoningDelta) {
         events.push({
           type: 'reasoning-delta',
           text: reasoningDelta,
         });
-        state.previousReasoning = currentReasoning;
+        emittedReasoning = true;
       }
       continue;
     }
 
     if (part.type === 'text') {
-      const textDelta = computeDelta(state.previousText, part.text);
-      if (textDelta) {
+      if (!emittedText && textDelta) {
         events.push({
           type: 'text-delta',
           textDelta,
         });
-        state.previousText = part.text;
+        emittedText = true;
       }
       continue;
     }
@@ -140,6 +226,25 @@ export function mapOpenRouterUiMessageToEvents(
         )
       );
     }
+  }
+
+  while (pendingStepStarts > 0) {
+    events.push({ type: 'start-step' });
+    pendingStepStarts -= 1;
+  }
+
+  if (!emittedReasoning && reasoningDelta) {
+    events.push({
+      type: 'reasoning-delta',
+      text: reasoningDelta,
+    });
+  }
+
+  if (!emittedText && textDelta) {
+    events.push({
+      type: 'text-delta',
+      textDelta,
+    });
   }
 
   return events;

@@ -1,4 +1,5 @@
 import { resamplePcm16Mono } from '../media/resample-pcm16.js';
+import { StreamResamplerPool } from '../media/stream-resampler.js';
 import { parseUltravoxProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
@@ -72,9 +73,9 @@ interface UltravoxSelectedTool {
 }
 
 const DEFAULT_API_BASE = 'https://api.ultravox.ai';
-const DEFAULT_BUFFER_MS = 30000;
-const DEFAULT_INPUT_RATE = 48000;
-const DEFAULT_OUTPUT_RATE = 48000;
+const DEFAULT_BUFFER_MS = 60;
+const DEFAULT_INPUT_RATE = 24000;
+const DEFAULT_OUTPUT_RATE = 24000;
 
 const ULTRAVOX_CAPABILITIES: ProviderCapabilities = {
   toolCalling: true,
@@ -172,6 +173,7 @@ export class UltravoxWsAdapter implements ProviderAdapter {
   private providerOutputRateHz = DEFAULT_OUTPUT_RATE;
   private preferredInputRateHz = 24000;
   private preferredOutputRateHz = 24000;
+  private readonly resamplerPool = new StreamResamplerPool();
 
   capabilities(): ProviderCapabilities {
     return ULTRAVOX_CAPABILITIES;
@@ -302,6 +304,16 @@ export class UltravoxWsAdapter implements ProviderAdapter {
     this.setState('listening');
     this.events.emit('connected');
 
+    // Pre-warm stream resamplers for any rate mismatches
+    const inits: Promise<unknown>[] = [];
+    if (this.preferredInputRateHz !== this.providerInputRateHz) {
+      inits.push(this.resamplerPool.get(this.preferredInputRateHz, this.providerInputRateHz));
+    }
+    if (this.providerOutputRateHz !== this.preferredOutputRateHz) {
+      inits.push(this.resamplerPool.get(this.providerOutputRateHz, this.preferredOutputRateHz));
+    }
+    if (inits.length > 0) await Promise.all(inits);
+
     return {
       providerInputRate: this.providerInputRateHz,
       providerOutputRate: this.providerOutputRateHz,
@@ -329,16 +341,21 @@ export class UltravoxWsAdapter implements ProviderAdapter {
     this.socket = null;
     this.connected = false;
     this.transcriptsByOrdinal.clear();
+    this.resamplerPool.clear();
     this.setState('idle');
     this.events.emit('disconnected');
   }
 
   sendAudio(frame: AudioFrame): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    const pcm =
-      frame.sampleRate === this.providerInputRateHz
-        ? frame
-        : resamplePcm16Mono(frame, this.providerInputRateHz);
+    if (frame.sampleRate === this.providerInputRateHz) {
+      this.socket.send(frame.data);
+      return;
+    }
+    const resampler = this.resamplerPool.getSync(frame.sampleRate, this.providerInputRateHz);
+    const pcm = resampler
+      ? resampler.process(frame)
+      : resamplePcm16Mono(frame, this.providerInputRateHz);
     this.socket.send(pcm.data);
   }
 
@@ -478,10 +495,14 @@ export class UltravoxWsAdapter implements ProviderAdapter {
       sampleRate: this.providerOutputRateHz,
       format: 'pcm16',
     };
-    const frameForSession =
-      frame.sampleRate === this.preferredOutputRateHz
-        ? frame
-        : resamplePcm16Mono(frame, this.preferredOutputRateHz);
+    if (frame.sampleRate === this.preferredOutputRateHz) {
+      this.events.emit('audio', frame);
+      return;
+    }
+    const resampler = this.resamplerPool.getSync(frame.sampleRate, this.preferredOutputRateHz);
+    const frameForSession = resampler
+      ? resampler.process(frame)
+      : resamplePcm16Mono(frame, this.preferredOutputRateHz);
     this.events.emit('audio', frameForSession);
   }
 

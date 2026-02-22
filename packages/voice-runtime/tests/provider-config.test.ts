@@ -37,14 +37,24 @@ describe('provider-config parsers', () => {
   test('parses decomposed config with turn overrides', () => {
     const parsed = parseDecomposedProviderConfig({
       sttProvider: 'deepgram',
+      deepgramTtsPunctuationChunkingEnabled: false,
       turn: {
         silenceMs: 900,
         minRms: 0.02,
       },
     });
     expect(parsed.sttProvider).toBe('deepgram');
+    expect(parsed.deepgramTtsPunctuationChunkingEnabled).toBe(false);
     expect(parsed.turn?.silenceMs).toBe(900);
     expect(parsed.turn?.minRms).toBe(0.02);
+  });
+
+  test('rejects invalid decomposed Deepgram punctuation chunking type', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        deepgramTtsPunctuationChunkingEnabled: 'false',
+      })
+    ).toThrow('providerConfig.deepgramTtsPunctuationChunkingEnabled must be a boolean');
   });
 
   test('requires llm model ref when pipecat pipeline is set', () => {

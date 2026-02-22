@@ -1,4 +1,5 @@
 import { resamplePcm16Mono } from '../media/resample-pcm16.js';
+import { StreamResamplerPool } from '../media/stream-resampler.js';
 import type {
   AudioFrame,
   AudioNegotiation,
@@ -21,6 +22,7 @@ export class VoiceSessionImpl implements VoiceSession {
   private readonly adapter: ProviderAdapter;
   private readonly input: SessionInput;
   private readonly capabilities: ProviderCapabilities;
+  private readonly resamplerPool = new StreamResamplerPool();
 
   private state: VoiceState = 'idle';
   private history: VoiceHistoryItem[] = [];
@@ -48,6 +50,8 @@ export class VoiceSessionImpl implements VoiceSession {
     this.resetConversationOrderState();
     this.negotiation = await this.adapter.connect(this.input);
     this.connected = true;
+    // Pre-warm stream resamplers for any rate mismatches
+    await this.initResamplers();
     if (this.clientTransport) {
       await this.startClientTransport(this.clientTransport);
     }
@@ -64,6 +68,7 @@ export class VoiceSessionImpl implements VoiceSession {
     this.interruptionTracker.reset();
     this.resetAssistantTranscriptDedup();
     this.resetConversationOrderState();
+    this.resamplerPool.clear();
   }
 
   async attachClientTransport(transport: ClientTransport): Promise<void> {
@@ -73,11 +78,17 @@ export class VoiceSessionImpl implements VoiceSession {
     this.clientTransport = transport;
     this.transportAudioHandler = (frame: AudioFrame) => {
       const providerInputRate = this.negotiation?.providerInputRate;
-      const normalizedFrame =
-        providerInputRate && frame.sampleRate !== providerInputRate
-          ? resamplePcm16Mono(frame, providerInputRate)
-          : frame;
-      this.adapter.sendAudio(normalizedFrame);
+      if (!providerInputRate || frame.sampleRate === providerInputRate) {
+        this.adapter.sendAudio(frame);
+        return;
+      }
+      const resampler = this.resamplerPool.getSync(frame.sampleRate, providerInputRate);
+      if (resampler) {
+        this.adapter.sendAudio(resampler.process(frame));
+      } else {
+        // Fallback to stateless resample while WASM initializes
+        this.adapter.sendAudio(resamplePcm16Mono(frame, providerInputRate));
+      }
     };
     transport.onAudioFrame(this.transportAudioHandler);
     if (this.connected) {
@@ -97,11 +108,16 @@ export class VoiceSessionImpl implements VoiceSession {
 
   sendAudio(frame: AudioFrame): void {
     const providerInputRate = this.negotiation?.providerInputRate;
-    const normalizedFrame =
-      providerInputRate && frame.sampleRate !== providerInputRate
-        ? resamplePcm16Mono(frame, providerInputRate)
-        : frame;
-    this.adapter.sendAudio(normalizedFrame);
+    if (!providerInputRate || frame.sampleRate === providerInputRate) {
+      this.adapter.sendAudio(frame);
+      return;
+    }
+    const resampler = this.resamplerPool.getSync(frame.sampleRate, providerInputRate);
+    if (resampler) {
+      this.adapter.sendAudio(resampler.process(frame));
+    } else {
+      this.adapter.sendAudio(resamplePcm16Mono(frame, providerInputRate));
+    }
   }
 
   sendText(text: string): void {
@@ -178,6 +194,32 @@ export class VoiceSessionImpl implements VoiceSession {
     this.adapter.sendToolResult(result);
   }
 
+  /**
+   * Pre-initialize stream resamplers for any rate mismatches between
+   * client and provider. Called once after connect() so the WASM init
+   * completes before audio starts flowing.
+   */
+  private async initResamplers(): Promise<void> {
+    if (!this.negotiation) return;
+    const clientIn =
+      this.negotiation.preferredClientInputRate ?? this.negotiation.providerInputRate;
+    const providerIn = this.negotiation.providerInputRate;
+    const providerOut = this.negotiation.providerOutputRate;
+    const clientOut =
+      this.negotiation.preferredClientOutputRate ?? this.negotiation.providerOutputRate;
+
+    const inits: Promise<unknown>[] = [];
+    if (clientIn !== providerIn) {
+      inits.push(this.resamplerPool.get(clientIn, providerIn));
+    }
+    if (providerOut !== clientOut) {
+      inits.push(this.resamplerPool.get(providerOut, clientOut));
+    }
+    if (inits.length > 0) {
+      await Promise.all(inits);
+    }
+  }
+
   private async startClientTransport(transport: ClientTransport): Promise<void> {
     const inputRate =
       this.negotiation?.preferredClientInputRate ??
@@ -207,8 +249,15 @@ export class VoiceSessionImpl implements VoiceSession {
       this.negotiation?.providerOutputRate ??
       frame.sampleRate;
 
-    const frameForTransport =
-      frame.sampleRate === targetRate ? frame : resamplePcm16Mono(frame, targetRate);
+    let frameForTransport: AudioFrame;
+    if (frame.sampleRate === targetRate) {
+      frameForTransport = frame;
+    } else {
+      const resampler = this.resamplerPool.getSync(frame.sampleRate, targetRate);
+      frameForTransport = resampler
+        ? resampler.process(frame)
+        : resamplePcm16Mono(frame, targetRate);
+    }
     this.interruptionTracker.trackAssistantAudio(frameForTransport);
     this.clientTransport.playAudioFrame(frameForTransport);
     this.events.emit('audio', frameForTransport);

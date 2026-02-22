@@ -1,0 +1,13 @@
+[project]
+name = "voice-playground"
+version = "0.1.0"
+description = "Pipecat voice playground for comparing with voice-runtime"
+requires-python = ">=3.12"
+dependencies = [
+    "pipecat-ai[local,ultravox,silero]",
+    "python-dotenv",
+    "loguru",
+]
+
+[project.scripts]
+ultravox = "ultravox_realtime:main_entry"

@@ -86,6 +86,10 @@ Two providers:
 
 **Deepgram WebSocket TTS**: LLM deltas are sent directly to the Deepgram WebSocket as they arrive. Audio is produced in parallel with LLM generation. This is significantly lower latency for streaming use cases.
 
+`deepgramTtsPunctuationChunkingEnabled` controls flush behavior for streaming Deepgram TTS:
+- `true` (default): flush on punctuation/thresholds for lower TTFA.
+- `false`: disable punctuation chunking; runtime still streams, but flushes by size/whitespace thresholds instead of punctuation boundaries.
+
 #### Text Segmentation (OpenAI TTS)
 
 `splitSpeakableText()` splits buffered text for segment-by-segment TTS:
@@ -150,6 +154,7 @@ Two providers:
 | `ttsVoice` | From `SessionInput.voice` | TTS voice name |
 | `deepgramTtsTransport` | `'websocket'` | Must be `'websocket'` |
 | `deepgramTtsWsUrl` | `'wss://api.deepgram.com/v1/speak'` | Deepgram TTS WebSocket URL |
+| `deepgramTtsPunctuationChunkingEnabled` | `true` | Deepgram WS streaming flush mode (`true`: punctuation chunking, `false`: size/whitespace chunking) |
 | `openaiApiKey` | (required for OpenAI providers) | OpenAI API key |
 | `openrouterApiKey` | (required for OpenRouter) | OpenRouter API key |
 | `anthropicApiKey` | (required for Anthropic) | Anthropic API key |

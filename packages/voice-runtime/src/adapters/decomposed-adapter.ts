@@ -37,6 +37,7 @@ interface DecomposedOptions {
   ttsVoice: string;
   deepgramTtsTransport: 'websocket';
   deepgramTtsWsUrl: string;
+  deepgramTtsPunctuationChunkingEnabled: boolean;
   silenceMs: number;
   minSpeechMs: number;
   minRms: number;
@@ -195,6 +196,15 @@ const DECOMPOSED_CONFIG_SCHEMA: ProviderConfigSchema = {
       step: 0.001,
       defaultValue: 0.015,
       description: 'Audio level threshold for speech detection.',
+    },
+    {
+      key: 'deepgramTtsPunctuationChunkingEnabled',
+      label: 'Deepgram Punctuation Chunking',
+      type: 'boolean',
+      group: 'advanced',
+      defaultValue: true,
+      description:
+        'When enabled, Deepgram streaming TTS flushes on punctuation for lower latency. Disable for one continuous segment per turn.',
     },
     // LLM completion fields (enabled, shortTimeoutMs, longTimeoutMs) are managed
     // by the dedicated turn.llmCompletion section in voice.config.json, not providerSettings.
@@ -764,8 +774,10 @@ export class DecomposedAdapter implements ProviderAdapter {
     }
 
     const ttsStartedAtMs = Date.now();
+    const punctuationChunkingEnabled = this.options.deepgramTtsPunctuationChunkingEnabled;
     let llmDurationMs = 0;
     let assistantText = '';
+    let pendingText = '';
     let speaking = false;
     let spokeAudio = false;
     let pendingChars = 0;
@@ -873,8 +885,11 @@ export class DecomposedAdapter implements ProviderAdapter {
 
       const requestFlush = (): void => {
         if (pendingChars <= 0) return;
+        connection.sendText(pendingText);
+        pendingText = '';
         pendingChars = 0;
         expectedFlushes += 1;
+        spokeAudio = true;
         connection.flush();
       };
 
@@ -929,11 +944,17 @@ export class DecomposedAdapter implements ProviderAdapter {
               break;
             }
 
-            connection.sendText(delta);
-            spokeAudio = true;
+            pendingText += delta;
             pendingChars += delta.length;
 
-            if (shouldFlushDeepgramStream(delta, pendingChars, expectedFlushes)) {
+            if (
+              shouldFlushDeepgramStream(
+                delta,
+                pendingChars,
+                expectedFlushes,
+                punctuationChunkingEnabled
+              )
+            ) {
               requestFlush();
             }
           }
@@ -966,6 +987,7 @@ export class DecomposedAdapter implements ProviderAdapter {
           firstAudioAtMs === null ? null : Math.max(0, firstAudioAtMs - ttsStartedAtMs),
         streaming: true,
         flushes: expectedFlushes,
+        flushMode: punctuationChunkingEnabled ? 'punctuation' : 'size-threshold',
       },
     });
 
@@ -1891,6 +1913,8 @@ export class DecomposedAdapter implements ProviderAdapter {
       ttsVoice: providerConfig.ttsVoice ?? input.voice,
       deepgramTtsTransport: providerConfig.deepgramTtsTransport ?? 'websocket',
       deepgramTtsWsUrl: providerConfig.deepgramTtsWsUrl ?? 'wss://api.deepgram.com/v1/speak',
+      deepgramTtsPunctuationChunkingEnabled:
+        providerConfig.deepgramTtsPunctuationChunkingEnabled ?? true,
       silenceMs: providerConfig.turn?.silenceMs ?? 700,
       minSpeechMs: providerConfig.turn?.minSpeechMs ?? 350,
       minRms: providerConfig.turn?.minRms ?? 0.015,
@@ -2206,9 +2230,20 @@ function splitSpeakableText(buffer: string): { segments: string[]; remainder: st
 function shouldFlushDeepgramStream(
   delta: string,
   pendingChars: number,
-  completedFlushes: number
+  completedFlushes: number,
+  punctuationChunkingEnabled: boolean
 ): boolean {
   if (pendingChars <= 0) return false;
+
+  if (!punctuationChunkingEnabled) {
+    const baseThreshold = completedFlushes === 0 ? 80 : 180;
+    const overflowThreshold = baseThreshold + 48;
+    if (pendingChars < baseThreshold) return false;
+
+    // Prefer chunk boundaries at whitespace when punctuation chunking is disabled.
+    if (/\s/.test(delta)) return true;
+    return pendingChars >= overflowThreshold;
+  }
 
   const hasSentenceBoundary = /[.!?;\n]/.test(delta);
   const hasMinorBoundary = /[,]/.test(delta);

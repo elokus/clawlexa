@@ -1,4 +1,5 @@
 import { resamplePcm16Mono } from '../media/resample-pcm16.js';
+import { StreamResampler } from '../media/stream-resampler.js';
 import { parseGeminiProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
@@ -280,6 +281,7 @@ export class GeminiLiveAdapter implements ProviderAdapter {
   private manualVadEnabled = false;
   private manualVadActive = false;
   private manualVadThreshold = GEMINI_MANUAL_VAD_DEFAULT_THRESHOLD;
+  private inputResampler: StreamResampler | null = null;
   private manualVadSilenceDurationMs = GEMINI_MANUAL_VAD_DEFAULT_SILENCE_MS;
   private manualVadPrefixPaddingMs = GEMINI_MANUAL_VAD_DEFAULT_PREFIX_PADDING_MS;
   private manualVadPendingSpeechMs = 0;
@@ -346,6 +348,10 @@ export class GeminiLiveAdapter implements ProviderAdapter {
 
     this.setState('listening');
     this.events.emit('connected');
+
+    // Pre-warm stream resampler for 24kHz → 16kHz input conversion
+    this.inputResampler = new StreamResampler(24000, GEMINI_INPUT_RATE);
+    await this.inputResampler.init();
 
     return {
       providerInputRate: GEMINI_INPUT_RATE,

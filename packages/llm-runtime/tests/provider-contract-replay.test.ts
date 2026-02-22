@@ -88,4 +88,48 @@ describe('llm-runtime provider contract replay', () => {
     expect(completeResult.events).toEqual(fixture.expectedEvents);
     expect(completeResult.text).toBe(fixture.expectedText);
   });
+
+  it('does not replay prior text when uiMessage snapshots are cumulative', () => {
+    const uiMessages: OpenRouterUiMessage[] = [
+      {
+        parts: [
+          { type: 'step-start' },
+          { type: 'text', text: 'Alles klar, einen Moment.' },
+        ],
+      },
+      {
+        parts: [
+          { type: 'step-start' },
+          { type: 'text', text: 'Alles klar, einen Moment.' },
+          { type: 'text', text: 'Be' },
+        ],
+      },
+      {
+        parts: [
+          { type: 'step-start' },
+          { type: 'text', text: 'Alles klar, einen Moment.Beide' },
+        ],
+      },
+      {
+        parts: [
+          { type: 'step-start' },
+          { type: 'text', text: 'Alles klar, einen Moment.Beide Stehlampen' },
+        ],
+      },
+      {
+        parts: [
+          { type: 'step-start' },
+          { type: 'text', text: 'Alles klar, einen Moment.Beide Stehlampen sind jetzt an.' },
+        ],
+      },
+    ];
+
+    const replayedEvents = replayEventsFromUiMessages(uiMessages);
+    const text = collectText(replayedEvents);
+    const startSteps = replayedEvents.filter((event) => event.type === 'start-step');
+
+    expect(text).toBe('Alles klar, einen Moment.Beide Stehlampen sind jetzt an.');
+    expect(text).not.toContain('Alles klar, einen Moment.BeAlles klar, einen Moment.');
+    expect(startSteps).toHaveLength(1);
+  });
 });

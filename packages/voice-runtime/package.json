@@ -47,9 +47,10 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@deepgram/sdk": "^4.11.3",
     "@voiceclaw/ai-core": "workspace:*",
     "@voiceclaw/llm-runtime": "workspace:*",
-    "@deepgram/sdk": "^4.11.3",
+    "wasm-audio-resampler": "^2.0.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {

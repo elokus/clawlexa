@@ -264,6 +264,11 @@ export function parseDecomposedProviderConfig(raw: unknown): DecomposedProviderC
       DECOMPOSED_TTS_TRANSPORTS
     ),
     deepgramTtsWsUrl: optionalString(object, 'deepgramTtsWsUrl', 'providerConfig'),
+    deepgramTtsPunctuationChunkingEnabled: optionalBoolean(
+      object,
+      'deepgramTtsPunctuationChunkingEnabled',
+      'providerConfig'
+    ),
     turn: parseDecomposedTurnConfig(object.turn),
   };
 }

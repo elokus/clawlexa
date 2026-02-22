@@ -61,8 +61,12 @@ When both LLM and TTS use streaming, `generateAssistantResponseStreamingWithDeep
 1. Start LLM streaming (`generateAssistantTextStream`).
 2. For each LLM text delta:
    - Emit `transcriptDelta` event (text appears in UI immediately).
-   - Send delta directly to Deepgram WS via `connection.sendText(delta)`.
-   - Track `pendingChars` and flush at sentence boundaries.
+   - If `deepgramTtsPunctuationChunkingEnabled` is `true` (default):
+     - Buffer deltas.
+     - Flush chunk packets at punctuation/threshold boundaries.
+   - If `deepgramTtsPunctuationChunkingEnabled` is `false`:
+     - Buffer deltas.
+     - Flush chunk packets by size/whitespace thresholds (not punctuation-driven).
 3. Deepgram returns audio chunks via `LiveTTSEvents.Audio`.
 4. Audio chunks are enqueued into an `audioPipeline` promise chain.
 5. When LLM finishes, send a final flush and wait for all audio to drain.
@@ -71,9 +75,11 @@ This achieves parallel text + audio streaming -- the user sees text and hears au
 
 ## 5. Flush Strategy
 
-Flushing tells Deepgram to synthesize all buffered text and return audio. The strategy balances latency (flush early) vs. naturalness (flush at boundaries).
+Flushing tells Deepgram to synthesize all buffered text and return audio.
 
-`shouldFlushDeepgramStream(delta, pendingChars, completedFlushes)`:
+When `deepgramTtsPunctuationChunkingEnabled` is `true`, the runtime uses:
+
+`shouldFlushDeepgramStream(delta, pendingChars, completedFlushes)` with:
 
 | Condition | Threshold | Purpose |
 |-----------|-----------|---------|
@@ -82,6 +88,8 @@ Flushing tells Deepgram to synthesize all buffered text and return audio. The st
 | Force flush (no boundary) | 180 chars | Prevent unbounded buffering |
 
 The first flush uses a lower threshold (24 chars) to minimize time-to-first-audio.
+
+When `deepgramTtsPunctuationChunkingEnabled` is `false`, punctuation-based chunking is disabled. The runtime still streams continuously by flushing on size/whitespace thresholds instead of punctuation.
 
 Each flush increments `expectedFlushes`. The turn resolves only when `receivedFlushes >= expectedFlushes` and the audio pipeline has drained.
 
@@ -136,6 +144,7 @@ The adapter encodes raw PCM into WAV format before sending.
 |--------|---------|-------------|
 | `deepgramTtsTransport` | `'websocket'` | Must be `'websocket'` (HTTP not supported) |
 | `deepgramTtsWsUrl` | `'wss://api.deepgram.com/v1/speak'` | WebSocket endpoint URL |
+| `deepgramTtsPunctuationChunkingEnabled` | `true` | `true`: flush on punctuation/thresholds; `false`: flush on size/whitespace thresholds |
 | `ttsModel` | `'aura-2-thalia-en'` | Deepgram TTS model/voice |
 | `sttModel` | `'nova-3'` | Deepgram STT model (when sttProvider is deepgram) |
 | `deepgramApiKey` | (required) | API key for authentication |

@@ -108,6 +108,7 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   ttsVoice?: string;
   deepgramTtsTransport?: 'websocket';
   deepgramTtsWsUrl?: string;
+  deepgramTtsPunctuationChunkingEnabled?: boolean;
   turn?: {
     silenceMs?: number;
     minSpeechMs?: number;
