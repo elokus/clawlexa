@@ -390,8 +390,14 @@ export class GeminiLiveAdapter implements ProviderAdapter {
 
   sendAudio(frame: AudioFrame): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    const providerFrame =
-      frame.sampleRate === GEMINI_INPUT_RATE ? frame : resamplePcm16Mono(frame, GEMINI_INPUT_RATE);
+    let providerFrame: AudioFrame;
+    if (frame.sampleRate === GEMINI_INPUT_RATE) {
+      providerFrame = frame;
+    } else if (this.inputResampler) {
+      providerFrame = this.inputResampler.process(frame);
+    } else {
+      providerFrame = resamplePcm16Mono(frame, GEMINI_INPUT_RATE);
+    }
     if (this.manualVadEnabled) {
       this.sendAudioWithManualVad(providerFrame);
       return;
