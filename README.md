@@ -82,3 +82,8 @@ cd packages/terminal-host && bun run dev     # Port 3100
 - **Runtime config**: `.voiceclaw/voice.config.json` (mode, provider, model)
 - **Auth profiles**: `.voiceclaw/auth-profiles.json` (credentials, defaults)
 - **Templates**: `.voiceclaw/*.example.json`
+
+## Acknowledgments
+
+- Huge thanks to [badlogic (Mario Zechner)](https://github.com/badlogic) for the inspiration from [`pi-mono`](https://github.com/badlogic/pi-mono), especially `packages/ai` and `packages/agent`.
+- Shoutout to the [Pipecat](https://github.com/pipecat-ai/pipecat) team and contributors for their work on real-time voice agent infrastructure.

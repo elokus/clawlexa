@@ -1,0 +1,50 @@
+{
+  "name": "@voiceclaw/ai-core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared AI contracts and provider/auth dialects for VoiceClaw runtimes",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./voice": {
+      "types": "./src/voice/types.ts",
+      "default": "./src/voice/types.ts"
+    },
+    "./voice/provider-config": {
+      "types": "./src/voice/provider-config.ts",
+      "default": "./src/voice/provider-config.ts"
+    },
+    "./voice/auth-catalog": {
+      "types": "./src/voice/auth-catalog.ts",
+      "default": "./src/voice/auth-catalog.ts"
+    },
+    "./llm": {
+      "types": "./src/llm/types.ts",
+      "default": "./src/llm/types.ts"
+    },
+    "./tools": {
+      "types": "./src/tools/types.ts",
+      "default": "./src/tools/types.ts"
+    },
+    "./llm/dialects": {
+      "types": "./src/llm/dialects.ts",
+      "default": "./src/llm/dialects.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test ./tests/*.test.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

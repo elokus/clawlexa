@@ -1,10 +1,42 @@
-export type VoiceProviderId =
-  | 'openai-sdk'
-  | 'openai-ws'
-  | 'ultravox-ws'
-  | 'gemini-live'
-  | 'decomposed'
-  | 'pipecat-rtvi';
+import type {
+  ConfigFieldDescriptor,
+  ConfigFieldOption,
+  ConfigFieldType,
+  DecomposedProviderConfig,
+  GeminiProviderConfig,
+  OpenAIProviderConfig,
+  PipecatProviderConfig,
+  ProviderConfigSchema,
+  ProviderVoiceEntry,
+  ToolCallContext,
+  ToolCallHandler,
+  ToolCallResult,
+  ToolDefinition,
+  ToolReaction,
+  UltravoxProviderConfig,
+  VoiceHistoryItem,
+  VoiceProviderId,
+} from '@voiceclaw/ai-core/voice';
+
+export type {
+  ConfigFieldDescriptor,
+  ConfigFieldOption,
+  ConfigFieldType,
+  DecomposedProviderConfig,
+  GeminiProviderConfig,
+  OpenAIProviderConfig,
+  PipecatProviderConfig,
+  ProviderConfigSchema,
+  ProviderVoiceEntry,
+  ToolCallContext,
+  ToolCallHandler,
+  ToolCallResult,
+  ToolDefinition,
+  ToolReaction,
+  UltravoxProviderConfig,
+  VoiceHistoryItem,
+  VoiceProviderId,
+};
 
 export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking';
 export type ClientTransportKind = 'local-pcm' | 'ws-pcm' | 'webrtc';
@@ -19,14 +51,6 @@ export interface AudioFrame {
   data: ArrayBuffer;
   sampleRate: number;
   format: 'pcm16';
-}
-
-export interface VoiceHistoryItem {
-  id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
-  text: string;
-  createdAt: number;
-  providerMeta?: Record<string, unknown>;
 }
 
 export interface LatencyMetric {
@@ -88,42 +112,6 @@ export interface ProviderCapabilities {
   nativeTruncation: boolean;
   wordLevelTimestamps: boolean;
 }
-
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-  precomputable?: boolean;
-  timeout?: number;
-  defaultReaction?: ToolReaction;
-  nonBlocking?: boolean;
-}
-
-export type ToolReaction = 'speaks' | 'listens' | 'speaks-once';
-
-export interface ToolCallContext {
-  providerId: VoiceProviderId;
-  callId: string;
-  invocationId: string;
-  history: VoiceHistoryItem[];
-}
-
-export interface ToolCallResult {
-  invocationId: string;
-  result: string;
-  isError?: boolean;
-  errorMessage?: string;
-  agentReaction?: 'speaks' | 'listens' | 'speaks-once';
-  scheduling?: 'interrupt' | 'when_idle' | 'silent';
-  stateUpdate?: Record<string, unknown>;
-  stageTransition?: boolean;
-}
-
-export type ToolCallHandler = (
-  name: string,
-  args: Record<string, unknown>,
-  context: ToolCallContext
-) => Promise<ToolCallResult | string>;
 
 export interface VoiceSessionEvents {
   connected: () => void;
@@ -302,127 +290,7 @@ export interface ProviderDescriptor {
   capabilities: ProviderCapabilities;
 }
 
-// ─── Provider Config Schema (UI metadata) ───────────────────────────────────
-
-export type ConfigFieldType = 'select' | 'number' | 'boolean' | 'string' | 'range';
-
-export interface ConfigFieldOption {
-  value: string;
-  label: string;
-}
-
-export interface ConfigFieldDescriptor {
-  key: string;
-  label: string;
-  type: ConfigFieldType;
-  group: 'vad' | 'advanced' | 'audio';
-  description?: string;
-  options?: ConfigFieldOption[];
-  min?: number;
-  max?: number;
-  step?: number;
-  defaultValue?: string | number | boolean;
-  dependsOn?: { field: string; value: string | boolean };
-}
-
-export interface ProviderVoiceEntry {
-  id: string;
-  name: string;
-  language?: string;
-  gender?: string;
-}
-
-export interface ProviderConfigSchema {
-  providerId: VoiceProviderId;
-  displayName: string;
-  fields: ConfigFieldDescriptor[];
-  voices?: ProviderVoiceEntry[];
-}
-
 export interface VoiceRuntime {
   listProviders(): ProviderDescriptor[];
   createSession(input: SessionInput): Promise<VoiceSession>;
-}
-
-export interface OpenAIProviderConfig extends Record<string, unknown> {
-  apiKey?: string;
-  language?: string;
-  transcriptionModel?: string;
-  turnDetection?: 'server_vad' | 'semantic_vad';
-}
-
-export interface UltravoxProviderConfig extends Record<string, unknown> {
-  apiKey?: string;
-  apiBaseUrl?: string;
-  model?: string;
-  voice?: string;
-  clientBufferSizeMs?: number;
-  inputSampleRate?: number;
-  outputSampleRate?: number;
-}
-
-export interface GeminiProviderConfig extends Record<string, unknown> {
-  apiKey?: string;
-  endpoint?: string;
-  apiVersion?: 'v1alpha' | 'v1beta';
-  vadMode?: 'server' | 'manual';
-  vadSilenceDurationMs?: number;
-  vadPrefixPaddingMs?: number;
-  vadThreshold?: number;
-  vadStartOfSpeechSensitivity?: 'high' | 'low';
-  vadEndOfSpeechSensitivity?: 'high' | 'low';
-  enableInputTranscription?: boolean;
-  enableOutputTranscription?: boolean;
-  noInterruption?: boolean;
-  contextWindowCompressionTokens?: number;
-  proactivity?: boolean;
-  sessionResumptionHandle?: string;
-  useEphemeralToken?: boolean;
-}
-
-export interface DecomposedProviderConfig extends Record<string, unknown> {
-  openaiApiKey?: string;
-  openrouterApiKey?: string;
-  deepgramApiKey?: string;
-  sttProvider?: 'openai' | 'deepgram';
-  sttModel?: string;
-  llmProvider?: 'openai' | 'openrouter';
-  llmModel?: string;
-  ttsProvider?: 'openai' | 'deepgram';
-  ttsModel?: string;
-  ttsVoice?: string;
-  deepgramTtsTransport?: 'websocket';
-  deepgramTtsWsUrl?: string;
-  turn?: {
-    silenceMs?: number;
-    minSpeechMs?: number;
-    minRms?: number;
-    llmCompletionEnabled?: boolean;
-    llmShortTimeoutMs?: number;
-    llmLongTimeoutMs?: number;
-    llmShortReprompt?: string;
-    llmLongReprompt?: string;
-  };
-}
-
-export interface PipecatProviderConfig extends Record<string, unknown> {
-  serverUrl?: string;
-  transport: 'websocket' | 'webrtc';
-  inputSampleRate?: number;
-  outputSampleRate?: number;
-  audioInputEncoding?: 'binary-pcm16' | 'client-message-base64';
-  audioInputMessageType?: string;
-  readyTimeoutMs?: number;
-  reconnect?: boolean;
-  clientVersion?: string;
-  autoToolExecution?: boolean;
-  bootstrapMessageType?: string;
-  keepAliveIntervalMs?: number;
-  pingMessageType?: string;
-  pipeline?: {
-    stt?: { provider: string; model: string };
-    llm: { provider: string; model: string };
-    tts?: { provider: string; model: string; voice?: string };
-  };
-  botId?: string;
 }

@@ -13,6 +13,7 @@ const ROOT = process.cwd();
 const TARGETS = [
   'packages/voice-agent/src/config.ts',
   'packages/voice-agent/src/voice',
+  'packages/voice-agent/src/subagents',
   'packages/voice-agent/src/realtime',
   'packages/voice-agent/src/api/webhooks.ts',
   'packages/voice-agent/src/tui/inspector/state.ts',
@@ -34,6 +35,8 @@ function normalizeForMatch(input: string): string {
 }
 
 const BLOCKED_PATTERNS: Array<{ id: string; regex: RegExp }> = [
+  { id: 'subagent-openrouter-import', regex: /@openrouter\/ai-sdk-provider/ },
+  { id: 'subagent-ai-sdk-import', regex: /\bfrom ['"]ai['"]/ },
   { id: 'openai-realtime', regex: /\bopenai-realtime\b/ },
   { id: 'gemini-live', regex: /\bgemini-live\b/ },
   { id: 'ultravox-realtime', regex: /\bultravox-realtime\b/ },

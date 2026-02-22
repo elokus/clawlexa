@@ -50,12 +50,16 @@ Both receive WAV-encoded PCM16 mono @ 24kHz. The adapter encodes raw PCM to WAV 
 
 ### 3. LLM (Language Model)
 
-Two providers, both using OpenAI-compatible chat completions API:
+LLM execution runs through `@voiceclaw/llm-runtime` for supported providers:
 
-| Provider | Endpoint |
-|----------|----------|
-| OpenAI | `https://api.openai.com/v1/chat/completions` |
-| OpenRouter | `https://openrouter.ai/api/v1/chat/completions` |
+| Provider | Runtime Path |
+|----------|--------------|
+| OpenAI | `llm-runtime` OpenAI adapter |
+| OpenRouter | `llm-runtime` OpenRouter adapter |
+| Anthropic | `llm-runtime` Anthropic adapter |
+| Google | `llm-runtime` Google adapter |
+
+Legacy OpenAI-compatible HTTP fallback (`/chat/completions`) is retained only for OpenAI/OpenRouter compatibility paths.
 
 **Streaming mode** (default): LLM deltas are emitted as `transcriptDelta` events and forwarded to TTS in real-time.
 
@@ -139,7 +143,7 @@ Two providers:
 |--------|---------|-------------|
 | `sttProvider` | `'openai'` | STT provider: `'openai'` or `'deepgram'` |
 | `sttModel` | `'gpt-4o-mini-transcribe'` | STT model name |
-| `llmProvider` | `'openai'` | LLM provider: `'openai'` or `'openrouter'` |
+| `llmProvider` | `'openai'` | LLM provider: `'openai'`, `'openrouter'`, `'anthropic'`, or `'google'` |
 | `llmModel` | From `SessionInput.model` | LLM model name |
 | `ttsProvider` | `'openai'` | TTS provider: `'openai'` or `'deepgram'` |
 | `ttsModel` | `'gpt-4o-mini-tts'` (OpenAI) / `'aura-2-thalia-en'` (Deepgram) | TTS model |
@@ -148,6 +152,8 @@ Two providers:
 | `deepgramTtsWsUrl` | `'wss://api.deepgram.com/v1/speak'` | Deepgram TTS WebSocket URL |
 | `openaiApiKey` | (required for OpenAI providers) | OpenAI API key |
 | `openrouterApiKey` | (required for OpenRouter) | OpenRouter API key |
+| `anthropicApiKey` | (required for Anthropic) | Anthropic API key |
+| `googleApiKey` | (required for Google/Gemini) | Google API key |
 | `deepgramApiKey` | (required for Deepgram providers) | Deepgram API key |
 | `language` | `'en'` | Language code for STT |
 

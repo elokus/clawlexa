@@ -1,6 +1,7 @@
 import { parseDecomposedProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import { createClient, LiveTTSEvents, type SpeakLiveClient } from '@deepgram/sdk';
+import { createLlmRuntime } from '@voiceclaw/llm-runtime';
 import type {
   AudioFrame,
   AudioNegotiation,
@@ -21,6 +22,7 @@ import type {
 const AUDIO_SAMPLE_RATE = 24000;
 const PCM_BYTES_PER_100MS = (AUDIO_SAMPLE_RATE * 2) / 10;
 const TURN_MARKERS = ['✓', '○', '◐'] as const;
+const decomposedLlmRuntime = createLlmRuntime();
 
 type TurnMarker = (typeof TURN_MARKERS)[number];
 type ConversationRole = 'user' | 'assistant' | 'system';
@@ -28,7 +30,7 @@ type ConversationRole = 'user' | 'assistant' | 'system';
 interface DecomposedOptions {
   sttProvider: 'openai' | 'deepgram';
   sttModel: string;
-  llmProvider: 'openai' | 'openrouter';
+  llmProvider: 'openai' | 'openrouter' | 'anthropic' | 'google';
   llmModel: string;
   ttsProvider: 'openai' | 'deepgram';
   ttsModel: string;
@@ -46,6 +48,8 @@ interface DecomposedOptions {
   language: string;
   openaiApiKey?: string;
   openrouterApiKey?: string;
+  anthropicApiKey?: string;
+  googleApiKey?: string;
   deepgramApiKey?: string;
 }
 
@@ -975,6 +979,11 @@ export class DecomposedAdapter implements ProviderAdapter {
   private async *generateAssistantTextStream(systemPrompt: string): AsyncGenerator<string> {
     if (!this.options) return;
 
+    if (this.supportsLlmRuntimePath()) {
+      yield* this.generateAssistantTextStreamViaLlmRuntime(systemPrompt);
+      return;
+    }
+
     const response = await this.requestChatCompletionStream({
       messages: this.buildLlmMessages(systemPrompt),
       stream: true,
@@ -983,7 +992,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `${this.options.llmProvider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} LLM failed (${response.status}): ${errorText}`
+        `${this.getLlmProviderDisplayName(this.options.llmProvider)} LLM failed (${response.status}): ${errorText}`
       );
     }
 
@@ -1035,6 +1044,98 @@ export class DecomposedAdapter implements ProviderAdapter {
 
   private toolsEnabled(): boolean {
     return Boolean(this.input?.toolHandler && this.input.tools && this.input.tools.length > 0);
+  }
+
+  private supportsLlmRuntimePath(): boolean {
+    if (!this.options) return false;
+    return (
+      this.options.llmProvider === 'openrouter' ||
+      this.options.llmProvider === 'openai' ||
+      this.options.llmProvider === 'anthropic' ||
+      this.options.llmProvider === 'google'
+    );
+  }
+
+  private getLlmProviderDisplayName(provider: DecomposedOptions['llmProvider']): string {
+    if (provider === 'openrouter') return 'OpenRouter';
+    if (provider === 'openai') return 'OpenAI';
+    if (provider === 'anthropic') return 'Anthropic';
+    if (provider === 'google') return 'Google';
+    return provider;
+  }
+
+  private resolveLlmRuntimeApiKey(): string | undefined {
+    if (!this.options) return undefined;
+    if (this.options.llmProvider === 'openrouter') return this.options.openrouterApiKey;
+    if (this.options.llmProvider === 'openai') return this.options.openaiApiKey;
+    if (this.options.llmProvider === 'anthropic') return this.options.anthropicApiKey;
+    if (this.options.llmProvider === 'google') return this.options.googleApiKey;
+    return undefined;
+  }
+
+  private getLlmRuntimeMessages(): Array<{ role: 'user' | 'assistant'; content: string }> {
+    return this.history
+      .filter((entry) => entry.role === 'user' || entry.role === 'assistant')
+      .map((entry) => ({
+        role: entry.role as 'user' | 'assistant',
+        content: entry.content,
+      }));
+  }
+
+  private buildLlmRuntimeOptions(
+    maxSteps?: number
+  ): Record<string, unknown> {
+    if (!this.options) return {};
+
+    return {
+      apiKey: this.resolveLlmRuntimeApiKey(),
+      ...(typeof this.input?.temperature === 'number'
+        ? { temperature: this.input.temperature }
+        : {}),
+      ...(typeof this.input?.maxOutputTokens === 'number'
+        ? { maxOutputTokens: this.input.maxOutputTokens }
+        : {}),
+      ...(typeof maxSteps === 'number' ? { maxSteps } : {}),
+    };
+  }
+
+  private async invokeLlmRuntimeToolHandler(
+    name: string,
+    args: Record<string, unknown>,
+    context: ToolCallContext
+  ): Promise<ToolCallResult | string> {
+    const callId = context.callId || makeItemId('tool');
+    this.events.emit('toolStart', name || 'unknown_tool', args, callId);
+    const result = await this.invokeToolHandler(name, args, callId);
+    this.events.emit('toolEnd', name || 'unknown_tool', result.result, callId);
+    return result;
+  }
+
+  private async *generateAssistantTextStreamViaLlmRuntime(
+    systemPrompt: string
+  ): AsyncGenerator<string> {
+    if (!this.options) return;
+
+    const stream = decomposedLlmRuntime.stream({
+      model: {
+        provider: this.options.llmProvider,
+        model: this.options.llmModel,
+        modality: 'llm',
+      },
+      context: {
+        systemPrompt,
+        messages: this.getLlmRuntimeMessages(),
+      },
+      options: this.buildLlmRuntimeOptions(),
+    });
+
+    for await (const event of stream) {
+      if (event.type === 'text-delta') {
+        yield event.textDelta;
+      } else if (event.type === 'error') {
+        throw new Error(event.error);
+      }
+    }
   }
 
   private buildLlmMessages(systemPrompt: string): LlmMessage[] {
@@ -1102,7 +1203,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `${this.options.llmProvider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} LLM failed (${response.status}): ${errorText}`
+        `${this.getLlmProviderDisplayName(this.options.llmProvider)} LLM failed (${response.status}): ${errorText}`
       );
     }
 
@@ -1111,6 +1212,25 @@ export class DecomposedAdapter implements ProviderAdapter {
 
   private async generateAssistantTextWithTools(systemPrompt: string): Promise<string> {
     if (!this.options) return '';
+
+    if (this.supportsLlmRuntimePath()) {
+      const result = await decomposedLlmRuntime.complete({
+        model: {
+          provider: this.options.llmProvider,
+          model: this.options.llmModel,
+          modality: 'llm',
+        },
+        context: {
+          systemPrompt,
+          messages: this.getLlmRuntimeMessages(),
+          tools: this.input?.tools,
+        },
+        options: this.buildLlmRuntimeOptions(6),
+        toolHandler: (name, args, context) =>
+          this.invokeLlmRuntimeToolHandler(name, args, context),
+      });
+      return result.text.trim();
+    }
 
     const messages: LlmMessage[] = this.buildLlmMessages(systemPrompt);
     const tools = this.getLlmTools();
@@ -1244,6 +1364,15 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (!this.options) {
       throw new Error('Decomposed LLM options are unavailable');
     }
+    if (
+      this.options.llmProvider !== 'openrouter' &&
+      this.options.llmProvider !== 'openai'
+    ) {
+      throw new Error(
+        `Legacy chat-completions path is only available for openai/openrouter, received ${this.options.llmProvider}`
+      );
+    }
+
     const endpoint =
       this.options.llmProvider === 'openrouter'
         ? 'https://openrouter.ai/api/v1/chat/completions'
@@ -1777,6 +1906,8 @@ export class DecomposedAdapter implements ProviderAdapter {
       language: input.language ?? 'en',
       openaiApiKey: providerConfig.openaiApiKey,
       openrouterApiKey: providerConfig.openrouterApiKey,
+      anthropicApiKey: providerConfig.anthropicApiKey,
+      googleApiKey: providerConfig.googleApiKey,
       deepgramApiKey: providerConfig.deepgramApiKey,
     };
   }

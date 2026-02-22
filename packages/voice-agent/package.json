@@ -35,6 +35,7 @@
   "dependencies": {
     "@openai/agents": "^0.3.4",
     "@openrouter/ai-sdk-provider": "^1.4.1",
+    "@voiceclaw/llm-runtime": "workspace:*",
     "@picovoice/porcupine-node": "^3.0.6",
     "@picovoice/pvrecorder-node": "^1.2.8",
     "@voiceclaw/voice-runtime": "workspace:*",

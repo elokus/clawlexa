@@ -9,17 +9,15 @@
  * - Stream events to the frontend via WebSocket like normal subagents
  */
 
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { streamText, stepCountIs, readUIMessageStream } from 'ai';
 import { wsBroadcast } from '../api/websocket.js';
 import { loadAgentConfig } from './loader.js';
-import { cliAgentTools } from './cli/tools.js';
+import { cliAgentToolDefinitions, executeCliAgentTool } from '../tools/cli-agent-tools.js';
 import { CliSessionsRepository } from '../db/index.js';
 import { generateSessionName } from '../utils/session-names.js';
 import type { VoiceAgent } from '../agent/voice-agent.js';
 import { formatVoiceContext, type HandoffPacket } from '../context/handoff.js';
-
-const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
+import { llmRuntime } from './llm-runtime.js';
+import { forwardLlmStreamToSession } from './stream-events.js';
 
 export interface BackgroundTaskOptions {
   /** The task description/request */
@@ -112,20 +110,10 @@ async function runBackgroundAgent(
 ): Promise<string> {
   const sessionsRepo = new CliSessionsRepository();
 
-  if (!OPENROUTER_API_KEY) {
-    const error = 'OPEN_ROUTER_API_KEY not set';
-    wsBroadcast.streamChunk(sessionId, { type: 'error', error });
-    sessionsRepo.finish(sessionId, 'error');
-    return error;
-  }
-
   try {
     // Load config from CLI agent (reuse same config)
     const cliAgentDir = new URL('./cli', import.meta.url).pathname;
     const { config, prompt: systemPrompt } = await loadAgentConfig(cliAgentDir);
-
-    const openrouter = createOpenRouter({ apiKey: OPENROUTER_API_KEY });
-    const model = openrouter.chat(config.model);
 
     // Format voice context from HandoffPacket (anti-telephone: lossless context transfer)
     const voiceContextText = handoff ? formatVoiceContext(handoff) : '(no voice context)';
@@ -144,104 +132,27 @@ Complete this task. When done, provide a concise summary of what was accomplishe
 `.trim();
 
     console.log(`[Background] Starting agent for session ${sessionId}`);
+    const { text: fullText } = await forwardLlmStreamToSession(
+      llmRuntime.streamOpenRouter({
+        model: {
+          provider: 'openrouter',
+          model: config.model,
+          modality: 'llm',
+        },
+        context: {
+          systemPrompt,
+          messages: [{ role: 'user', content: userMessage }],
+          tools: cliAgentToolDefinitions,
+        },
+        options: {
+          maxSteps: config.maxSteps ?? 5,
+        },
+        toolHandler: executeCliAgentTool,
+      }),
+      { sessionId }
+    );
 
-    // Emit start event
-    wsBroadcast.streamChunk(sessionId, { type: 'start' });
-
-    // Run streaming agent
-    const result = streamText({
-      model,
-      system: systemPrompt,
-      prompt: userMessage,
-      tools: cliAgentTools,
-      stopWhen: stepCountIs(config.maxSteps ?? 5),
-    });
-
-    // Process stream and emit events (same pattern as CLI agent)
-    let prevText = '';
-    let prevReasoning = '';
-    let prevStepCount = 0;
-    const emittedToolCalls = new Set<string>();
-    const emittedToolResults = new Set<string>();
-
-    for await (const uiMessage of readUIMessageStream({
-      stream: result.toUIMessageStream(),
-    })) {
-      for (const part of uiMessage.parts) {
-        switch (part.type) {
-          case 'step-start': {
-            const stepStarts = uiMessage.parts.filter((p) => p.type === 'step-start').length;
-            if (stepStarts > prevStepCount) {
-              wsBroadcast.streamChunk(sessionId, { type: 'start-step' });
-              prevStepCount = stepStarts;
-            }
-            break;
-          }
-
-          case 'reasoning': {
-            const reasoningPart = part as { reasoning?: string; text?: string };
-            const currentReasoning = reasoningPart.text ?? reasoningPart.reasoning ?? '';
-            if (currentReasoning.length > prevReasoning.length) {
-              const delta = currentReasoning.slice(prevReasoning.length);
-              wsBroadcast.streamChunk(sessionId, { type: 'reasoning-delta', text: delta });
-              prevReasoning = currentReasoning;
-            }
-            break;
-          }
-
-          case 'text': {
-            const textPart = part as { text: string };
-            if (textPart.text.length > prevText.length) {
-              const delta = textPart.text.slice(prevText.length);
-              wsBroadcast.streamChunk(sessionId, { type: 'text-delta', textDelta: delta });
-              prevText = textPart.text;
-            }
-            break;
-          }
-
-          default: {
-            if (part.type.startsWith('tool-')) {
-              const toolPart = part as {
-                type: string;
-                toolCallId: string;
-                state: string;
-                input?: unknown;
-                output?: unknown;
-              };
-              const toolName = part.type.replace('tool-', '');
-
-              if (toolPart.state === 'input-available' && !emittedToolCalls.has(toolPart.toolCallId)) {
-                wsBroadcast.streamChunk(sessionId, {
-                  type: 'tool-call',
-                  toolName,
-                  toolCallId: toolPart.toolCallId,
-                  input: toolPart.input,
-                });
-                emittedToolCalls.add(toolPart.toolCallId);
-              }
-
-              if (toolPart.state === 'output-available' && !emittedToolResults.has(toolPart.toolCallId)) {
-                const outputStr =
-                  typeof toolPart.output === 'string'
-                    ? toolPart.output
-                    : JSON.stringify(toolPart.output);
-                wsBroadcast.streamChunk(sessionId, {
-                  type: 'tool-result',
-                  toolName,
-                  toolCallId: toolPart.toolCallId,
-                  output: outputStr,
-                });
-                emittedToolResults.add(toolPart.toolCallId);
-              }
-            }
-            break;
-          }
-        }
-      }
-    }
-
-    // Emit finish and update session
-    wsBroadcast.streamChunk(sessionId, { type: 'finish', finishReason: 'stop' });
+    // Update session status
     sessionsRepo.finish(sessionId, 'finished');
 
     // Broadcast tree update
@@ -251,7 +162,7 @@ Complete this task. When done, provide a concise summary of what was accomplishe
     }
 
     console.log(`[Background] Completed session ${sessionId}`);
-    return prevText || 'Task completed.';
+    return fullText || 'Task completed.';
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error(`[Background] Error in session ${sessionId}:`, errorMsg);

@@ -1,0 +1,113 @@
+{
+  "model": {
+    "provider": "openrouter",
+    "model": "openai/gpt-5",
+    "modality": "llm"
+  },
+  "context": {
+    "systemPrompt": "You are concise.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Give a short weather summary."
+      }
+    ]
+  },
+  "uiMessages": [
+    {
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "reasoning",
+          "text": "Plan: check weather."
+        },
+        {
+          "type": "text",
+          "text": "Weather lookup "
+        }
+      ]
+    },
+    {
+      "parts": [
+        {
+          "type": "text",
+          "text": "Weather lookup done."
+        },
+        {
+          "type": "tool-weather_lookup",
+          "toolCallId": "call_1",
+          "state": "input-available",
+          "input": {
+            "location": "Berlin"
+          }
+        }
+      ]
+    },
+    {
+      "parts": [
+        {
+          "type": "tool-weather_lookup",
+          "toolCallId": "call_1",
+          "state": "output-available",
+          "output": {
+            "condition": "sunny",
+            "temperatureC": 23
+          }
+        },
+        {
+          "type": "text",
+          "text": "Weather lookup done. It is sunny."
+        }
+      ]
+    }
+  ],
+  "expectedEvents": [
+    {
+      "type": "start"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "reasoning-delta",
+      "text": "Plan: check weather."
+    },
+    {
+      "type": "text-delta",
+      "textDelta": "Weather lookup "
+    },
+    {
+      "type": "text-delta",
+      "textDelta": "done."
+    },
+    {
+      "type": "tool-call",
+      "toolName": "weather_lookup",
+      "toolCallId": "call_1",
+      "input": {
+        "location": "Berlin"
+      }
+    },
+    {
+      "type": "tool-result",
+      "toolName": "weather_lookup",
+      "toolCallId": "call_1",
+      "output": {
+        "condition": "sunny",
+        "temperatureC": 23
+      },
+      "isError": false
+    },
+    {
+      "type": "text-delta",
+      "textDelta": " It is sunny."
+    },
+    {
+      "type": "finish",
+      "finishReason": "stop"
+    }
+  ],
+  "expectedText": "Weather lookup done. It is sunny."
+}

@@ -14,20 +14,21 @@
  *       → Terminal 2
  */
 
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { streamText, stepCountIs, readUIMessageStream, type CoreMessage } from 'ai';
 import { wsBroadcast } from '../../api/websocket.js';
 import { loadAgentConfig } from '../loader.js';
-import { cliAgentTools } from './tools.js';
+import {
+  cliAgentToolDefinitions,
+  executeCliAgentTool,
+  isMacDaemonAvailable,
+} from '../../tools/cli-agent-tools.js';
 import { CliSessionsRepository, HandoffsRepository } from '../../db/index.js';
 import { generateSessionName } from '../../utils/session-names.js';
 import { formatVoiceContext, formatActiveProcesses, type HandoffPacket } from '../../context/handoff.js';
+import { llmRuntime } from '../llm-runtime.js';
+import { forwardLlmStreamToSession } from '../stream-events.js';
 
 // Re-export for use by developer-session.ts
-export { isMacDaemonAvailable } from './tools.js';
-
-// OpenRouter provider for grok-code-fast-1
-const OPENROUTER_API_KEY = process.env.OPEN_ROUTER_API_KEY;
+export { isMacDaemonAvailable };
 
 // Module-level context for orchestrator session tracking
 // Set before running the agent, accessed by tools during execution
@@ -105,10 +106,6 @@ export async function handleDeveloperRequest(
   console.log(`[CliAgent] Active processes: ${handoff.activeProcesses.length}`);
   console.log(`[CliAgent] Voice session ID: ${voiceSessionId ?? 'none'}`);
 
-  if (!OPENROUTER_API_KEY) {
-    return 'Fehler: OPEN_ROUTER_API_KEY environment variable is not set';
-  }
-
   // Load config and prompt from disk
   const { config, prompt: systemPrompt } = await loadAgentConfig(import.meta.dirname);
 
@@ -138,13 +135,7 @@ export async function handleDeveloperRequest(
   setCurrentOrchestratorId(subagent.id);
   const sessionId = subagent.id;
 
-  console.log(`[CliAgent] Using model: ${config.model} via OpenRouter`);
-
-  // Create OpenRouter provider with model from config
-  const openrouter = createOpenRouter({
-    apiKey: OPENROUTER_API_KEY,
-  });
-  const model = openrouter.chat(config.model);
+  console.log(`[CliAgent] Using model: ${config.model} via llm-runtime/openrouter`);
 
   // Load subagent's conversation history from database
   const subagentHistory: Array<{ role: string; content: string }> = JSON.parse(
@@ -160,7 +151,7 @@ export async function handleDeveloperRequest(
   handoffsRepo.setTargetSession(handoff.id, subagent.id);
 
   // Build messages array from subagent history + new request
-  const messages: CoreMessage[] = [];
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
   // Restore previous conversation turns as proper messages
   for (const msg of subagentHistory) {
@@ -191,141 +182,43 @@ export async function handleDeveloperRequest(
     // Emit user message for frontend display before starting stream
     wsBroadcast.streamChunk(sessionId, { type: 'user-transcript', text: request });
 
-    // Emit start event
-    wsBroadcast.streamChunk(sessionId, { type: 'start' });
-
-    // Start streaming with Vercel AI SDK (multi-turn messages)
-    const result = streamText({
-      model,
-      system: systemPrompt,
-      messages,
-      tools: cliAgentTools,
-      stopWhen: stepCountIs(config.maxSteps ?? 3),
-    });
-
-    // Use UIMessageStream for proper streaming (works around OpenRouter fullStream bug)
-    // Track state to emit deltas between updates
-    let prevText = '';
-    let prevReasoning = '';
-    let prevStepCount = 0;
-    const emittedToolCalls = new Set<string>();
-    const emittedToolResults = new Set<string>();
-    let updateCount = 0;
-
-    console.log(`[CliAgent] Starting UIMessageStream processing...`);
-
-    for await (const uiMessage of readUIMessageStream({
-      stream: result.toUIMessageStream(),
-    })) {
-      updateCount++;
-
-      // Process each part and emit events for changes
-      for (const part of uiMessage.parts) {
-        switch (part.type) {
-          case 'step-start': {
-            // Count step-starts to detect new steps
-            const stepStarts = uiMessage.parts.filter((p) => p.type === 'step-start').length;
-            if (stepStarts > prevStepCount) {
-              console.log(`[CliAgent] New step started (step ${stepStarts})`);
-              wsBroadcast.streamChunk(sessionId, { type: 'start-step' });
-              prevStepCount = stepStarts;
-            }
-            break;
+    console.log(`[CliAgent] Starting llm-runtime stream processing...`);
+    const { text: fullText, eventCount: updateCount } = await forwardLlmStreamToSession(
+      llmRuntime.streamOpenRouter({
+        model: {
+          provider: 'openrouter',
+          model: config.model,
+          modality: 'llm',
+        },
+        context: {
+          systemPrompt,
+          messages,
+          tools: cliAgentToolDefinitions,
+        },
+        options: {
+          maxSteps: config.maxSteps ?? 3,
+        },
+        toolHandler: executeCliAgentTool,
+      }),
+      {
+        sessionId,
+        onToolCall: ({ toolName, toolCallId }) => {
+          console.log(`[CliAgent] Tool called: ${toolName}`);
+          if (SESSION_CREATING_TOOLS.includes(toolName) && currentOrchestratorId) {
+            setPendingToolCall(currentOrchestratorId, toolCallId);
           }
-
-          case 'reasoning': {
-            // Emit reasoning deltas
-            const reasoningPart = part as { reasoning?: string; text?: string };
-            const currentReasoning = reasoningPart.text ?? reasoningPart.reasoning ?? '';
-            if (currentReasoning.length > prevReasoning.length) {
-              const delta = currentReasoning.slice(prevReasoning.length);
-              wsBroadcast.streamChunk(sessionId, { type: 'reasoning-delta', text: delta });
-              prevReasoning = currentReasoning;
-            }
-            break;
-          }
-
-          case 'text': {
-            // Emit text deltas (this is the main fix - streaming text!)
-            const textPart = part as { text: string };
-            if (textPart.text.length > prevText.length) {
-              const delta = textPart.text.slice(prevText.length);
-              wsBroadcast.streamChunk(sessionId, { type: 'text-delta', textDelta: delta });
-              prevText = textPart.text;
-            }
-            break;
-          }
-
-          default: {
-            // Handle tool invocation parts (type is "tool-{toolName}")
-            if (part.type.startsWith('tool-')) {
-              const toolPart = part as {
-                type: string;
-                toolCallId: string;
-                state: string;
-                input?: unknown;
-                output?: unknown;
-              };
-              const toolName = part.type.replace('tool-', '');
-
-              // Emit tool-call when we first see input-available
-              if (
-                toolPart.state === 'input-available' &&
-                !emittedToolCalls.has(toolPart.toolCallId)
-              ) {
-                console.log(`[CliAgent] Tool called: ${toolName}`);
-
-                // Track tool calls that create terminal sessions
-                if (SESSION_CREATING_TOOLS.includes(toolName) && currentOrchestratorId) {
-                  setPendingToolCall(currentOrchestratorId, toolPart.toolCallId);
-                }
-
-                wsBroadcast.streamChunk(sessionId, {
-                  type: 'tool-call',
-                  toolName,
-                  toolCallId: toolPart.toolCallId,
-                  input: toolPart.input,
-                });
-                emittedToolCalls.add(toolPart.toolCallId);
-              }
-
-              // Emit tool-result when we see output-available
-              if (
-                toolPart.state === 'output-available' &&
-                !emittedToolResults.has(toolPart.toolCallId)
-              ) {
-                const outputStr =
-                  typeof toolPart.output === 'string'
-                    ? toolPart.output
-                    : JSON.stringify(toolPart.output);
-
-                console.log(`[CliAgent] Tool result: ${toolName}`);
-                wsBroadcast.streamChunk(sessionId, {
-                  type: 'tool-result',
-                  toolName,
-                  toolCallId: toolPart.toolCallId,
-                  output: outputStr,
-                });
-                emittedToolResults.add(toolPart.toolCallId);
-              }
-            }
-            break;
-          }
-        }
+        },
+        onToolResult: ({ toolName }) => {
+          console.log(`[CliAgent] Tool result: ${toolName}`);
+        },
       }
-    }
-
-    // Get the final text
-    const fullText = prevText;
+    );
 
     console.log('[CliAgent] Stream processing complete:');
     console.log(`[CliAgent] Total updates: ${updateCount}`);
     console.log(`[CliAgent] Final text length: ${fullText.length}`);
     console.log(`[CliAgent] Final text: ${fullText || '(empty)'}`);
     console.log('========================================\n');
-
-    // Emit finish event
-    wsBroadcast.streamChunk(sessionId, { type: 'finish', finishReason: 'stop' });
 
     // Determine final response
     let finalResponse = fullText;

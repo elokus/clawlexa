@@ -47,6 +47,8 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@voiceclaw/ai-core": "workspace:*",
+    "@voiceclaw/llm-runtime": "workspace:*",
     "@deepgram/sdk": "^4.11.3",
     "ws": "^8.18.3"
   },

@@ -1,0 +1,36 @@
+{
+  "name": "@voiceclaw/llm-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Provider-agnostic text LLM runtime for VoiceClaw",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:contract": "bun test ./tests/provider-contract-replay.test.ts ./tests/runtime.test.ts",
+    "test:live": "bun test ./tests/integration/live-provider-contract.integration.test.ts",
+    "scratch:provider": "bun run ./scripts/scratch-provider.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.66",
+    "@ai-sdk/google": "^2.0.54",
+    "@ai-sdk/openai": "^2.0.59",
+    "@openrouter/ai-sdk-provider": "^1.4.1",
+    "@voiceclaw/ai-core": "workspace:*",
+    "ai": "^5.0.108"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

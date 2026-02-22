@@ -10,15 +10,20 @@
 
 import { tool } from 'ai';
 import { z } from 'zod';
+import type {
+  ToolCallContext,
+  ToolCallResult,
+  ToolDefinition,
+} from '@voiceclaw/ai-core/tools';
 import {
   generateId,
   CliSessionsRepository,
   CliEventsRepository,
-} from '../../db/index.js';
-import * as macClient from '../../tools/mac-client.js';
-import { waitForSessionCompletion } from '../../api/webhooks.js';
-import { wsBroadcast } from '../../api/websocket.js';
-import { getCurrentOrchestratorId, consumePendingToolCall } from './index.js';
+} from '../db/index.js';
+import * as macClient from './mac-client.js';
+import { waitForSessionCompletion } from '../api/webhooks.js';
+import { wsBroadcast } from '../api/websocket.js';
+import { getCurrentOrchestratorId, consumePendingToolCall } from '../subagents/cli/index.js';
 
 /**
  * Check if the Mac daemon is available.
@@ -599,3 +604,205 @@ export const cliAgentTools = {
   terminate_session: terminateSessionTool,
   terminate_all_sessions: terminateAllSessionsTool,
 };
+
+type CliAgentToolName =
+  | 'start_headless_session'
+  | 'start_interactive_session'
+  | 'send_session_input'
+  | 'check_session_status'
+  | 'list_active_sessions'
+  | 'terminate_session'
+  | 'terminate_all_sessions';
+
+const CLI_AGENT_TOOL_DEFINITION_BY_NAME: Record<CliAgentToolName, ToolDefinition> = {
+  start_headless_session: {
+    name: 'start_headless_session',
+    description: startHeadlessSessionTool.description ?? '',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_path: { type: 'string' },
+        prompt: { type: 'string' },
+      },
+      required: ['project_path', 'prompt'],
+      additionalProperties: false,
+    },
+  },
+  start_interactive_session: {
+    name: 'start_interactive_session',
+    description: startInteractiveSessionTool.description ?? '',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_path: { type: 'string' },
+        initial_prompt: { type: 'string' },
+      },
+      required: ['project_path', 'initial_prompt'],
+      additionalProperties: false,
+    },
+  },
+  send_session_input: {
+    name: 'send_session_input',
+    description: sendSessionInputTool.description ?? '',
+    parameters: {
+      type: 'object',
+      properties: {
+        terminal_id: { type: 'string' },
+        session_id: { type: 'string' },
+        input: { type: 'string' },
+      },
+      required: ['input'],
+      additionalProperties: false,
+    },
+  },
+  check_session_status: {
+    name: 'check_session_status',
+    description: checkSessionStatusTool.description ?? '',
+    parameters: {
+      type: 'object',
+      properties: {
+        terminal_id: { type: 'string' },
+        session_id: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  list_active_sessions: {
+    name: 'list_active_sessions',
+    description: listActiveSessionsTool.description ?? '',
+    parameters: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  terminate_session: {
+    name: 'terminate_session',
+    description: terminateSessionTool.description ?? '',
+    parameters: {
+      type: 'object',
+      properties: {
+        terminal_id: { type: 'string' },
+        session_id: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  terminate_all_sessions: {
+    name: 'terminate_all_sessions',
+    description: terminateAllSessionsTool.description ?? '',
+    parameters: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+};
+
+export const cliAgentToolDefinitions: ToolDefinition[] = Object.values(
+  CLI_AGENT_TOOL_DEFINITION_BY_NAME
+);
+
+async function invokeAiTool(
+  toolRegistration: any,
+  input: Record<string, unknown>
+): Promise<string> {
+  if (!toolRegistration.execute) {
+    return 'Tool execute handler is not available.';
+  }
+
+  const rawResult = await toolRegistration.execute(input, {
+    toolCallId: `manual_${Date.now().toString(36)}`,
+    messages: [],
+  });
+
+  if (typeof rawResult === 'string') {
+    return rawResult;
+  }
+
+  if (
+    typeof rawResult === 'object' &&
+    rawResult !== null &&
+    Symbol.asyncIterator in rawResult
+  ) {
+    let text = '';
+    for await (const chunk of rawResult as AsyncIterable<unknown>) {
+      if (typeof chunk === 'string') {
+        text += chunk;
+      } else {
+        text += JSON.stringify(chunk);
+      }
+    }
+    return text;
+  }
+
+  if (rawResult === undefined || rawResult === null) {
+    return '';
+  }
+
+  return typeof rawResult === 'string'
+    ? rawResult
+    : JSON.stringify(rawResult);
+}
+
+const CLI_AGENT_TOOL_EXECUTOR_BY_NAME: Record<
+  CliAgentToolName,
+  (input: Record<string, unknown>) => Promise<string>
+> = {
+  start_headless_session: (input) =>
+    invokeAiTool(startHeadlessSessionTool, {
+      project_path: String(input.project_path ?? ''),
+      prompt: String(input.prompt ?? ''),
+    }),
+  start_interactive_session: (input) =>
+    invokeAiTool(startInteractiveSessionTool, {
+      project_path: String(input.project_path ?? ''),
+      initial_prompt: String(input.initial_prompt ?? ''),
+    }),
+  send_session_input: (input) =>
+    invokeAiTool(sendSessionInputTool, {
+      terminal_id:
+        typeof input.terminal_id === 'string' ? input.terminal_id : undefined,
+      session_id:
+        typeof input.session_id === 'string' ? input.session_id : undefined,
+      input: String(input.input ?? ''),
+    }),
+  check_session_status: (input) =>
+    invokeAiTool(checkSessionStatusTool, {
+      terminal_id:
+        typeof input.terminal_id === 'string' ? input.terminal_id : undefined,
+      session_id:
+        typeof input.session_id === 'string' ? input.session_id : undefined,
+    }),
+  list_active_sessions: () => invokeAiTool(listActiveSessionsTool, {}),
+  terminate_session: (input) =>
+    invokeAiTool(terminateSessionTool, {
+      terminal_id:
+        typeof input.terminal_id === 'string' ? input.terminal_id : undefined,
+      session_id:
+        typeof input.session_id === 'string' ? input.session_id : undefined,
+    }),
+  terminate_all_sessions: () => invokeAiTool(terminateAllSessionsTool, {}),
+};
+
+export async function executeCliAgentTool(
+  name: string,
+  input: Record<string, unknown>,
+  context: ToolCallContext
+): Promise<ToolCallResult | string> {
+  const executor = CLI_AGENT_TOOL_EXECUTOR_BY_NAME[name as CliAgentToolName];
+  if (!executor) {
+    return {
+      invocationId: context.invocationId,
+      result: `Unknown CLI tool: ${name}`,
+      isError: true,
+    };
+  }
+
+  const result = await executor(input);
+  return {
+    invocationId: context.invocationId,
+    result,
+    isError: false,
+  };
+}
