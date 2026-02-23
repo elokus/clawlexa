@@ -325,6 +325,9 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               type: 'transcript',
               role: 'assistant',
               content: '',
+              generatedContent: '',
+              spokenContent: '',
+              spokenFinalized: false,
               timestamp,
               pending: true,
               itemId: event.itemId,
@@ -343,6 +346,60 @@ export function handleWebSocketMessage(msg: WSMessage): void {
             // Add/update assistant transcript in voice timeline
             const { voiceTimeline } = store;
             const deltaText = event.textDelta ?? '';
+            const channel = event.channel ?? 'generated';
+
+            if (channel === 'spoken') {
+              let targetItem: TranscriptItem | undefined;
+              if (event.itemId) {
+                const transcriptItems = voiceTimeline.filter(
+                  (item): item is TranscriptItem => item.type === 'transcript'
+                );
+                const idx = findTimelineItemByItemId(transcriptItems, event.itemId, 'assistant');
+                targetItem = idx >= 0 ? transcriptItems[idx] : undefined;
+              }
+
+              if (!targetItem) {
+                targetItem = [...voiceTimeline].reverse().find(
+                  (item): item is TranscriptItem =>
+                    item.type === 'transcript' && item.role === 'assistant' && !!item.pending
+                );
+              }
+
+              if (targetItem) {
+                const nextSpoken = `${targetItem.spokenContent ?? ''}${deltaText}`;
+                const nextContent = nextSpoken || targetItem.content;
+                store.updateVoiceTimelineItem(targetItem.id, {
+                  content: nextContent,
+                  spokenContent: nextSpoken,
+                  spokenChars: nextSpoken.length,
+                  spokenFinalized: false,
+                  order: event.order ?? targetItem.order,
+                } as Partial<TranscriptItem>);
+                break;
+              }
+
+              if (deltaText.trim().length === 0) {
+                break;
+              }
+
+              const spokenSeed: TranscriptItem = {
+                id: generateId(),
+                type: 'transcript',
+                role: 'assistant',
+                content: deltaText,
+                generatedContent: '',
+                spokenContent: deltaText,
+                spokenChars: deltaText.length,
+                spokenFinalized: false,
+                timestamp,
+                pending: true,
+                itemId: event.itemId,
+                order: event.order,
+              };
+              const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.order);
+              store.addVoiceTimelineItem(spokenSeed, insertIndex);
+              break;
+            }
 
             // Try to find existing placeholder by itemId first
             if (event.itemId) {
@@ -352,8 +409,11 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               const idx = findTimelineItemByItemId(transcriptItems, event.itemId, 'assistant');
               if (idx >= 0) {
                 const item = transcriptItems[idx];
+                const nextGenerated = `${item.generatedContent ?? item.content}${deltaText}`;
                 store.updateVoiceTimelineItem(item.id, {
-                  content: item.content + deltaText,
+                  content: item.spokenContent ?? item.content,
+                  generatedContent: nextGenerated,
+                  spokenFinalized: false,
                   order: event.order ?? item.order,
                 } as Partial<TranscriptItem>);
                 break;
@@ -370,7 +430,10 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 id: generateId(),
                 type: 'transcript',
                 role: 'assistant',
-                content: deltaText,
+                content: '',
+                generatedContent: deltaText,
+                spokenContent: '',
+                spokenFinalized: false,
                 timestamp,
                 pending: true,
                 itemId: event.itemId,
@@ -391,8 +454,11 @@ export function handleWebSocketMessage(msg: WSMessage): void {
             );
 
             if (lastPendingAssistant) {
+              const nextGenerated = `${lastPendingAssistant.generatedContent ?? lastPendingAssistant.content}${deltaText}`;
               store.updateVoiceTimelineItem(lastPendingAssistant.id, {
-                content: lastPendingAssistant.content + deltaText,
+                content: lastPendingAssistant.spokenContent ?? lastPendingAssistant.content,
+                generatedContent: nextGenerated,
+                spokenFinalized: false,
                 order: event.order ?? lastPendingAssistant.order,
               } as Partial<TranscriptItem>);
             } else {
@@ -403,13 +469,179 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 id: generateId(),
                 type: 'transcript',
                 role: 'assistant',
-                content: deltaText,
+                content: '',
+                generatedContent: deltaText,
+                spokenContent: '',
+                spokenFinalized: false,
                 timestamp,
                 pending: true,
                 order: event.order,
               };
               store.addVoiceTimelineItem(newItem);
             }
+            break;
+          }
+
+          case 'spoken-delta': {
+            const { voiceTimeline } = store;
+            const deltaText = event.textDelta ?? '';
+
+            let targetItem: TranscriptItem | undefined;
+            if (event.itemId) {
+              const transcriptItems = voiceTimeline.filter(
+                (item): item is TranscriptItem => item.type === 'transcript'
+              );
+              const idx = findTimelineItemByItemId(transcriptItems, event.itemId, 'assistant');
+              targetItem = idx >= 0 ? transcriptItems[idx] : undefined;
+            }
+
+            if (!targetItem) {
+              targetItem = [...voiceTimeline].reverse().find(
+                (item): item is TranscriptItem =>
+                  item.type === 'transcript' && item.role === 'assistant' && !!item.pending
+              );
+            }
+
+            if (targetItem) {
+              const nextSpoken = `${targetItem.spokenContent ?? ''}${deltaText}`;
+              const nextContent = nextSpoken || targetItem.content;
+              store.updateVoiceTimelineItem(targetItem.id, {
+                content: nextContent,
+                spokenContent: nextSpoken,
+                spokenChars: event.spokenChars ?? nextSpoken.length,
+                spokenWords: event.spokenWords,
+                playbackMs: event.playbackMs,
+                precision: event.precision,
+                spokenFinalized: false,
+                order: event.order ?? targetItem.order,
+              } as Partial<TranscriptItem>);
+              break;
+            }
+
+            if (deltaText.trim().length === 0) {
+              break;
+            }
+
+            const newItem: TranscriptItem = {
+              id: generateId(),
+              type: 'transcript',
+              role: 'assistant',
+              content: deltaText,
+              generatedContent: '',
+              spokenContent: deltaText,
+              spokenChars: event.spokenChars ?? deltaText.length,
+              spokenWords: event.spokenWords,
+              playbackMs: event.playbackMs,
+              precision: event.precision,
+              spokenFinalized: false,
+              timestamp,
+              pending: true,
+              itemId: event.itemId,
+              order: event.order,
+            };
+            const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.order);
+            store.addVoiceTimelineItem(newItem, insertIndex);
+            break;
+          }
+
+          case 'spoken-progress': {
+            const { voiceTimeline } = store;
+            const transcriptItems = voiceTimeline.filter(
+              (item): item is TranscriptItem => item.type === 'transcript'
+            );
+            const idx = findTimelineItemByItemId(transcriptItems, event.itemId, 'assistant');
+            if (idx < 0) {
+              const fallbackItem: TranscriptItem = {
+                id: generateId(),
+                type: 'transcript',
+                role: 'assistant',
+                content: '',
+                generatedContent: '',
+                spokenContent: '',
+                spokenChars: event.spokenChars,
+                spokenWords: event.spokenWords,
+                playbackMs: event.playbackMs,
+                precision: event.precision,
+                spokenFinalized: false,
+                timestamp,
+                pending: true,
+                itemId: event.itemId,
+              };
+              store.addVoiceTimelineItem(fallbackItem);
+              break;
+            }
+            const item = transcriptItems[idx];
+            const generatedText = item.generatedContent ?? item.content;
+            const spokenChars = Math.max(0, Math.min(generatedText.length, event.spokenChars));
+            const spokenContent = generatedText
+              ? generatedText.slice(0, spokenChars)
+              : (item.spokenContent ?? '').slice(0, event.spokenChars);
+            const content = spokenContent || item.content;
+            store.updateVoiceTimelineItem(item.id, {
+              content,
+              spokenContent,
+              spokenChars: event.spokenChars,
+              spokenWords: event.spokenWords,
+              playbackMs: event.playbackMs,
+              precision: event.precision,
+              spokenFinalized: false,
+            } as Partial<TranscriptItem>);
+            break;
+          }
+
+          case 'spoken-final': {
+            const { voiceTimeline } = store;
+            let targetItem: TranscriptItem | undefined;
+
+            if (event.itemId) {
+              const transcriptItems = voiceTimeline.filter(
+                (item): item is TranscriptItem => item.type === 'transcript'
+              );
+              const idx = findTimelineItemByItemId(transcriptItems, event.itemId, 'assistant');
+              targetItem = idx >= 0 ? transcriptItems[idx] : undefined;
+            }
+
+            if (!targetItem) {
+              targetItem = [...voiceTimeline].reverse().find(
+                (item): item is TranscriptItem =>
+                  item.type === 'transcript' && item.role === 'assistant'
+              );
+            }
+
+            if (targetItem) {
+              store.updateVoiceTimelineItem(targetItem.id, {
+                content: event.text,
+                spokenContent: event.text,
+                spokenChars: event.spokenChars ?? event.text.length,
+                spokenWords: event.spokenWords,
+                playbackMs: event.playbackMs,
+                precision: event.precision,
+                spokenFinalized: true,
+                pending: false,
+                order: event.order ?? targetItem.order,
+              } as Partial<TranscriptItem>);
+              break;
+            }
+
+            const newItem: TranscriptItem = {
+              id: generateId(),
+              type: 'transcript',
+              role: 'assistant',
+              content: event.text,
+              generatedContent: '',
+              spokenContent: event.text,
+              spokenChars: event.spokenChars ?? event.text.length,
+              spokenWords: event.spokenWords,
+              playbackMs: event.playbackMs,
+              precision: event.precision,
+              spokenFinalized: true,
+              timestamp,
+              pending: false,
+              itemId: event.itemId,
+              order: event.order,
+            };
+            const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.order);
+            store.addVoiceTimelineItem(newItem, insertIndex);
             break;
           }
 
@@ -523,7 +755,15 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 item.type === 'transcript' && item.role === 'assistant' && !!item.pending
             );
             for (const item of pendingAssistantItems) {
-              store.updateVoiceTimelineItem(item.id, { pending: false } as Partial<TranscriptItem>);
+              const spokenText = item.spokenContent || '';
+              const generatedText = item.generatedContent || item.content || '';
+              const content = item.spokenFinalized
+                ? (spokenText || generatedText)
+                : (generatedText || spokenText);
+              store.updateVoiceTimelineItem(item.id, {
+                content,
+                pending: false,
+              } as Partial<TranscriptItem>);
             }
             break;
           }

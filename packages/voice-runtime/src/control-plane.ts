@@ -110,6 +110,9 @@ export interface RuntimeVoiceConfigDocument {
       silenceMs: number;
       minSpeechMs: number;
       minRms: number;
+      spokenStreamEnabled: boolean;
+      wordAlignmentEnabled: boolean;
+      customSttMode: 'provider' | 'custom' | 'hybrid';
       llmCompletion: {
         enabled: boolean;
         shortTimeoutMs: number;
@@ -152,6 +155,9 @@ export interface RuntimeResolvedConfig {
     silenceMs: number;
     minSpeechMs: number;
     minRms: number;
+    spokenStreamEnabled: boolean;
+    wordAlignmentEnabled: boolean;
+    customSttMode: 'provider' | 'custom' | 'hybrid';
     llmCompletionEnabled: boolean;
     llmShortTimeoutMs: number;
     llmLongTimeoutMs: number;
@@ -312,6 +318,12 @@ export function createDefaultRuntimeVoiceConfig(
         silenceMs: parseInt(env.VOICE_TURN_SILENCE_MS ?? '700', 10),
         minSpeechMs: parseInt(env.VOICE_TURN_MIN_SPEECH_MS ?? '350', 10),
         minRms: parseFloat(env.VOICE_TURN_MIN_RMS ?? '0.015'),
+        spokenStreamEnabled: (env.VOICE_SPOKEN_STREAM_ENABLED ?? 'false') === 'true',
+        wordAlignmentEnabled: (env.VOICE_WORD_ALIGNMENT_ENABLED ?? 'false') === 'true',
+        customSttMode:
+          env.VOICE_CUSTOM_STT_MODE === 'custom' || env.VOICE_CUSTOM_STT_MODE === 'hybrid'
+            ? env.VOICE_CUSTOM_STT_MODE
+            : 'provider',
         llmCompletion: {
           enabled: (env.VOICE_LLM_COMPLETION_ENABLED ?? 'false') === 'true',
           shortTimeoutMs: parseInt(env.VOICE_LLM_SHORT_TIMEOUT_MS ?? '5000', 10),
@@ -515,6 +527,9 @@ export function resolveRuntimeConfigFromDocuments(input: {
       silenceMs: input.voiceConfig.voice.turn.silenceMs,
       minSpeechMs: input.voiceConfig.voice.turn.minSpeechMs,
       minRms: input.voiceConfig.voice.turn.minRms,
+      spokenStreamEnabled: input.voiceConfig.voice.turn.spokenStreamEnabled,
+      wordAlignmentEnabled: input.voiceConfig.voice.turn.wordAlignmentEnabled,
+      customSttMode: input.voiceConfig.voice.turn.customSttMode,
       llmCompletionEnabled: input.voiceConfig.voice.turn.llmCompletion.enabled,
       llmShortTimeoutMs: input.voiceConfig.voice.turn.llmCompletion.shortTimeoutMs,
       llmLongTimeoutMs: input.voiceConfig.voice.turn.llmCompletion.longTimeoutMs,

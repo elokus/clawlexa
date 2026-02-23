@@ -199,4 +199,152 @@ describe('VoiceSessionImpl interruption resolution', () => {
     expect(interruptionContexts[0]?.truncated).toBe(true);
     expect(historyUpdates.at(-1)?.[0]?.text).toBe('Hello ');
   });
+
+  test('resolves interruption when adapter emits audioInterrupted', async () => {
+    const adapter = new FakeAdapter();
+    const transport = new FakeTransport();
+    const session = new VoiceSessionImpl(adapter, {
+      provider: 'ultravox-ws',
+      instructions: 'Be concise',
+      voice: 'echo',
+      model: 'test-model',
+    });
+
+    const interruptionContexts: Array<{ spokenText: string; fullText: string; truncated: boolean }> = [];
+    const historyUpdates: VoiceHistoryItem[][] = [];
+
+    session.on('interruptionResolved', (context) => {
+      interruptionContexts.push({
+        spokenText: context.spokenText,
+        fullText: context.fullText,
+        truncated: context.truncated,
+      });
+    });
+
+    session.on('historyUpdated', (history) => {
+      historyUpdates.push(history);
+    });
+
+    await session.attachClientTransport(transport);
+    await session.connect();
+
+    adapter.emit('historyUpdated', [
+      {
+        id: 'assistant-2',
+        role: 'assistant',
+        text: 'Hello world',
+        createdAt: Date.now(),
+      },
+    ]);
+    adapter.emit('assistantItemCreated', 'assistant-2');
+    adapter.emit('transcriptDelta', 'Hello ', 'assistant', 'assistant-2');
+    adapter.emit('audio', audioFrame(100));
+    adapter.emit('transcript', 'Hello world', 'assistant', 'assistant-2');
+
+    transport.setPlaybackPositionMs(80);
+    adapter.emit('audioInterrupted');
+
+    expect(interruptionContexts).toHaveLength(1);
+    expect(interruptionContexts[0]?.fullText).toBe('Hello world');
+    expect(interruptionContexts[0]?.spokenText).toBe('Hello ');
+    expect(interruptionContexts[0]?.truncated).toBe(true);
+    expect(historyUpdates.at(-1)?.[0]?.text).toBe('Hello ');
+    expect(transport.interruptedCount).toBe(1);
+  });
+
+  test('emits synthesized spoken channel events from audio progression', async () => {
+    const adapter = new FakeAdapter();
+    const transport = new FakeTransport();
+    const session = new VoiceSessionImpl(adapter, {
+      provider: 'ultravox-ws',
+      instructions: 'Be concise',
+      voice: 'echo',
+      model: 'test-model',
+    });
+
+    const spokenDeltas: Array<{ delta: string; itemId?: string }> = [];
+    const spokenProgress: Array<{ itemId: string; spokenChars: number; spokenWords: number }> = [];
+    const spokenFinals: Array<{ text: string; itemId?: string; precision?: string }> = [];
+
+    session.on('spokenDelta', (delta, _role, itemId) => {
+      spokenDeltas.push({ delta, itemId });
+    });
+    session.on('spokenProgress', (itemId, progress) => {
+      spokenProgress.push({
+        itemId,
+        spokenChars: progress.spokenChars,
+        spokenWords: progress.spokenWords,
+      });
+    });
+    session.on('spokenFinal', (text, _role, itemId, meta) => {
+      spokenFinals.push({ text, itemId, precision: meta?.precision });
+    });
+
+    await session.attachClientTransport(transport);
+    await session.connect();
+
+    adapter.emit('assistantItemCreated', 'assistant-3');
+    adapter.emit('transcriptDelta', 'Hello ', 'assistant', 'assistant-3');
+    transport.setPlaybackPositionMs(100);
+    adapter.emit('audio', audioFrame(100));
+    adapter.emit('transcript', 'Hello world', 'assistant', 'assistant-3');
+    adapter.emit('turnComplete');
+
+    expect(spokenDeltas).toEqual([{ delta: 'Hello ', itemId: 'assistant-3' }]);
+    expect(spokenProgress.length).toBeGreaterThan(0);
+    expect(spokenProgress[0]?.itemId).toBe('assistant-3');
+    expect(spokenProgress[0]?.spokenChars).toBe(6);
+    expect(spokenProgress[0]?.spokenWords).toBe(1);
+    expect(spokenFinals).toEqual([
+      {
+        text: 'Hello ',
+        itemId: 'assistant-3',
+        precision: 'segment',
+      },
+    ]);
+  });
+
+  test('uses adapter spoken progress for interruption context when available', async () => {
+    const adapter = new FakeAdapter();
+    const transport = new FakeTransport();
+    const session = new VoiceSessionImpl(adapter, {
+      provider: 'ultravox-ws',
+      instructions: 'Be concise',
+      voice: 'echo',
+      model: 'test-model',
+    });
+
+    const interruptionContexts: Array<{
+      spokenText: string;
+      precision?: string;
+      spokenWordCount?: number;
+    }> = [];
+
+    session.on('interruptionResolved', (context) => {
+      interruptionContexts.push({
+        spokenText: context.spokenText,
+        precision: context.precision,
+        spokenWordCount: context.spokenWordCount,
+      });
+    });
+
+    await session.attachClientTransport(transport);
+    await session.connect();
+
+    adapter.emit('assistantItemCreated', 'assistant-4');
+    adapter.emit('transcript', 'Hello world', 'assistant', 'assistant-4');
+    adapter.emit('spokenProgress', 'assistant-4', {
+      spokenChars: 6,
+      spokenWords: 1,
+      playbackMs: 120,
+      precision: 'segment',
+    });
+
+    session.interrupt();
+
+    expect(interruptionContexts).toHaveLength(1);
+    expect(interruptionContexts[0]?.spokenText).toBe('Hello ');
+    expect(interruptionContexts[0]?.precision).toBe('segment');
+    expect(interruptionContexts[0]?.spokenWordCount).toBe(1);
+  });
 });

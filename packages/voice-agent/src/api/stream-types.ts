@@ -21,7 +21,43 @@
  */
 export type AISDKStreamEvent =
   // Text streaming
-  | { type: 'text-delta'; textDelta: string; itemId?: string; order?: number }
+  | {
+      type: 'text-delta';
+      textDelta: string;
+      itemId?: string;
+      order?: number;
+      channel?: 'generated' | 'spoken';
+    }
+
+  // Spoken transcript (custom extension for voice sessions)
+  | {
+      type: 'spoken-delta';
+      textDelta: string;
+      itemId?: string;
+      order?: number;
+      spokenChars?: number;
+      spokenWords?: number;
+      playbackMs?: number;
+      precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    }
+  | {
+      type: 'spoken-progress';
+      itemId: string;
+      spokenChars: number;
+      spokenWords: number;
+      playbackMs: number;
+      precision: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    }
+  | {
+      type: 'spoken-final';
+      text: string;
+      itemId?: string;
+      order?: number;
+      spokenChars?: number;
+      spokenWords?: number;
+      playbackMs?: number;
+      precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    }
 
   // User transcript (custom extension for voice sessions)
   | { type: 'user-transcript'; text: string; itemId?: string; order?: number }

@@ -16,6 +16,13 @@ export interface TranscriptItem extends BaseTimelineItem {
   type: 'transcript';
   role: MessageRole;
   content: string;
+  generatedContent?: string;
+  spokenContent?: string;
+  spokenChars?: number;
+  spokenWords?: number;
+  playbackMs?: number;
+  precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+  spokenFinalized?: boolean;
   pending?: boolean;
   itemId?: string; // OpenAI item correlation for message ordering
   order?: number; // Runtime-normalized conversation order

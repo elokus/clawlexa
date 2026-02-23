@@ -43,6 +43,7 @@ export type { SessionStatus, AgentState, ActivityBlock, ReasoningBlock, ToolBloc
 
 /** Message role in AI SDK format */
 export type MessageRole = 'user' | 'assistant' | 'system';
+export type SpokenPrecision = 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
 
 /** Message part types following AI SDK format */
 export type MessagePart =
@@ -59,6 +60,13 @@ export interface Message {
   createdAt: number;
   itemId?: string;
   order?: number;
+  generatedText?: string;
+  spokenText?: string;
+  spokenChars?: number;
+  spokenWords?: number;
+  playbackMs?: number;
+  precision?: SpokenPrecision;
+  spokenFinalized?: boolean;
 }
 
 /** Session state in the unified model */
@@ -76,7 +84,41 @@ export interface SessionState {
 
 /** AI SDK stream event types */
 export type AISDKStreamEvent =
-  | { type: 'text-delta'; textDelta: string; itemId?: string; order?: number }
+  | {
+      type: 'text-delta';
+      textDelta: string;
+      itemId?: string;
+      order?: number;
+      channel?: 'generated' | 'spoken';
+    }
+  | {
+      type: 'spoken-delta';
+      textDelta: string;
+      itemId?: string;
+      order?: number;
+      spokenChars?: number;
+      spokenWords?: number;
+      playbackMs?: number;
+      precision?: SpokenPrecision;
+    }
+  | {
+      type: 'spoken-progress';
+      itemId: string;
+      spokenChars: number;
+      spokenWords: number;
+      playbackMs: number;
+      precision: SpokenPrecision;
+    }
+  | {
+      type: 'spoken-final';
+      text: string;
+      itemId?: string;
+      order?: number;
+      spokenChars?: number;
+      spokenWords?: number;
+      playbackMs?: number;
+      precision?: SpokenPrecision;
+    }
   | { type: 'user-transcript'; text: string; itemId?: string; order?: number } // Custom extension for voice user messages
   // Placeholders for message ordering (custom extension for voice sessions)
   | { type: 'user-placeholder'; itemId: string; previousItemId?: string; order?: number }
@@ -385,11 +427,22 @@ function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
   for (const message of orderedMessages) {
     for (const part of message.parts) {
       if (part.type === 'text') {
+        const isAssistant = message.role === 'assistant';
+        const generatedContent = isAssistant ? message.generatedText ?? part.text : undefined;
+        const spokenContent = isAssistant ? message.spokenText : undefined;
+        const content = spokenContent ?? generatedContent ?? part.text;
         timeline.push({
           id: generateId(),
           type: 'transcript',
           role: message.role as 'user' | 'assistant',
-          content: part.text,
+          content,
+          generatedContent,
+          spokenContent,
+          spokenChars: message.spokenChars,
+          spokenWords: message.spokenWords,
+          playbackMs: message.playbackMs,
+          precision: message.precision,
+          spokenFinalized: message.spokenFinalized,
           timestamp: message.createdAt,
           pending: false,
           itemId: message.itemId,
@@ -988,6 +1041,9 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       }
 
       const messages = [...session.messages];
+      const spokenFirstVoiceSession =
+        session.type === 'voice' ||
+        (s.sessionTree?.id === sessionId && s.sessionTree?.type === 'voice');
       const lastMessage = messages[messages.length - 1];
       const isAssistantMessage = lastMessage?.role === 'assistant';
       const findMessageInsertIndexByOrder = (order?: number): number | null => {
@@ -1023,30 +1079,108 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         }
         return -1;
       };
-      const appendTextToMessage = (index: number, text: string): void => {
+      const readTextFromMessage = (index: number): string => {
+        const target = messages[index];
+        if (!target) return '';
+        for (let partIndex = target.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+          const part = target.parts[partIndex];
+          if (part?.type === 'text') {
+            return part.text;
+          }
+        }
+        return '';
+      };
+      const setTextForMessage = (index: number, text: string): void => {
         const target = messages[index];
         if (!target) return;
         const targetParts = [...target.parts];
-        const lastPart = targetParts[targetParts.length - 1];
-        if (lastPart?.type === 'text') {
-          targetParts[targetParts.length - 1] = {
-            type: 'text',
-            text: lastPart.text + text,
-          };
+        const textPartIndex = targetParts.findIndex((part) => part.type === 'text');
+        if (textPartIndex >= 0) {
+          targetParts[textPartIndex] = { type: 'text', text };
         } else {
           targetParts.push({ type: 'text', text });
         }
         messages[index] = { ...target, parts: targetParts };
       };
+      const resolveDisplayText = (
+        spokenText: string | undefined,
+        generatedText: string,
+        currentText: string
+      ): string => {
+        if (spokenFirstVoiceSession) {
+          return spokenText ?? currentText;
+        }
+        return spokenText ?? generatedText;
+      };
 
       switch (event.type) {
         case 'text-delta': {
           const deltaText = event.textDelta ?? '';
+          const channel = event.channel ?? 'generated';
+
+          if (channel === 'spoken') {
+            let messageIdx = -1;
+            if (event.itemId) {
+              messageIdx = findMessageIndexByItemId('assistant', event.itemId);
+            } else if (isAssistantMessage) {
+              messageIdx = messages.length - 1;
+            }
+
+            if (messageIdx < 0) {
+              const created: Message = {
+                id: generateId(),
+                role: 'assistant',
+                parts: [{ type: 'text', text: deltaText }],
+                createdAt: Date.now(),
+                itemId: event.itemId,
+                order: event.order,
+                generatedText: '',
+                spokenText: deltaText,
+                spokenFinalized: false,
+              };
+              insertMessage(created, findMessageInsertIndexByOrder(event.order));
+              break;
+            }
+
+            const target = messages[messageIdx]!;
+            const nextSpoken = `${target.spokenText ?? ''}${deltaText}`;
+            const generatedText =
+              target.generatedText ??
+              readTextFromMessage(messageIdx);
+            const currentText = readTextFromMessage(messageIdx);
+            const displayText = resolveDisplayText(nextSpoken, generatedText, currentText);
+            messages[messageIdx] = {
+              ...target,
+              order: event.order ?? target.order,
+              spokenText: nextSpoken,
+              spokenChars: nextSpoken.length,
+              spokenFinalized: false,
+            };
+            setTextForMessage(messageIdx, displayText);
+            break;
+          }
 
           if (event.itemId) {
             const messageIdx = findMessageIndexByItemId('assistant', event.itemId);
             if (messageIdx >= 0) {
-              appendTextToMessage(messageIdx, deltaText);
+              const target = messages[messageIdx]!;
+              const fallbackGenerated =
+                target.generatedText ??
+                target.spokenText ??
+                readTextFromMessage(messageIdx);
+              const generatedText = fallbackGenerated + deltaText;
+              messages[messageIdx] = {
+                ...target,
+                generatedText,
+                order: event.order ?? target.order,
+              };
+              const currentText = readTextFromMessage(messageIdx);
+              const displayText = resolveDisplayText(
+                messages[messageIdx]?.spokenText,
+                generatedText,
+                currentText
+              );
+              setTextForMessage(messageIdx, displayText);
               if (event.order != null && messages[messageIdx]?.order == null) {
                 messages[messageIdx] = { ...messages[messageIdx]!, order: event.order };
               }
@@ -1061,27 +1195,203 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             const created: Message = {
               id: generateId(),
               role: 'assistant',
-              parts: [{ type: 'text', text: deltaText }],
+              parts: [{ type: 'text', text: spokenFirstVoiceSession ? '' : deltaText }],
               createdAt: Date.now(),
               itemId: event.itemId,
               order: event.order,
+              generatedText: deltaText,
+              spokenFinalized: false,
             };
             insertMessage(created, findMessageInsertIndexByOrder(event.order));
             break;
           }
 
           if (isAssistantMessage) {
-            appendTextToMessage(messages.length - 1, deltaText);
+            const target = messages[messages.length - 1]!;
+            const fallbackGenerated =
+              target.generatedText ??
+              target.spokenText ??
+              readTextFromMessage(messages.length - 1);
+            const generatedText = fallbackGenerated + deltaText;
+            messages[messages.length - 1] = {
+              ...target,
+              generatedText,
+              order: event.order ?? target.order,
+            };
+            const currentText = readTextFromMessage(messages.length - 1);
+            const displayText = resolveDisplayText(
+              messages[messages.length - 1]?.spokenText,
+              generatedText,
+              currentText
+            );
+            setTextForMessage(messages.length - 1, displayText);
           } else {
             // Create new assistant message
             messages.push({
               id: generateId(),
               role: 'assistant',
-              parts: [{ type: 'text', text: deltaText }],
+              parts: [{ type: 'text', text: spokenFirstVoiceSession ? '' : deltaText }],
               createdAt: Date.now(),
               order: event.order,
+              generatedText: deltaText,
+              spokenFinalized: false,
             });
           }
+          break;
+        }
+
+        case 'spoken-delta': {
+          const spokenDelta = event.textDelta ?? '';
+          const metadata = {
+            spokenChars: event.spokenChars,
+            spokenWords: event.spokenWords,
+            playbackMs: event.playbackMs,
+            precision: event.precision,
+          };
+
+          let messageIdx = -1;
+          if (event.itemId) {
+            messageIdx = findMessageIndexByItemId('assistant', event.itemId);
+          } else if (isAssistantMessage) {
+            messageIdx = messages.length - 1;
+          }
+
+          if (messageIdx < 0) {
+            const created: Message = {
+              id: generateId(),
+              role: 'assistant',
+              parts: [{ type: 'text', text: spokenDelta }],
+              createdAt: Date.now(),
+              itemId: event.itemId,
+              order: event.order,
+              generatedText: '',
+              spokenText: spokenDelta,
+              spokenChars: metadata.spokenChars ?? spokenDelta.length,
+              spokenWords: metadata.spokenWords,
+              playbackMs: metadata.playbackMs,
+              precision: metadata.precision,
+              spokenFinalized: false,
+            };
+            insertMessage(created, findMessageInsertIndexByOrder(event.order));
+            break;
+          }
+
+          const target = messages[messageIdx]!;
+          const nextSpoken = `${target.spokenText ?? ''}${spokenDelta}`;
+          const generatedText =
+            target.generatedText ??
+            readTextFromMessage(messageIdx);
+          const currentText = readTextFromMessage(messageIdx);
+          const displayText = resolveDisplayText(nextSpoken, generatedText, currentText);
+          messages[messageIdx] = {
+            ...target,
+            order: event.order ?? target.order,
+            spokenText: nextSpoken,
+            spokenChars: metadata.spokenChars ?? nextSpoken.length,
+            spokenWords: metadata.spokenWords ?? target.spokenWords,
+            playbackMs: metadata.playbackMs ?? target.playbackMs,
+            precision: metadata.precision ?? target.precision,
+            spokenFinalized: false,
+          };
+          setTextForMessage(messageIdx, displayText);
+          break;
+        }
+
+        case 'spoken-progress': {
+          const messageIdx = findMessageIndexByItemId('assistant', event.itemId);
+          if (messageIdx < 0) {
+            // Spoken progress may arrive before any assistant text delta (for example
+            // initial zero-cursor signal). Create a stub so generated deltas that
+            // follow can stay hidden until spoken text is available.
+            const created: Message = {
+              id: generateId(),
+              role: 'assistant',
+              parts: [{ type: 'text', text: '' }],
+              createdAt: Date.now(),
+              itemId: event.itemId,
+              generatedText: '',
+              spokenText: '',
+              spokenChars: event.spokenChars,
+              spokenWords: event.spokenWords,
+              playbackMs: event.playbackMs,
+              precision: event.precision,
+              spokenFinalized: false,
+            };
+            messages.push(created);
+            break;
+          }
+
+          const target = messages[messageIdx]!;
+          const generatedText = target.generatedText ?? readTextFromMessage(messageIdx);
+          const previousSpoken = target.spokenText ?? '';
+          let spokenText = previousSpoken;
+          if (generatedText) {
+            const spokenChars = Math.max(0, Math.min(generatedText.length, event.spokenChars));
+            spokenText = generatedText.slice(0, spokenChars);
+          } else if (event.spokenChars < previousSpoken.length) {
+            spokenText = previousSpoken.slice(0, event.spokenChars);
+          }
+          const currentText = readTextFromMessage(messageIdx);
+          const displayText = resolveDisplayText(spokenText, generatedText, currentText);
+          messages[messageIdx] = {
+            ...target,
+            spokenText,
+            spokenChars: event.spokenChars,
+            spokenWords: event.spokenWords,
+            playbackMs: event.playbackMs,
+            precision: event.precision,
+            spokenFinalized: false,
+          };
+          setTextForMessage(messageIdx, displayText);
+          break;
+        }
+
+        case 'spoken-final': {
+          let messageIdx = -1;
+          if (event.itemId) {
+            messageIdx = findMessageIndexByItemId('assistant', event.itemId);
+          } else if (isAssistantMessage) {
+            messageIdx = messages.length - 1;
+          }
+
+          if (messageIdx < 0) {
+            const created: Message = {
+              id: generateId(),
+              role: 'assistant',
+              parts: [{ type: 'text', text: event.text }],
+              createdAt: Date.now(),
+              itemId: event.itemId,
+              order: event.order,
+              generatedText: '',
+              spokenText: event.text,
+              spokenChars: event.spokenChars ?? event.text.length,
+              spokenWords: event.spokenWords,
+              playbackMs: event.playbackMs,
+              precision: event.precision,
+              spokenFinalized: true,
+            };
+            insertMessage(created, findMessageInsertIndexByOrder(event.order));
+            break;
+          }
+
+          const target = messages[messageIdx]!;
+          const generatedText =
+            target.generatedText ??
+            readTextFromMessage(messageIdx);
+          const spokenText = event.text;
+          const currentText = readTextFromMessage(messageIdx);
+          const displayText = resolveDisplayText(spokenText, generatedText, currentText);
+          messages[messageIdx] = {
+            ...target,
+            order: event.order ?? target.order,
+            spokenText,
+            spokenChars: event.spokenChars ?? spokenText.length,
+            spokenWords: event.spokenWords ?? target.spokenWords,
+            playbackMs: event.playbackMs ?? target.playbackMs,
+            precision: event.precision ?? target.precision,
+            spokenFinalized: true,
+          };
+          setTextForMessage(messageIdx, displayText);
           break;
         }
 
@@ -1178,6 +1488,26 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         }
 
         case 'finish':
+          if (spokenFirstVoiceSession) {
+            for (let idx = 0; idx < messages.length; idx += 1) {
+              const message = messages[idx];
+              if (!message || message.role !== 'assistant') {
+                continue;
+              }
+              if (message.spokenFinalized) {
+                continue;
+              }
+              const generatedText = message.generatedText ?? '';
+              if (generatedText) {
+                setTextForMessage(idx, generatedText);
+                continue;
+              }
+              const spokenText = message.spokenText ?? '';
+              if (spokenText) {
+                setTextForMessage(idx, spokenText);
+              }
+            }
+          }
           session = { ...session, status: 'finished' };
           break;
 

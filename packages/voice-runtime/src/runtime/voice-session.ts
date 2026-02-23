@@ -5,6 +5,7 @@ import type {
   AudioNegotiation,
   ClientTransport,
   EventHandler,
+  InterruptionContext,
   ProviderAdapter,
   ProviderCapabilities,
   SessionInput,
@@ -37,6 +38,14 @@ export class VoiceSessionImpl implements VoiceSession {
   private readonly conversationOrderByItemId = new Map<string, number>();
   private lastUserConversationOrder: number | undefined;
   private lastAssistantConversationOrder: number | undefined;
+  private adapterProvidedSpokenEvents = false;
+  private activeAssistantItemId: string | null = null;
+  private spokenCursorItemId: string | null = null;
+  private spokenCursorText = '';
+  private spokenCursorPlaybackMs = 0;
+  private spokenCursorPrecision: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps' =
+    'segment';
+  private readonly spokenFinalizedItemIds = new Set<string>();
 
   constructor(adapter: ProviderAdapter, input: SessionInput) {
     this.adapter = adapter;
@@ -48,6 +57,7 @@ export class VoiceSessionImpl implements VoiceSession {
   async connect(): Promise<void> {
     if (this.connected) return;
     this.resetConversationOrderState();
+    this.resetSpokenSynthesisState();
     this.negotiation = await this.adapter.connect(this.input);
     this.connected = true;
     // Pre-warm stream resamplers for any rate mismatches
@@ -68,6 +78,7 @@ export class VoiceSessionImpl implements VoiceSession {
     this.interruptionTracker.reset();
     this.resetAssistantTranscriptDedup();
     this.resetConversationOrderState();
+    this.resetSpokenSynthesisState();
     this.resamplerPool.clear();
   }
 
@@ -240,6 +251,7 @@ export class VoiceSessionImpl implements VoiceSession {
   private forwardAssistantAudio(frame: AudioFrame): void {
     if (!this.clientTransport) {
       this.interruptionTracker.trackAssistantAudio(frame);
+      this.emitSynthesizedSpokenProgress();
       this.events.emit('audio', frame);
       return;
     }
@@ -260,6 +272,7 @@ export class VoiceSessionImpl implements VoiceSession {
     }
     this.interruptionTracker.trackAssistantAudio(frameForTransport);
     this.clientTransport.playAudioFrame(frameForTransport);
+    this.emitSynthesizedSpokenProgress();
     this.events.emit('audio', frameForTransport);
   }
 
@@ -279,8 +292,15 @@ export class VoiceSessionImpl implements VoiceSession {
       }
     }
 
+    if (this.adapterProvidedSpokenEvents) {
+      this.emitInterruptedSpokenFinal(context);
+    } else {
+      this.emitSynthesizedSpokenProgress(context);
+      this.emitSynthesizedSpokenFinal(context);
+    }
     this.events.emit('interruptionResolved', context);
     this.interruptionTracker.reset();
+    this.activeAssistantItemId = null;
   }
 
   private getPlaybackPositionMs(): number | undefined {
@@ -319,6 +339,7 @@ export class VoiceSessionImpl implements VoiceSession {
       this.interruptionTracker.reset();
       this.resetAssistantTranscriptDedup();
       this.resetConversationOrderState();
+      this.resetSpokenSynthesisState();
       this.events.emit('disconnected', reason);
     });
 
@@ -337,6 +358,7 @@ export class VoiceSessionImpl implements VoiceSession {
       if (!interruptionRelevant) {
         return;
       }
+      this.resolveInterruptionContext();
       if (this.clientTransport) {
         this.clientTransport.interruptPlayback();
       }
@@ -369,6 +391,24 @@ export class VoiceSessionImpl implements VoiceSession {
       this.events.emit('transcriptDelta', delta, role, itemId, order);
     });
 
+    this.adapter.on('spokenDelta', (delta, role, itemId, meta) => {
+      this.adapterProvidedSpokenEvents = true;
+      this.interruptionTracker.trackAssistantSpokenDelta(delta, itemId, meta);
+      this.events.emit('spokenDelta', delta, role, itemId, meta);
+    });
+
+    this.adapter.on('spokenProgress', (itemId, progress) => {
+      this.adapterProvidedSpokenEvents = true;
+      this.interruptionTracker.trackAssistantSpokenProgress(itemId, progress);
+      this.events.emit('spokenProgress', itemId, progress);
+    });
+
+    this.adapter.on('spokenFinal', (text, role, itemId, meta) => {
+      this.adapterProvidedSpokenEvents = true;
+      this.interruptionTracker.trackAssistantSpokenFinal(text, itemId, meta);
+      this.events.emit('spokenFinal', text, role, itemId, meta);
+    });
+
     this.adapter.on('userItemCreated', (itemId, orderHint) => {
       const order = this.getOrCreateConversationOrder(itemId, orderHint);
       this.lastUserConversationOrder = order;
@@ -377,8 +417,16 @@ export class VoiceSessionImpl implements VoiceSession {
 
     this.adapter.on('assistantItemCreated', (itemId, previousItemId, orderHint) => {
       this.interruptionTracker.beginAssistantItem(itemId);
+      this.activeAssistantItemId = itemId;
       this.assistantDeltaSeenThisTurn = false;
       this.assistantDeltaItemIds.delete(itemId);
+      this.spokenFinalizedItemIds.delete(itemId);
+      if (this.spokenCursorItemId !== itemId) {
+        this.spokenCursorItemId = itemId;
+        this.spokenCursorText = '';
+        this.spokenCursorPlaybackMs = 0;
+        this.spokenCursorPrecision = 'segment';
+      }
       const order = this.getOrCreateConversationOrderAfter(itemId, previousItemId, orderHint);
       this.lastAssistantConversationOrder = order;
       this.events.emit('assistantItemCreated', itemId, previousItemId, order);
@@ -411,9 +459,12 @@ export class VoiceSessionImpl implements VoiceSession {
     });
 
     this.adapter.on('turnComplete', () => {
+      this.emitSynthesizedSpokenProgress();
+      this.emitSynthesizedSpokenFinal();
       this.events.emit('turnComplete');
       this.interruptionTracker.reset();
       this.resetAssistantTranscriptDedup();
+      this.activeAssistantItemId = null;
     });
 
     this.adapter.on('toolCancelled', (callIds) => {
@@ -435,6 +486,142 @@ export class VoiceSessionImpl implements VoiceSession {
   private resetAssistantTranscriptDedup(): void {
     this.assistantDeltaItemIds.clear();
     this.assistantDeltaSeenThisTurn = false;
+  }
+
+  private resetSpokenSynthesisState(): void {
+    this.adapterProvidedSpokenEvents = false;
+    this.activeAssistantItemId = null;
+    this.spokenCursorItemId = null;
+    this.spokenCursorText = '';
+    this.spokenCursorPlaybackMs = 0;
+    this.spokenCursorPrecision = 'segment';
+    this.spokenFinalizedItemIds.clear();
+  }
+
+  private emitSynthesizedSpokenProgress(context?: InterruptionContext): void {
+    if (this.adapterProvidedSpokenEvents) {
+      return;
+    }
+    const resolved = context ?? this.interruptionTracker.resolve(this.getPlaybackPositionMs());
+    if (!resolved) {
+      return;
+    }
+
+    const itemId = resolved.itemId ?? this.activeAssistantItemId;
+    if (!itemId) {
+      return;
+    }
+
+    const precision = resolved.precision ?? 'ratio';
+    const spokenText = resolved.spokenText ?? '';
+    if (this.spokenCursorItemId !== itemId) {
+      this.spokenCursorItemId = itemId;
+      this.spokenCursorText = '';
+      this.spokenCursorPlaybackMs = 0;
+      this.spokenCursorPrecision = precision;
+    }
+
+    const previousSpokenText = this.spokenCursorText;
+    const previousPlaybackMs = this.spokenCursorPlaybackMs;
+    const previousPrecision = this.spokenCursorPrecision;
+    let delta = '';
+    if (spokenText.length > previousSpokenText.length && spokenText.startsWith(previousSpokenText)) {
+      delta = spokenText.slice(previousSpokenText.length);
+    }
+
+    const spokenChars = spokenText.length;
+    const spokenWords = countWords(spokenText);
+    const playbackMs = resolved.playbackPositionMs;
+    const progressChanged =
+      spokenText !== previousSpokenText ||
+      playbackMs !== previousPlaybackMs ||
+      precision !== previousPrecision;
+
+    if (delta.length > 0) {
+      this.events.emit('spokenDelta', delta, 'assistant', itemId, {
+        spokenChars,
+        spokenWords,
+        playbackMs,
+        precision,
+      });
+    }
+
+    if (progressChanged) {
+      this.events.emit('spokenProgress', itemId, {
+        spokenChars,
+        spokenWords,
+        playbackMs,
+        precision,
+      });
+    }
+
+    this.spokenCursorItemId = itemId;
+    this.spokenCursorText = spokenText;
+    this.spokenCursorPlaybackMs = playbackMs;
+    this.spokenCursorPrecision = precision;
+  }
+
+  private emitSynthesizedSpokenFinal(context?: InterruptionContext): void {
+    if (this.adapterProvidedSpokenEvents) {
+      return;
+    }
+    const resolved = context ?? this.interruptionTracker.resolve(this.getPlaybackPositionMs());
+    if (!resolved) {
+      return;
+    }
+
+    const itemId = resolved.itemId ?? this.activeAssistantItemId;
+    if (!itemId || this.spokenFinalizedItemIds.has(itemId)) {
+      return;
+    }
+
+    const precision = resolved.precision ?? 'ratio';
+    const spokenText = resolved.spokenText ?? '';
+    const spokenChars = spokenText.length;
+    const spokenWords = countWords(spokenText);
+    const playbackMs = resolved.playbackPositionMs;
+    this.events.emit('spokenFinal', spokenText, 'assistant', itemId, {
+      spokenChars,
+      spokenWords,
+      playbackMs,
+      precision,
+    });
+    this.spokenFinalizedItemIds.add(itemId);
+    this.spokenCursorItemId = itemId;
+    this.spokenCursorText = spokenText;
+    this.spokenCursorPlaybackMs = playbackMs;
+    this.spokenCursorPrecision = precision;
+  }
+
+  private emitInterruptedSpokenFinal(context: InterruptionContext): void {
+    const itemId = context.itemId ?? this.activeAssistantItemId;
+    if (!itemId) {
+      return;
+    }
+
+    const spokenText = context.spokenText ?? '';
+    const spokenChars = spokenText.length;
+    const spokenWords = countWords(spokenText);
+    const playbackMs = context.playbackPositionMs;
+    const precision = context.precision ?? 'segment';
+
+    this.events.emit('spokenProgress', itemId, {
+      spokenChars,
+      spokenWords,
+      playbackMs,
+      precision,
+    });
+    this.events.emit('spokenFinal', spokenText, 'assistant', itemId, {
+      spokenChars,
+      spokenWords,
+      playbackMs,
+      precision,
+    });
+    this.spokenFinalizedItemIds.add(itemId);
+    this.spokenCursorItemId = itemId;
+    this.spokenCursorText = spokenText;
+    this.spokenCursorPlaybackMs = playbackMs;
+    this.spokenCursorPrecision = precision;
   }
 
   private getOrCreateConversationOrder(itemId: string, orderHint?: number): number {
@@ -537,4 +724,12 @@ export class VoiceSessionImpl implements VoiceSession {
     this.lastUserConversationOrder = undefined;
     this.lastAssistantConversationOrder = undefined;
   }
+}
+
+function countWords(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return 0;
+  }
+  return trimmed.split(/\s+/).length;
 }

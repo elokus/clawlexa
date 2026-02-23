@@ -44,4 +44,47 @@ describe('InterruptionTracker', () => {
     expect((context?.spokenText.length ?? 0) > 0).toBe(true);
     expect(context?.truncated).toBe(true);
   });
+
+  test('prefers explicit spoken deltas when provided by adapter', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-3');
+    tracker.trackAssistantTranscript('Hello world', 'assistant-3');
+    tracker.trackAssistantSpokenDelta('Hello ', 'assistant-3', {
+      spokenChars: 6,
+      spokenWords: 1,
+      playbackMs: 120,
+      precision: 'segment',
+    });
+
+    const context = tracker.resolve(120);
+    expect(context).not.toBeNull();
+    expect(context?.itemId).toBe('assistant-3');
+    expect(context?.fullText).toBe('Hello world');
+    expect(context?.spokenText).toBe('Hello ');
+    expect(context?.precision).toBe('segment');
+    expect(context?.spokenWordCount).toBe(1);
+    expect(context?.spokenWordIndex).toBe(0);
+    expect(context?.spans?.length).toBe(1);
+  });
+
+  test('uses explicit spoken progress char cursor without spoken delta', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-4');
+    tracker.trackAssistantTranscript('The weather today is sunny', 'assistant-4');
+    tracker.trackAssistantSpokenProgress('assistant-4', {
+      spokenChars: 11,
+      spokenWords: 2,
+      playbackMs: 500,
+      precision: 'provider-word-timestamps',
+    });
+
+    const context = tracker.resolve(500);
+    expect(context).not.toBeNull();
+    expect(context?.itemId).toBe('assistant-4');
+    expect(context?.spokenText).toBe('The weather');
+    expect(context?.spokenWordCount).toBe(2);
+    expect(context?.precision).toBe('provider-word-timestamps');
+  });
 });

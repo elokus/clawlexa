@@ -39,6 +39,37 @@ export interface VoiceRuntimeEvents {
     itemId?: string,
     order?: number
   ) => void;
+  spokenDelta: (
+    delta: string,
+    role: 'assistant',
+    itemId?: string,
+    meta?: {
+      spokenChars?: number;
+      spokenWords?: number;
+      playbackMs?: number;
+      precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    }
+  ) => void;
+  spokenProgress: (
+    itemId: string,
+    progress: {
+      spokenChars: number;
+      spokenWords: number;
+      playbackMs: number;
+      precision: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    }
+  ) => void;
+  spokenFinal: (
+    text: string,
+    role: 'assistant',
+    itemId?: string,
+    meta?: {
+      spokenChars?: number;
+      spokenWords?: number;
+      playbackMs?: number;
+      precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    }
+  ) => void;
   userItemCreated: (itemId: string, order?: number) => void;
   assistantItemCreated: (
     itemId: string,

@@ -25,6 +25,9 @@ import { createStreamChunk } from '../api/stream-types.js';
 export type VoiceEventType =
   | 'stateChange'
   | 'transcript'
+  | 'spokenDelta'
+  | 'spokenProgress'
+  | 'spokenFinal'
   | 'toolStart'
   | 'toolEnd'
   | 'error';
@@ -35,6 +38,31 @@ export type VoiceEventType =
 export interface VoiceEventPayloads {
   stateChange: { state: 'idle' | 'listening' | 'thinking' | 'speaking'; profile: string | null };
   transcript: { text: string; role: 'user' | 'assistant'; itemId?: string; order?: number };
+  spokenDelta: {
+    textDelta: string;
+    itemId?: string;
+    order?: number;
+    spokenChars?: number;
+    spokenWords?: number;
+    playbackMs?: number;
+    precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+  };
+  spokenProgress: {
+    itemId: string;
+    spokenChars: number;
+    spokenWords: number;
+    playbackMs: number;
+    precision: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+  };
+  spokenFinal: {
+    text: string;
+    itemId?: string;
+    order?: number;
+    spokenChars?: number;
+    spokenWords?: number;
+    playbackMs?: number;
+    precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+  };
   toolStart: { name: string; args: Record<string, unknown>; callId?: string };
   toolEnd: { name: string; result: string; callId?: string };
   error: { message: string };
@@ -89,7 +117,50 @@ function convertToAISDKEvent<T extends VoiceEventType>(
       if (role === 'user') {
         return { type: 'user-transcript', text, itemId, order };
       }
-      return { type: 'text-delta', textDelta: text, itemId, order };
+      return { type: 'text-delta', textDelta: text, itemId, order, channel: 'generated' };
+    }
+
+    case 'spokenDelta': {
+      const { textDelta, itemId, order, spokenChars, spokenWords, playbackMs, precision } =
+        payload as VoiceEventPayloads['spokenDelta'];
+      return {
+        type: 'spoken-delta',
+        textDelta,
+        itemId,
+        order,
+        spokenChars,
+        spokenWords,
+        playbackMs,
+        precision,
+      };
+    }
+
+    case 'spokenFinal': {
+      const { text, itemId, order, spokenChars, spokenWords, playbackMs, precision } =
+        payload as VoiceEventPayloads['spokenFinal'];
+      return {
+        type: 'spoken-final',
+        text,
+        itemId,
+        order,
+        spokenChars,
+        spokenWords,
+        playbackMs,
+        precision,
+      };
+    }
+
+    case 'spokenProgress': {
+      const { itemId, spokenChars, spokenWords, playbackMs, precision } =
+        payload as VoiceEventPayloads['spokenProgress'];
+      return {
+        type: 'spoken-progress',
+        itemId,
+        spokenChars,
+        spokenWords,
+        playbackMs,
+        precision,
+      };
     }
 
     case 'toolStart': {
@@ -212,6 +283,86 @@ export function createVoiceAdapter(sessionId: string) {
       order?: number
     ): void {
       const event = convertToAISDKEvent('transcript', { text, role, itemId, order });
+      if (!event) return;
+      const chunk = createStreamChunk(sessionId, event);
+      broadcastStreamChunk(chunk);
+    },
+
+    /**
+     * Emit spoken transcript delta event (assistant audio-confirmed text).
+     */
+    spokenDelta(
+      textDelta: string,
+      itemId?: string,
+      order?: number,
+      meta?: {
+        spokenChars?: number;
+        spokenWords?: number;
+        playbackMs?: number;
+        precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      }
+    ): void {
+      const event = convertToAISDKEvent('spokenDelta', {
+        textDelta,
+        itemId,
+        order,
+        spokenChars: meta?.spokenChars,
+        spokenWords: meta?.spokenWords,
+        playbackMs: meta?.playbackMs,
+        precision: meta?.precision,
+      });
+      if (!event) return;
+      const chunk = createStreamChunk(sessionId, event);
+      broadcastStreamChunk(chunk);
+    },
+
+    /**
+     * Emit spoken transcript final event (assistant audio-confirmed final text).
+     */
+    spokenProgress(
+      itemId: string,
+      progress: {
+        spokenChars: number;
+        spokenWords: number;
+        playbackMs: number;
+        precision: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      }
+    ): void {
+      const event = convertToAISDKEvent('spokenProgress', {
+        itemId,
+        spokenChars: progress.spokenChars,
+        spokenWords: progress.spokenWords,
+        playbackMs: progress.playbackMs,
+        precision: progress.precision,
+      });
+      if (!event) return;
+      const chunk = createStreamChunk(sessionId, event);
+      broadcastStreamChunk(chunk);
+    },
+
+    /**
+     * Emit spoken transcript final event (assistant audio-confirmed final text).
+     */
+    spokenFinal(
+      text: string,
+      itemId?: string,
+      order?: number,
+      meta?: {
+        spokenChars?: number;
+        spokenWords?: number;
+        playbackMs?: number;
+        precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      }
+    ): void {
+      const event = convertToAISDKEvent('spokenFinal', {
+        text,
+        itemId,
+        order,
+        spokenChars: meta?.spokenChars,
+        spokenWords: meta?.spokenWords,
+        playbackMs: meta?.playbackMs,
+        precision: meta?.precision,
+      });
       if (!event) return;
       const chunk = createStreamChunk(sessionId, event);
       broadcastStreamChunk(chunk);

@@ -278,6 +278,20 @@ export class VoiceAgent {
       }
     });
 
+    this.runtime.on('spokenDelta', (delta, role, itemId, meta) => {
+      if (role !== 'assistant') return;
+      this.adapter?.spokenDelta(delta, itemId, undefined, meta);
+    });
+
+    this.runtime.on('spokenProgress', (itemId, progress) => {
+      this.adapter?.spokenProgress(itemId, progress);
+    });
+
+    this.runtime.on('spokenFinal', (text, role, itemId, meta) => {
+      if (role !== 'assistant') return;
+      this.adapter?.spokenFinal(text, itemId, undefined, meta);
+    });
+
     this.runtime.on('latency', (metric) => {
       const firstAudioLatency =
         metric.stage === 'tts' && typeof metric.details?.firstAudioLatencyMs === 'number'

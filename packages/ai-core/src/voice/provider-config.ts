@@ -31,6 +31,7 @@ const DECOMPOSED_LLM_PROVIDERS = [
 ] as const;
 const DECOMPOSED_TTS_PROVIDERS = ['openai', 'deepgram'] as const;
 const DECOMPOSED_TTS_TRANSPORTS = ['websocket'] as const;
+const DECOMPOSED_CUSTOM_STT_MODES = ['provider', 'custom', 'hybrid'] as const;
 
 type UnknownObject = Record<string, unknown>;
 
@@ -221,6 +222,16 @@ function parseDecomposedTurnConfig(raw: unknown): DecomposedProviderConfig['turn
     silenceMs: optionalPositiveNumber(object, 'silenceMs', 'providerConfig.turn'),
     minSpeechMs: optionalPositiveNumber(object, 'minSpeechMs', 'providerConfig.turn'),
     minRms: optionalNonNegativeNumber(object, 'minRms', 'providerConfig.turn'),
+    spokenStreamEnabled: optionalBoolean(
+      object,
+      'spokenStreamEnabled',
+      'providerConfig.turn'
+    ),
+    wordAlignmentEnabled: optionalBoolean(
+      object,
+      'wordAlignmentEnabled',
+      'providerConfig.turn'
+    ),
     llmCompletionEnabled: optionalBoolean(
       object,
       'llmCompletionEnabled',
@@ -250,6 +261,12 @@ export function parseDecomposedProviderConfig(raw: unknown): DecomposedProviderC
     anthropicApiKey: optionalString(object, 'anthropicApiKey', 'providerConfig'),
     googleApiKey: optionalString(object, 'googleApiKey', 'providerConfig'),
     deepgramApiKey: optionalString(object, 'deepgramApiKey', 'providerConfig'),
+    customSttMode: optionalEnum(
+      object,
+      'customSttMode',
+      'providerConfig',
+      DECOMPOSED_CUSTOM_STT_MODES
+    ),
     sttProvider: optionalEnum(object, 'sttProvider', 'providerConfig', DECOMPOSED_STT_PROVIDERS),
     sttModel: optionalString(object, 'sttModel', 'providerConfig'),
     llmProvider: optionalEnum(object, 'llmProvider', 'providerConfig', DECOMPOSED_LLM_PROVIDERS),

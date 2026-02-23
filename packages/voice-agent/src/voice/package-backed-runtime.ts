@@ -172,6 +172,24 @@ export class PackageBackedVoiceRuntime implements VoiceRuntime {
       this.emit('transcriptDelta', delta, role, itemId, order);
     });
 
+    this.bind('spokenDelta', session, (delta, role, itemId, meta) => {
+      if (this.handlers.spokenDelta) {
+        this.emit('spokenDelta', delta, role, itemId, meta);
+      }
+    });
+
+    this.bind('spokenProgress', session, (itemId, progress) => {
+      if (this.handlers.spokenProgress) {
+        this.emit('spokenProgress', itemId, progress);
+      }
+    });
+
+    this.bind('spokenFinal', session, (text, role, itemId, meta) => {
+      if (this.handlers.spokenFinal) {
+        this.emit('spokenFinal', text, role, itemId, meta);
+      }
+    });
+
     this.bind('userItemCreated', session, (itemId, order) => {
       this.emit('userItemCreated', itemId, order);
     });

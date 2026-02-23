@@ -35,20 +35,24 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
     return assistantTranscripts[assistantTranscripts.length - 1] || null;
   }, [timeline]);
 
-  // Split content into words for highlighting effect
-  const words = useMemo(() => {
-    if (!latestMessage?.content) return [];
-    return latestMessage.content.split(/\s+/).filter(Boolean);
-  }, [latestMessage?.content]);
+  const generatedText = latestMessage?.generatedContent ?? latestMessage?.content ?? '';
+  const spokenText = latestMessage?.spokenContent ?? '';
 
-  // Estimate how many words have been spoken based on time
-  // Assuming ~150 words per minute speaking rate
+  // Split generated text into words for highlighting effect
+  const words = useMemo(() => {
+    if (!generatedText) return [];
+    return generatedText.split(/\s+/).filter(Boolean);
+  }, [generatedText]);
+
+  // Highlight is driven by spoken progress from runtime events.
   const spokenWordCount = useMemo(() => {
-    if (!latestMessage || state !== 'speaking') return 0;
-    const messageAge = Date.now() - latestMessage.timestamp;
-    const wordsPerMs = 150 / 60000; // 150 WPM
-    return Math.min(Math.floor(messageAge * wordsPerMs), words.length);
-  }, [latestMessage, state, words.length]);
+    if (!latestMessage) return 0;
+    if (typeof latestMessage.spokenWords === 'number') {
+      return Math.max(0, Math.min(latestMessage.spokenWords, words.length));
+    }
+    if (!spokenText.trim()) return 0;
+    return Math.max(0, Math.min(spokenText.trim().split(/\s+/).length, words.length));
+  }, [latestMessage, spokenText, words.length]);
 
   return (
     <AnimatePresence>

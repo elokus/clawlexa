@@ -99,6 +99,7 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   anthropicApiKey?: string;
   googleApiKey?: string;
   deepgramApiKey?: string;
+  customSttMode?: 'provider' | 'custom' | 'hybrid';
   sttProvider?: 'openai' | 'deepgram';
   sttModel?: string;
   llmProvider?: 'openai' | 'openrouter' | 'anthropic' | 'google';
@@ -113,6 +114,8 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
     silenceMs?: number;
     minSpeechMs?: number;
     minRms?: number;
+    spokenStreamEnabled?: boolean;
+    wordAlignmentEnabled?: boolean;
     llmCompletionEnabled?: boolean;
     llmShortTimeoutMs?: number;
     llmLongTimeoutMs?: number;
