@@ -1,4 +1,5 @@
 import { resamplePcm16Mono } from '../media/resample-pcm16.js';
+import { StreamResamplerPool } from '../media/stream-resampler.js';
 import { parsePipecatProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
@@ -308,6 +309,7 @@ export class PipecatRtviAdapter extends BaseWebSocketAdapter implements Provider
   private dynamicCapabilities: Partial<ProviderCapabilities> = {};
 
   private history: VoiceHistoryItem[] = [];
+  private readonly resamplerPool = new StreamResamplerPool();
   private pendingUserByKey = new Map<string, PendingUserTranscript>();
   private pendingAssistant: PendingAssistantTranscript | null = null;
   private userSequence = 0;
@@ -355,8 +357,13 @@ export class PipecatRtviAdapter extends BaseWebSocketAdapter implements Provider
     this.events.emit('connected');
     this.setState('listening');
 
+    const providerIn = this.config.inputSampleRate ?? DEFAULT_SAMPLE_RATE;
+    if (DEFAULT_SAMPLE_RATE !== providerIn) {
+      await this.resamplerPool.get(DEFAULT_SAMPLE_RATE, providerIn);
+    }
+
     return {
-      providerInputRate: this.config.inputSampleRate ?? DEFAULT_SAMPLE_RATE,
+      providerInputRate: providerIn,
       providerOutputRate: this.config.outputSampleRate ?? DEFAULT_SAMPLE_RATE,
       preferredClientInputRate: DEFAULT_SAMPLE_RATE,
       preferredClientOutputRate: DEFAULT_SAMPLE_RATE,
@@ -390,6 +397,7 @@ export class PipecatRtviAdapter extends BaseWebSocketAdapter implements Provider
 
     this.socket.close();
     this.socket = null;
+    this.resamplerPool.clear();
     this.setState('idle');
     this.events.emit('disconnected');
   }
@@ -397,7 +405,15 @@ export class PipecatRtviAdapter extends BaseWebSocketAdapter implements Provider
   sendAudio(frame: AudioFrame): void {
     if (!this.socket || this.socket.readyState !== 1 || !this.config) return;
     const inputRate = this.config.inputSampleRate ?? DEFAULT_SAMPLE_RATE;
-    const normalized = frame.sampleRate === inputRate ? frame : resamplePcm16Mono(frame, inputRate);
+    let normalized: AudioFrame;
+    if (frame.sampleRate === inputRate) {
+      normalized = frame;
+    } else {
+      const resampler = this.resamplerPool.getSync(frame.sampleRate, inputRate);
+      normalized = resampler
+        ? resampler.process(frame)
+        : resamplePcm16Mono(frame, inputRate);
+    }
 
     if (this.config.audioInputEncoding === 'client-message-base64') {
       this.sendEnvelope({

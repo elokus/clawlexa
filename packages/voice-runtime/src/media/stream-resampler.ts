@@ -1,5 +1,23 @@
-import { SoxrResampler, SoxrDatatype } from 'wasm-audio-resampler';
+import { readFileSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { createRequire } from 'module';
+import SoxrResampler from 'wasm-audio-resampler';
+import { SoxrDatatype } from 'wasm-audio-resampler';
 import type { AudioFrame } from '../types.js';
+
+/**
+ * Pre-load the WASM binary from disk so it works in Bun/Node
+ * (Emscripten's default fetch()-based loader fails in Bun).
+ */
+let wasmBinaryCache: Buffer | null = null;
+function getWasmBinary(): Buffer {
+  if (!wasmBinaryCache) {
+    const require = createRequire(import.meta.url);
+    const wasmDir = dirname(require.resolve('wasm-audio-resampler/app/soxr_wasm.js'));
+    wasmBinaryCache = readFileSync(resolve(wasmDir, 'soxr_wasm.wasm'));
+  }
+  return wasmBinaryCache;
+}
 
 /**
  * Stateful PCM16 mono stream resampler backed by libsoxr (WASM).
@@ -42,7 +60,7 @@ export class StreamResampler {
       SoxrDatatype.SOXR_INT16,
       SoxrDatatype.SOXR_INT16,
     );
-    await this.resampler.init();
+    await this.resampler.init(undefined, { wasmBinary: getWasmBinary() });
     this.initialized = true;
   }
 
@@ -57,11 +75,11 @@ export class StreamResampler {
       );
     }
 
-    const input = Buffer.from(frame.data);
+    const input = new Uint8Array(frame.data);
     const output = this.resampler.processChunk(input);
 
     return {
-      data: output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength),
+      data: toArrayBuffer(output),
       sampleRate: this.outputRate,
       format: 'pcm16',
     };
@@ -73,13 +91,18 @@ export class StreamResampler {
    */
   flush(): AudioFrame | null {
     if (!this.initialized || !this.resampler) return null;
-    const output = this.resampler.processChunk(null);
-    if (!output || output.byteLength === 0) return null;
-    return {
-      data: output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength),
-      sampleRate: this.outputRate,
-      format: 'pcm16',
-    };
+    try {
+      const output = this.resampler.processChunk(new Uint8Array(0));
+      if (!output || output.byteLength === 0) return null;
+      return {
+        data: toArrayBuffer(output),
+        sampleRate: this.outputRate,
+        format: 'pcm16',
+      };
+    } catch {
+      // WASM resampler may throw on flush if internal state is already freed
+      return null;
+    }
   }
 
   /** Whether init() has been called successfully. */
@@ -155,4 +178,12 @@ export class StreamResamplerPool {
     this.resamplers.clear();
     this.pending.clear();
   }
+}
+
+/** Extract a proper ArrayBuffer from a typed array output. */
+function toArrayBuffer(view: Uint8Array): ArrayBuffer {
+  if (view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) {
+    return view.buffer as ArrayBuffer;
+  }
+  return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
 }

@@ -182,6 +182,33 @@ function mapSchemaVoices(
   return voices.map((voiceId) => ({ id: voiceId, name: voiceId, language: 'multi' }));
 }
 
+function extractTrailingLanguageTag(value: string): string | undefined {
+  const match = value.match(/(?:^|[-_])([a-z]{2}(?:-[a-z]{2})?)$/i);
+  if (!match?.[1]) return undefined;
+  return match[1].toLowerCase();
+}
+
+function prettifyDeepgramVoiceName(voiceId: string): string {
+  const auraMatch = voiceId.match(
+    /^aura(?:-\d+)?-([a-z0-9-]+)-[a-z]{2}(?:-[a-z]{2})?$/i
+  );
+  if (!auraMatch?.[1]) return voiceId;
+
+  return auraMatch[1]
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function mapDeepgramTtsVoices(voiceIds: string[]): ProviderVoiceEntry[] {
+  return voiceIds.map((voiceId) => ({
+    id: voiceId,
+    name: prettifyDeepgramVoiceName(voiceId),
+    language: extractTrailingLanguageTag(voiceId),
+  }));
+}
+
 async function fetchOpenAICatalog(apiKey: string): Promise<{
   realtimeModels: string[];
   textModels: string[];
@@ -462,10 +489,7 @@ export async function fetchRuntimeProviderCatalog(input: {
         voices: openaiVoices,
       },
       'deepgram-tts': {
-        voices: deepgram.ttsVoices.map((voiceId) => ({
-          id: voiceId,
-          name: voiceId,
-        })),
+        voices: mapDeepgramTtsVoices(deepgram.ttsVoices),
       },
     },
     providerSchemas,

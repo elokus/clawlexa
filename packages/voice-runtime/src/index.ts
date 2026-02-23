@@ -63,6 +63,7 @@ export {
   type VoiceBenchmarkThresholds,
 } from './benchmarks/voice-benchmark.js';
 export { resamplePcm16Mono } from './media/resample-pcm16.js';
+export { StreamResampler, StreamResamplerPool } from './media/stream-resampler.js';
 export {
   createVoiceRuntime,
   VoiceRuntimeImpl,

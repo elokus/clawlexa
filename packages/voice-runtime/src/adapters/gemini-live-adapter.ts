@@ -363,6 +363,10 @@ export class GeminiLiveAdapter implements ProviderAdapter {
   }
 
   async disconnect(): Promise<void> {
+    if (this.inputResampler) {
+      try { this.inputResampler.flush(); } catch { /* WASM cleanup race */ }
+      this.inputResampler = null;
+    }
     this.finalizeActiveUserTranscript();
     this.finalizeAssistantTranscript();
     this.endManualActivity();
