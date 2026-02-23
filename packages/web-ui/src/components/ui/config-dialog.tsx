@@ -290,9 +290,9 @@ export function ConfigDialog({
           margin-top: auto;
         }
 
-        .cfg-field-control > select,
-        .cfg-field-control > input,
-        .cfg-field-control > textarea {
+        .cfg-field-control select,
+        .cfg-field-control input,
+        .cfg-field-control textarea {
           width: 100%;
           border: 1px solid rgba(255, 255, 255, 0.16);
           border-radius: 8px;
@@ -304,14 +304,14 @@ export function ConfigDialog({
           padding: 10px 11px;
         }
 
-        .cfg-field-control > textarea {
+        .cfg-field-control textarea {
           resize: vertical;
           min-height: 78px;
         }
 
-        .cfg-field-control > select:focus,
-        .cfg-field-control > input:focus,
-        .cfg-field-control > textarea:focus {
+        .cfg-field-control select:focus,
+        .cfg-field-control input:focus,
+        .cfg-field-control textarea:focus {
           outline: 2px solid rgba(56, 189, 248, 0.3);
           border-color: rgba(56, 189, 248, 0.55);
           outline-offset: 1px;

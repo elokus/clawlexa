@@ -125,55 +125,62 @@ export function VoiceSelector({
   const autoLanguageLabel =
     languageFilter && languageFilter !== 'multi' ? `Auto (${languageFilter})` : 'Auto';
 
-  return (
-    <ConfigField label={label} hint={hint}>
-      <div style={{ display: 'grid', gap: 8 }}>
-        {showFilters ? (
-          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-            <select
-              value={selectedLanguage}
-              onChange={(event) => setSelectedLanguage(event.target.value)}
-              aria-label="Filter voices by language"
-            >
-              {languageFilter && languageFilter !== 'multi' ? (
-                <option value="__auto__">{autoLanguageLabel}</option>
-              ) : null}
-              <option value="__all__">All Languages</option>
-              {availableLanguages.map((lang) => (
-                <option key={lang} value={lang}>
-                  {lang}
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              value={searchTerm}
-              placeholder="Search voice, id, lang"
-              onChange={(event) => setSearchTerm(event.target.value)}
-              aria-label="Search voices"
-            />
-          </div>
-        ) : null}
+  const voiceSelect = (
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
+      {useGroups
+        ? languages.map((lang) => (
+            <optgroup key={lang} label={lang}>
+              {withCurrent
+                .filter((v) => normalizeLanguage(v.language) === lang)
+                .map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {voiceLabel(v)}
+                  </option>
+                ))}
+            </optgroup>
+          ))
+        : withCurrent.map((v) => (
+            <option key={v.id} value={v.id}>
+              {voiceLabel(v)}
+            </option>
+          ))}
+    </select>
+  );
 
-        <select value={value} onChange={(e) => onChange(e.target.value)}>
-          {useGroups
-            ? languages.map((lang) => (
-                <optgroup key={lang} label={lang}>
-                  {withCurrent
-                    .filter((v) => normalizeLanguage(v.language) === lang)
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {voiceLabel(v)}
-                      </option>
-                    ))}
-                </optgroup>
-              ))
-            : withCurrent.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {voiceLabel(v)}
-                </option>
-              ))}
+  if (!showFilters) {
+    return (
+      <ConfigField label={label} hint={hint}>
+        {voiceSelect}
+      </ConfigField>
+    );
+  }
+
+  return (
+    <ConfigField label={label} hint={hint} fullWidth>
+      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(100px, auto) minmax(120px, 1fr) minmax(0, 2fr)' }}>
+        <select
+          value={selectedLanguage}
+          onChange={(event) => setSelectedLanguage(event.target.value)}
+          aria-label="Filter voices by language"
+        >
+          {languageFilter && languageFilter !== 'multi' ? (
+            <option value="__auto__">{autoLanguageLabel}</option>
+          ) : null}
+          <option value="__all__">All Languages</option>
+          {availableLanguages.map((lang) => (
+            <option key={lang} value={lang}>
+              {lang}
+            </option>
+          ))}
         </select>
+        <input
+          type="text"
+          value={searchTerm}
+          placeholder="Search voice, id, lang"
+          onChange={(event) => setSearchTerm(event.target.value)}
+          aria-label="Search voices"
+        />
+        {voiceSelect}
       </div>
     </ConfigField>
   );
