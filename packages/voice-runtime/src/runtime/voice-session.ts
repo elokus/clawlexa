@@ -57,15 +57,23 @@ export class VoiceSessionImpl implements VoiceSession {
     this.input = input;
     this.capabilities = adapter.capabilities();
 
-    // Derive min-pace for synthetic word cues from config if available.
-    const turnConfig = (input.providerConfig as Record<string, unknown> | undefined)
-      ?.turn as Record<string, unknown> | undefined;
+    // Derive synthetic word cue config from turn settings.
+    const turnConfig = input.turn;
     const configuredMsPerWord = turnConfig?.spokenHighlightMsPerWord;
     const minMsPerWord =
       typeof configuredMsPerWord === 'number' && configuredMsPerWord > 0
         ? Math.max(100, configuredMsPerWord * 0.5)
         : undefined;
-    this.spokenCueTimeline = new WordCueTimelineBuilder(minMsPerWord);
+    const punctuationPauseMs =
+      typeof turnConfig?.spokenHighlightPunctuationPauseMs === 'number' &&
+      turnConfig.spokenHighlightPunctuationPauseMs > 0
+        ? turnConfig.spokenHighlightPunctuationPauseMs
+        : undefined;
+    this.spokenCueTimeline = new WordCueTimelineBuilder({
+      minMsPerWord,
+      punctuationPauseMs,
+      preferProviderTimestamps: turnConfig?.preferProviderTimestamps,
+    });
 
     this.bindAdapterEvents();
   }

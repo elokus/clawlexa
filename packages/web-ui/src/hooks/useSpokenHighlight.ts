@@ -114,38 +114,6 @@ export function useSpokenHighlight({
   return highlightedCount;
 }
 
-/**
- * Build a cumulative word timeline with optional punctuation pause bonus.
- */
-export function buildWordCueTimelineMs(
-  words: string[],
-  msPerWord: number,
-  punctuationPauseMs: number
-): number[] {
-  if (!Array.isArray(words) || words.length === 0) return [];
-
-  const baseMs = normalizePositive(msPerWord, DEFAULT_MS_PER_WORD);
-  const pauseMs = Math.max(0, Number.isFinite(punctuationPauseMs) ? punctuationPauseMs : 0);
-  const cueEndMs: number[] = [];
-  let elapsedMs = 0;
-
-  for (const word of words) {
-    elapsedMs += baseMs;
-    if (hasPausePunctuation(word)) {
-      elapsedMs += pauseMs;
-    }
-    cueEndMs.push(elapsedMs);
-  }
-
-  return cueEndMs;
-}
-
-function hasPausePunctuation(word: string): boolean {
-  if (!word) return false;
-  const trimmed = word.trim().replace(/[)"'\]}>»”’]+$/u, '');
-  return /[.,!?;:\u2026]$/u.test(trimmed);
-}
-
 function normalizePositive(value: number, fallback: number): number {
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return value;

@@ -98,9 +98,13 @@ export class WordCueTimelineBuilder {
     }
 
     let update: SpokenWordCueUpdate | null = null;
-    if (input.providerWordTimestamps && input.providerWordTimestamps.length > 0) {
+    const hasProviderTimestamps =
+      this.preferProviderTimestamps &&
+      input.providerWordTimestamps != null &&
+      input.providerWordTimestamps.length > 0;
+    if (hasProviderTimestamps) {
       const appended = this.appendProviderWordTimestamps(
-        input.providerWordTimestamps,
+        input.providerWordTimestamps!,
         providerTimeBase,
         this.lastPlaybackMs
       );
@@ -125,8 +129,12 @@ export class WordCueTimelineBuilder {
     const providerTimeBase = input.providerTimeBase ?? 'utterance';
 
     let cues: SpokenWordCue[];
-    if (input.providerWordTimestamps && input.providerWordTimestamps.length > 0) {
-      cues = this.buildProviderTimeline(input.providerWordTimestamps, providerTimeBase, 0);
+    const hasProviderTimestamps =
+      this.preferProviderTimestamps &&
+      input.providerWordTimestamps != null &&
+      input.providerWordTimestamps.length > 0;
+    if (hasProviderTimestamps) {
+      cues = this.buildProviderTimeline(input.providerWordTimestamps!, providerTimeBase, 0);
     } else {
       cues = this.buildSyntheticTimeline(spokenText, playbackMs);
     }
@@ -218,7 +226,9 @@ export class WordCueTimelineBuilder {
     // spokenFinal rebuild uses actual total duration for final accuracy.
     const estimatedMinEndMs = windowStartMs + newWords.length * this.minMsPerWord;
     const windowEndMs = Math.max(windowStartMs, playbackMs, estimatedMinEndMs);
-    const appended = distributeWordsIntoWindow(newWords, windowStartMs, windowEndMs, 'synthetic');
+    const appended = distributeWordsIntoWindow(
+      newWords, windowStartMs, windowEndMs, 'synthetic', this.punctuationPauseMs
+    );
     for (const cue of appended) {
       const key = cueKey(cue.word, cue.startMs, cue.endMs);
       if (this.dedupeKeys.has(key)) {
@@ -278,7 +288,9 @@ export class WordCueTimelineBuilder {
       return [];
     }
     const onset = this.speechOnsetMs;
-    return distributeWordsIntoWindow(words, onset, Math.max(onset, playbackMs), 'synthetic');
+    return distributeWordsIntoWindow(
+      words, onset, Math.max(onset, playbackMs), 'synthetic', this.punctuationPauseMs
+    );
   }
 
   private replaceTimeline(cues: SpokenWordCue[]): void {
@@ -302,7 +314,8 @@ function distributeWordsIntoWindow(
   words: string[],
   startMsInput: number,
   endMsInput: number,
-  source: SpokenWordCueSource
+  source: SpokenWordCueSource,
+  punctuationPauseMs: number = 0
 ): SpokenWordCue[] {
   if (words.length === 0) {
     return [];
@@ -311,17 +324,29 @@ function distributeWordsIntoWindow(
   const startMs = normalizeMs(startMsInput, 0);
   const endMs = Math.max(startMs, normalizeMs(endMsInput, startMs));
   const spanMs = Math.max(words.length, endMs - startMs);
-  const msPerWord = spanMs / words.length;
+
+  // Count punctuation words for weighted distribution.
+  const punctCount =
+    punctuationPauseMs > 0
+      ? words.filter((w) => hasPausePunctuation(w)).length
+      : 0;
+
+  // Solve: words.length * baseDuration + punctCount * punctuationPauseMs = spanMs
+  const totalPause = punctCount * punctuationPauseMs;
+  const baseDuration = Math.max(1, (spanMs - totalPause) / words.length);
+
   const cues: SpokenWordCue[] = [];
   let cursorMs = startMs;
 
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index] ?? '';
-    const projectedBoundary = startMs + Math.round((index + 1) * msPerWord);
+    const isPunct = punctuationPauseMs > 0 && hasPausePunctuation(word);
+    const wordDuration = baseDuration + (isPunct ? punctuationPauseMs : 0);
+    const projectedEnd = cursorMs + wordDuration;
     const nextBoundary =
       index === words.length - 1
-        ? Math.max(endMs, projectedBoundary)
-        : projectedBoundary;
+        ? Math.max(endMs, projectedEnd)
+        : projectedEnd;
     const cueStartMs = Math.max(cursorMs, startMs);
     const cueEndMs = Math.max(cueStartMs, nextBoundary);
     cues.push({
@@ -335,6 +360,12 @@ function distributeWordsIntoWindow(
   }
 
   return cues;
+}
+
+function hasPausePunctuation(word: string): boolean {
+  if (!word) return false;
+  const trimmed = word.trim().replace(/[)"'\]}>»\u201D\u2019]+$/u, '');
+  return /[.,!?;:\u2026]$/u.test(trimmed);
 }
 
 function tokenizeWords(text: string): string[] {

@@ -3,7 +3,7 @@
 // 3-column stage-based interface with shared element transitions
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useConnectionState, useVoiceState, useUnifiedSessionsStore } from './stores';
 import { useAudioSession } from './hooks/useAudioSession';
@@ -12,11 +12,7 @@ import { navigate, useUrlSessionSync } from './hooks/useRouter';
 import { StageOrchestrator } from './components/layout/StageOrchestrator';
 import { ControlBar } from './components/ControlBar';
 import { VoiceRuntimePanel } from './components/VoiceRuntimePanel';
-import {
-  AudioControllerContext,
-  SpokenHighlightConfigContext,
-  DEFAULT_SPOKEN_HIGHLIGHT_CONFIG,
-} from './contexts/audio-context';
+import { AudioControllerContext } from './contexts/audio-context';
 
 export function App() {
   const { sendFocusSession } = useWebSocket();
@@ -57,30 +53,9 @@ export function App() {
   };
 
   const currentState = stateConfig[voiceState] || stateConfig.idle;
-  const spokenHighlightConfig = useMemo(() => {
-    const turn = voiceRuntime.config?.voice.turn;
-    const msPerWord = clampRuntimeNumber(
-      turn?.spokenHighlightMsPerWord,
-      DEFAULT_SPOKEN_HIGHLIGHT_CONFIG.msPerWord,
-      80,
-      1600
-    );
-    const punctuationPauseMs = clampRuntimeNumber(
-      turn?.spokenHighlightPunctuationPauseMs,
-      DEFAULT_SPOKEN_HIGHLIGHT_CONFIG.punctuationPauseMs,
-      0,
-      2000
-    );
-
-    return {
-      msPerWord,
-      punctuationPauseMs,
-    };
-  }, [voiceRuntime.config]);
 
   return (
     <AudioControllerContext.Provider value={audioSession.audioControllerRef}>
-      <SpokenHighlightConfigContext.Provider value={spokenHighlightConfig}>
         <div className="vertex-app">
       <style>{`
         /* ═══════════════════════════════════════════════════════════════════
@@ -391,19 +366,7 @@ export function App() {
         </div>
       )}
         </div>
-      </SpokenHighlightConfigContext.Provider>
     </AudioControllerContext.Provider>
   );
 }
 
-function clampRuntimeNumber(
-  value: number | undefined,
-  fallback: number,
-  min: number,
-  max: number
-): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return fallback;
-  }
-  return Math.max(min, Math.min(max, value));
-}

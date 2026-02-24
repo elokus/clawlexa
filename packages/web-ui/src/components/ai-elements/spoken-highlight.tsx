@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { useVoiceState } from '@/stores';
-import { useAudioControllerRef, useSpokenHighlightConfig } from '@/contexts/audio-context';
-import { buildWordCueTimelineMs, useSpokenHighlight } from '@/hooks/useSpokenHighlight';
+import { useAudioControllerRef } from '@/contexts/audio-context';
+import { useSpokenHighlight } from '@/hooks/useSpokenHighlight';
 import { wordCuesToCueEndMs } from '@/lib/spoken-cues';
 import type { SpokenWordCue } from '@/types';
 
@@ -36,23 +36,18 @@ export function SpokenTextHighlight({
 }: SpokenTextHighlightProps) {
   const { voiceState } = useVoiceState();
   const audioControllerRef = useAudioControllerRef();
-  const spokenHighlight = useSpokenHighlightConfig();
 
   const words = useMemo(() => {
     if (!generatedText) return [];
     return generatedText.split(/\s+/).filter(Boolean);
   }, [generatedText]);
 
-  // Prefer runtime-provided cues over heuristic cue timeline.
-  const wordCueEndMs = useMemo(() => {
-    const runtimeCues = wordCuesToCueEndMs(wordCues, words.length);
-    if (runtimeCues) return runtimeCues;
-    return buildWordCueTimelineMs(
-      words,
-      spokenHighlight.msPerWord,
-      spokenHighlight.punctuationPauseMs
-    );
-  }, [words, wordCues, spokenHighlight.msPerWord, spokenHighlight.punctuationPauseMs]);
+  // Use runtime-provided cues (backend always generates synthetic cues when
+  // the TTS provider does not supply word timestamps).
+  const wordCueEndMs = useMemo(
+    () => wordCuesToCueEndMs(wordCues, words.length),
+    [words, wordCues]
+  );
 
   const highlightedCount = useSpokenHighlight({
     totalWords: words.length,
@@ -61,7 +56,6 @@ export function SpokenTextHighlight({
     audioController: audioControllerRef.current,
     turnKey,
     wordCueEndMs,
-    fallbackMsPerWord: spokenHighlight.msPerWord,
   });
 
   if (words.length === 0) {

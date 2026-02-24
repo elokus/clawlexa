@@ -13,21 +13,3 @@ export const AudioControllerContext = createContext<React.RefObject<AudioControl
 export function useAudioControllerRef(): React.RefObject<AudioController | null> {
   return useContext(AudioControllerContext);
 }
-
-export interface SpokenHighlightConfig {
-  msPerWord: number;
-  punctuationPauseMs: number;
-}
-
-export const DEFAULT_SPOKEN_HIGHLIGHT_CONFIG: SpokenHighlightConfig = {
-  msPerWord: 340,
-  punctuationPauseMs: 120,
-};
-
-export const SpokenHighlightConfigContext = createContext<SpokenHighlightConfig>(
-  DEFAULT_SPOKEN_HIGHLIGHT_CONFIG
-);
-
-export function useSpokenHighlightConfig(): SpokenHighlightConfig {
-  return useContext(SpokenHighlightConfigContext);
-}

@@ -7,8 +7,8 @@ import { useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceTimeline, useVoiceState, useFocusedSession } from '../../stores';
 import { VoiceIndicator } from '../VoiceIndicator';
-import { useAudioControllerRef, useSpokenHighlightConfig } from '../../contexts/audio-context';
-import { buildWordCueTimelineMs, useSpokenHighlight } from '../../hooks/useSpokenHighlight';
+import { useAudioControllerRef } from '../../contexts/audio-context';
+import { useSpokenHighlight } from '../../hooks/useSpokenHighlight';
 import { wordCuesToCueEndMs } from '../../lib/spoken-cues';
 import type { TranscriptItem, TimelineItem } from '../../types';
 
@@ -39,7 +39,6 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
   }, [timeline]);
 
   const audioControllerRef = useAudioControllerRef();
-  const spokenHighlight = useSpokenHighlightConfig();
   const generatedText = latestMessage?.generatedContent ?? latestMessage?.content ?? '';
 
   // Split generated text into words for highlighting effect
@@ -48,18 +47,12 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
     return generatedText.split(/\s+/).filter(Boolean);
   }, [generatedText]);
 
-  const wordCueEndMs = useMemo(() => {
-    const runtimeCues = wordCuesToCueEndMs(
-      latestMessage?.wordCues,
-      words.length
-    );
-    if (runtimeCues) return runtimeCues;
-    return buildWordCueTimelineMs(
-      words,
-      spokenHighlight.msPerWord,
-      spokenHighlight.punctuationPauseMs
-    );
-  }, [words, latestMessage?.wordCues, spokenHighlight.msPerWord, spokenHighlight.punctuationPauseMs]);
+  // Use runtime-provided cues (backend always generates synthetic cues when
+  // the TTS provider does not supply word timestamps).
+  const wordCueEndMs = useMemo(
+    () => wordCuesToCueEndMs(latestMessage?.wordCues, words.length),
+    [words, latestMessage?.wordCues]
+  );
 
   // Highlight is driven by the client-side AudioContext playback clock.
   const spokenWordCount = useSpokenHighlight({
@@ -69,7 +62,6 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
     audioController: audioControllerRef.current,
     turnKey: latestMessage?.id ?? null,
     wordCueEndMs,
-    fallbackMsPerWord: spokenHighlight.msPerWord,
   });
 
   return (

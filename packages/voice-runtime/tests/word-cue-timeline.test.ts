@@ -159,4 +159,70 @@ describe('WordCueTimelineBuilder', () => {
     expect(final.timeline[2]!.endMs).toBeLessThanOrEqual(650);
     expect(final.timeline[2]!.endMs).toBeGreaterThanOrEqual(600);
   });
+
+  test('punctuation pause gives extra time to words ending with punctuation', () => {
+    const builder = new WordCueTimelineBuilder({ punctuationPauseMs: 120 });
+
+    const final = builder.ingestFinal({
+      spokenText: 'Hello, world again.',
+      playbackMs: 600,
+    });
+
+    expect(final.timeline.length).toBe(3);
+    // "Hello," and "again." have punctuation — they should get wider slots
+    // than the unpunctuated "world".
+    const helloDuration = final.timeline[0]!.endMs - final.timeline[0]!.startMs;
+    const worldDuration = final.timeline[1]!.endMs - final.timeline[1]!.startMs;
+    const againDuration = final.timeline[2]!.endMs - final.timeline[2]!.startMs;
+    expect(helloDuration).toBeGreaterThan(worldDuration);
+    expect(againDuration).toBeGreaterThan(worldDuration);
+    // Punctuation words should each get ~120ms more than the base word.
+    expect(helloDuration - worldDuration).toBeCloseTo(120, -1);
+  });
+
+  test('punctuationPauseMs=0 distributes words evenly (same as default)', () => {
+    const withPause = new WordCueTimelineBuilder({ punctuationPauseMs: 0 });
+    const withoutPause = new WordCueTimelineBuilder();
+
+    const textWithPunct = 'Hello, world.';
+    const input = { spokenText: textWithPunct, playbackMs: 400 };
+    const a = withPause.ingestFinal(input);
+    const b = withoutPause.ingestFinal(input);
+
+    expect(a.timeline.map((c) => c.endMs)).toEqual(b.timeline.map((c) => c.endMs));
+  });
+
+  test('preferProviderTimestamps=false forces synthetic even with provider timestamps', () => {
+    const builder = new WordCueTimelineBuilder({ preferProviderTimestamps: false });
+
+    const result = builder.ingestDelta({
+      spokenText: 'Alpha Beta ',
+      playbackMs: 400,
+      providerWordTimestamps: [
+        { word: 'Alpha', startMs: 0, endMs: 100 },
+        { word: 'Beta', startMs: 120, endMs: 250 },
+      ],
+      providerTimeBase: 'utterance',
+    });
+
+    // Provider timestamps should be ignored — all cues must be synthetic.
+    expect(result.timeline.every((cue) => cue.source === 'synthetic')).toBe(true);
+    expect(result.timeline.length).toBe(2);
+  });
+
+  test('preferProviderTimestamps=false also applies to ingestFinal', () => {
+    const builder = new WordCueTimelineBuilder({ preferProviderTimestamps: false });
+
+    const result = builder.ingestFinal({
+      spokenText: 'One Two',
+      playbackMs: 300,
+      providerWordTimestamps: [
+        { word: 'One', startMs: 0, endMs: 100 },
+        { word: 'Two', startMs: 120, endMs: 250 },
+      ],
+      providerTimeBase: 'utterance',
+    });
+
+    expect(result.timeline.every((cue) => cue.source === 'synthetic')).toBe(true);
+  });
 });

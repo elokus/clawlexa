@@ -184,6 +184,7 @@ export interface RuntimeResolvedConfig {
     wordAlignmentEnabled: boolean;
     spokenHighlightMsPerWord: number;
     spokenHighlightPunctuationPauseMs: number;
+    preferProviderTimestamps: boolean;
     customSttMode: 'provider' | 'custom' | 'hybrid';
     llmCompletionEnabled: boolean;
     llmShortTimeoutMs: number;

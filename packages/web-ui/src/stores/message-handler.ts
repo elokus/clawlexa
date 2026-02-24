@@ -620,11 +620,10 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 event.wordCues ?? targetItem.wordCues,
                 event.wordCueUpdate
               );
-              // Preserve generatedContent if the item already has it.
-              // spoken-final text represents what was *spoken* (possibly truncated
-              // by interruption), not what the LLM generated.
-              const generatedContent =
-                targetItem.generatedContent || event.text;
+              // `spoken-final` is the authoritative spoken output (possibly
+              // truncated by interruption). Keep generated content aligned with
+              // spoken text so overlays/highlighting stop at the spoken boundary.
+              const generatedContent = event.text;
               store.updateVoiceTimelineItem(targetItem.id, {
                 content: event.text,
                 generatedContent,
