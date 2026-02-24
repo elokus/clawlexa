@@ -78,10 +78,11 @@ export function useSpokenHighlight({
         ? countCuesForPlayback(cueTimeline, playbackMs)
         : Math.floor(playbackMs / msPerWord);
 
-      if (isFinalized && !hasPendingAudio && !cueTimeline) {
-        // Only force-complete for pace-fallback mode (no cues). For cue-driven
-        // turns, forcing to full count causes visible jump-flush when cue tails
-        // extend beyond real playback.
+      if (isFinalized && !hasPendingAudio) {
+        // Audio fully drained — force-complete regardless of cue mode.
+        // The last cue's endMs may exceed the real playback clock by a few ms,
+        // but once the AudioContext has nothing left to play, all words should
+        // be marked spoken.
         nextWordCount = totalWords;
       }
 
