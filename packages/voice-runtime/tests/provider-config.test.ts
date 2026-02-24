@@ -42,6 +42,17 @@ describe('provider-config parsers', () => {
       turn: {
         silenceMs: 900,
         minRms: 0.02,
+        bargeInEnabled: false,
+        speechStartDebounceMs: 140,
+        vadEngine: 'webrtc-vad',
+        neuralFilterEnabled: true,
+        rnnoiseSpeechThreshold: 0.61,
+        rnnoiseEchoSpeechThresholdBoost: 0.12,
+        webrtcVadMode: 3,
+        webrtcVadSpeechRatioThreshold: 0.7,
+        webrtcVadEchoSpeechRatioBoost: 0.15,
+        assistantOutputMinRms: 0.009,
+        assistantOutputSilenceMs: 320,
         spokenStreamEnabled: true,
         wordAlignmentEnabled: true,
       },
@@ -51,6 +62,17 @@ describe('provider-config parsers', () => {
     expect(parsed.deepgramTtsPunctuationChunkingEnabled).toBe(false);
     expect(parsed.turn?.silenceMs).toBe(900);
     expect(parsed.turn?.minRms).toBe(0.02);
+    expect(parsed.turn?.bargeInEnabled).toBe(false);
+    expect(parsed.turn?.speechStartDebounceMs).toBe(140);
+    expect(parsed.turn?.vadEngine).toBe('webrtc-vad');
+    expect(parsed.turn?.neuralFilterEnabled).toBe(true);
+    expect(parsed.turn?.rnnoiseSpeechThreshold).toBe(0.61);
+    expect(parsed.turn?.rnnoiseEchoSpeechThresholdBoost).toBe(0.12);
+    expect(parsed.turn?.webrtcVadMode).toBe(3);
+    expect(parsed.turn?.webrtcVadSpeechRatioThreshold).toBe(0.7);
+    expect(parsed.turn?.webrtcVadEchoSpeechRatioBoost).toBe(0.15);
+    expect(parsed.turn?.assistantOutputMinRms).toBe(0.009);
+    expect(parsed.turn?.assistantOutputSilenceMs).toBe(320);
     expect(parsed.turn?.spokenStreamEnabled).toBe(true);
     expect(parsed.turn?.wordAlignmentEnabled).toBe(true);
   });
@@ -69,6 +91,56 @@ describe('provider-config parsers', () => {
         customSttMode: 'legacy',
       })
     ).toThrow('providerConfig.customSttMode must be one of: provider, custom, hybrid');
+  });
+
+  test('rejects invalid decomposed rnnoise speech threshold', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        turn: {
+          rnnoiseSpeechThreshold: 1.5,
+        },
+      })
+    ).toThrow('providerConfig.turn.rnnoiseSpeechThreshold must be a number between 0 and 1');
+  });
+
+  test('rejects invalid decomposed webrtc vad mode', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        turn: {
+          webrtcVadMode: 7,
+        },
+      })
+    ).toThrow('providerConfig.turn.webrtcVadMode must be an integer between 0 and 3');
+  });
+
+  test('rejects invalid decomposed speech start debounce', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        turn: {
+          speechStartDebounceMs: -1,
+        },
+      })
+    ).toThrow('providerConfig.turn.speechStartDebounceMs must be a non-negative number');
+  });
+
+  test('rejects invalid decomposed assistant output min RMS', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        turn: {
+          assistantOutputMinRms: -0.1,
+        },
+      })
+    ).toThrow('providerConfig.turn.assistantOutputMinRms must be a non-negative number');
+  });
+
+  test('rejects invalid decomposed barge-in enabled type', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        turn: {
+          bargeInEnabled: 'false',
+        },
+      })
+    ).toThrow('providerConfig.turn.bargeInEnabled must be a boolean');
   });
 
   test('requires llm model ref when pipecat pipeline is set', () => {

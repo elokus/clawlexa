@@ -1,6 +1,6 @@
 # Decomposed Provider Notes
 
-The decomposed adapter implements a manual STT/LLM/TTS pipeline using HTTP APIs and WebSocket TTS, with software-based VAD (voice activity detection).
+The decomposed adapter implements a manual STT/LLM/TTS pipeline using HTTP APIs and WebSocket TTS, with layered local VAD (voice activity detection).
 
 ## 1. Code Location
 
@@ -12,30 +12,34 @@ The decomposed adapter implements a manual STT/LLM/TTS pipeline using HTTP APIs 
 Unlike voice-to-voice providers (OpenAI Realtime, Ultravox, Gemini Live), the decomposed adapter stitches together separate STT, LLM, and TTS services:
 
 ```
-Microphone --> Manual VAD --> STT --> LLM (streaming + tools) --> TTS --> Speaker
-                 |                                                   |
-            RMS threshold                                    Deepgram WS or
-            + silence timer                                  OpenAI HTTP
+Microphone --> Optional neural filter --> Turn detector --> STT --> LLM (streaming + tools) --> TTS --> Speaker
+                   |                          |                                              |
+                RNNoise                 RNNoise or RMS                                 Deepgram WS or
+                                                                                       OpenAI HTTP
 ```
 
 This gives full control over each component: swap STT/LLM/TTS providers independently, use any LLM via OpenAI-compatible APIs, and tune turn detection for specific environments.
 
 ## 3. Pipeline Flow
 
-### 1. Manual VAD (Voice Activity Detection)
+### 1. Turn Detection (Voice Activity Detection)
 
-The adapter performs software-based speech detection on incoming PCM16 audio:
+The adapter supports three VAD engines:
 
-1. Compute RMS (root mean square) energy of each audio frame.
-2. If RMS >= `minRms` threshold: speech detected.
-   - If currently speaking (assistant output), trigger barge-in interruption.
-   - Accumulate audio chunks in `speechChunks[]`.
-   - Clear any silence timer.
-3. If RMS < `minRms` and speech was active:
-   - Continue accumulating audio (captures trailing silence).
-   - Start silence timer (`silenceMs` duration).
-4. When silence timer fires: finalize the speech turn.
-5. If total speech duration < `minSpeechMs`: discard (noise filter).
+- `webrtc-vad` (recommended): WebRTC speech classification (voiced/non-voiced frame ratio).
+- `rnnoise`: neural speech probability with optional denoised frame path.
+- `rms` (legacy): amplitude thresholding with assistant-RMS echo-aware scaling.
+
+In both modes:
+
+1. Incoming PCM16 frame is optionally denoised via RNNoise (`neuralFilterEnabled`).
+2. Detector decides speech/non-speech (`vadEngine` specific).
+3. If currently speaking and sustained speech is detected, barge-in interruption fires.
+   Echo-sensitive gating is only enabled while bot output is actually active
+   (assistant output RMS + silence hold), not for the entire speaking state.
+4. Speech frames are accumulated in `speechChunks[]`, trailing silence is preserved.
+5. `speechStartDebounceMs` requires sustained speech before opening a turn buffer.
+6. `silenceMs` finalizes a user turn; turns shorter than `minSpeechMs` are dropped.
 
 ### 2. STT (Speech-to-Text)
 
@@ -117,7 +121,7 @@ Two providers:
 | Interruption | Yes | Barge-in via VAD |
 | Async tools | Yes | |
 | Ordered transcripts | Yes | Sequential turns |
-| VAD | Manual only | RMS-based |
+| VAD | Manual only | `webrtc-vad`, `rnnoise`, or `rms` |
 | Transport | HTTP + WebSocket | STT/LLM over HTTP, TTS optionally WS |
 | Session resumption | No | |
 | Mid-session config | No | |
@@ -133,6 +137,17 @@ Two providers:
 | `silenceMs` | 700 | Silence duration before finalizing turn (ms) |
 | `minSpeechMs` | 350 | Minimum speech duration to process (ms) |
 | `minRms` | 0.015 | RMS threshold for speech detection |
+| `bargeInEnabled` | `true` | Enable interruption while assistant is speaking (`false` disables auto barge-in) |
+| `speechStartDebounceMs` | 140 | Continuous speech required before opening a new mic turn |
+| `vadEngine` | `webrtc-vad` | `webrtc-vad` (proper speech classifier), `rnnoise`, or `rms` |
+| `neuralFilterEnabled` | `true` | Apply RNNoise denoising before VAD/STT buffering |
+| `rnnoiseSpeechThreshold` | `0.62` | Base RNNoise speech probability threshold |
+| `rnnoiseEchoSpeechThresholdBoost` | `0.12` | Extra probability required while assistant output is active |
+| `webrtcVadMode` | `3` | WebRTC VAD aggressiveness (0-3, higher = stricter) |
+| `webrtcVadSpeechRatioThreshold` | `0.7` | Minimum voiced-frame ratio to classify chunk as speech |
+| `webrtcVadEchoSpeechRatioBoost` | `0.15` | Extra voiced-frame ratio required while assistant output is active |
+| `assistantOutputMinRms` | `0.008` | Output RMS threshold for bot-output speech activity tracking |
+| `assistantOutputSilenceMs` | `350` | Hold time after last voiced output chunk before disabling echo-sensitive phase |
 | `llmCompletionEnabled` | `false` | Enable LLM-based turn completion classification |
 | `llmShortTimeoutMs` | 5000 | Reprompt delay for `○` marker |
 | `llmLongTimeoutMs` | 10000 | Reprompt delay for `◐` marker |
@@ -188,7 +203,7 @@ The adapter emits `latency` events for each pipeline stage:
 **Use decomposed when:**
 - You need a specific LLM not available as a voice-to-voice provider (e.g., Grok via OpenRouter).
 - You want to mix providers (Deepgram STT + OpenRouter LLM + Deepgram TTS).
-- You need fine-grained control over turn detection (custom RMS thresholds, LLM-based completion).
+- You need fine-grained control over turn detection (WebRTC VAD, RNNoise, or RMS tuning, LLM-based completion).
 - You want to benchmark individual pipeline stages independently.
 
 **Use voice-to-voice (OpenAI, Ultravox, Gemini) when:**

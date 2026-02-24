@@ -22,6 +22,24 @@ function createInput(overrides: Partial<SessionInput> = {}): SessionInput {
   };
 }
 
+function makePcmFrame(
+  options: { durationMs?: number; amplitude?: number; sampleRate?: number } = {}
+): { data: ArrayBuffer; sampleRate: number; format: 'pcm16' } {
+  const sampleRate = options.sampleRate ?? 24_000;
+  const durationMs = options.durationMs ?? 40;
+  const sampleCount = Math.max(1, Math.floor((sampleRate * durationMs) / 1000));
+  const pcm = new Int16Array(sampleCount);
+  const amplitude = options.amplitude ?? 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    pcm[i] = i % 2 === 0 ? amplitude : -amplitude;
+  }
+  return {
+    data: pcm.buffer,
+    sampleRate,
+    format: 'pcm16',
+  };
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 250): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -32,6 +50,195 @@ async function waitFor(predicate: () => boolean, timeoutMs = 250): Promise<void>
 }
 
 describe('DecomposedAdapter interruption hardening', () => {
+  test('requires speech-start debounce before opening a turn buffer', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      turnDetector: { detect: (input: { frameData: ArrayBuffer }) => {
+        hasSpeech: boolean;
+        processedFrameData: ArrayBuffer;
+        rms: number;
+        speechThreshold: number;
+      }; destroy: () => void } | null;
+      transcribeAudio: (pcm: Uint8Array) => Promise<string>;
+      enqueueAssistantTurn: () => Promise<void>;
+      speechChunks: Uint8Array[];
+      speechStartedAtMs: number | null;
+    };
+
+    let hasSpeech = false;
+    let transcribeCalls = 0;
+
+    await adapter.connect(
+      createInput({
+        providerConfig: {
+          llmProvider: 'openai',
+          ttsProvider: 'openai',
+          sttProvider: 'openai',
+          openaiApiKey: 'test-key',
+          turn: {
+            silenceMs: 20,
+            minSpeechMs: 20,
+            minRms: 0.015,
+            speechStartDebounceMs: 140,
+            vadEngine: 'rms',
+          },
+        },
+      })
+    );
+
+    adapterAny.turnDetector = {
+      detect: (input) => ({
+        hasSpeech,
+        processedFrameData: input.frameData,
+        rms: hasSpeech ? 0.1 : 0.001,
+        speechThreshold: 0.015,
+      }),
+      destroy: () => {},
+    };
+    adapterAny.transcribeAudio = async () => {
+      transcribeCalls += 1;
+      return 'hello';
+    };
+    adapterAny.enqueueAssistantTurn = async () => {};
+
+    const frame = makePcmFrame({ amplitude: 12_000 });
+
+    hasSpeech = true;
+    adapter.sendAudio(frame);
+    adapter.sendAudio(frame);
+    adapter.sendAudio(frame); // 120ms < 140ms debounce
+    hasSpeech = false;
+    adapter.sendAudio(frame);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(adapterAny.speechStartedAtMs).toBeNull();
+    expect(adapterAny.speechChunks).toHaveLength(0);
+    expect(transcribeCalls).toBe(0);
+
+    hasSpeech = true;
+    adapter.sendAudio(frame);
+    adapter.sendAudio(frame);
+    adapter.sendAudio(frame);
+    adapter.sendAudio(frame); // 160ms >= 140ms debounce
+    hasSpeech = false;
+    adapter.sendAudio(frame);
+
+    await waitFor(() => transcribeCalls > 0, 400);
+    expect(transcribeCalls).toBe(1);
+
+    await adapter.disconnect();
+  });
+
+  test('uses bot output activity for echo-sensitive phase instead of speaking state alone', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      turnDetector: { detect: (input: {
+        frameData: ArrayBuffer;
+        frameSampleRate: number;
+        minRms: number;
+        assistantRms: number;
+        echoSensitivePhase: boolean;
+      }) => {
+        hasSpeech: boolean;
+        processedFrameData: ArrayBuffer;
+        rms: number;
+        speechThreshold: number;
+      }; destroy: () => void } | null;
+      setState: (next: 'idle' | 'listening' | 'thinking' | 'speaking') => void;
+      trackAssistantOutput: (frame: ArrayBuffer) => void;
+      micCaptureCooldownUntilMs: number;
+    };
+
+    const echoSensitiveSamples: boolean[] = [];
+
+    await adapter.connect(createInput());
+    adapterAny.turnDetector = {
+      detect: (input) => {
+        echoSensitiveSamples.push(input.echoSensitivePhase);
+        return {
+          hasSpeech: false,
+          processedFrameData: input.frameData,
+          rms: 0,
+          speechThreshold: input.minRms,
+        };
+      },
+      destroy: () => {},
+    };
+
+    adapterAny.setState('speaking');
+    adapterAny.micCaptureCooldownUntilMs = 0;
+    const silenceFrame = makePcmFrame({ amplitude: 0 });
+    adapter.sendAudio(silenceFrame);
+
+    expect(echoSensitiveSamples.at(-1)).toBe(false);
+
+    const voicedAssistantChunk = makePcmFrame({ amplitude: 10_000 }).data;
+    adapterAny.trackAssistantOutput(voicedAssistantChunk);
+    adapter.sendAudio(silenceFrame);
+    expect(echoSensitiveSamples.at(-1)).toBe(true);
+
+    await adapter.disconnect();
+  });
+
+  test('does not auto-interrupt while speaking when barge-in is disabled', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      turnDetector: { detect: (input: {
+        frameData: ArrayBuffer;
+      }) => {
+        hasSpeech: boolean;
+        processedFrameData: ArrayBuffer;
+        rms: number;
+        speechThreshold: number;
+      }; destroy: () => void } | null;
+      setState: (next: 'idle' | 'listening' | 'thinking' | 'speaking') => void;
+      micCaptureCooldownUntilMs: number;
+      speakingBargeInMs: number;
+    };
+
+    let interruptions = 0;
+    adapter.on('audioInterrupted', () => {
+      interruptions += 1;
+    });
+
+    await adapter.connect(
+      createInput({
+        providerConfig: {
+          llmProvider: 'openai',
+          ttsProvider: 'openai',
+          sttProvider: 'openai',
+          openaiApiKey: 'test-key',
+          turn: {
+            bargeInEnabled: false,
+          },
+        },
+      })
+    );
+
+    adapterAny.turnDetector = {
+      detect: (input) => ({
+        hasSpeech: true,
+        processedFrameData: input.frameData,
+        rms: 0.2,
+        speechThreshold: 0.01,
+      }),
+      destroy: () => {},
+    };
+
+    adapterAny.setState('speaking');
+    adapterAny.micCaptureCooldownUntilMs = 0;
+
+    const frame = makePcmFrame({ amplitude: 12_000 });
+    for (let i = 0; i < 12; i += 1) {
+      adapter.sendAudio(frame);
+    }
+
+    expect(interruptions).toBe(0);
+    expect(adapterAny.speakingBargeInMs).toBe(0);
+
+    await adapter.disconnect();
+  });
+
   test('interrupt aborts in-flight llm/tts controllers and clears VAD buffers', async () => {
     const adapter = new DecomposedAdapter();
     const adapterAny = adapter as unknown as {

@@ -1,4 +1,4 @@
-import { validateConfig } from './config.js';
+import { config, validateConfig } from './config.js';
 import { VoiceAgent } from './agent/voice-agent.js';
 import { WakewordDetector } from './wakeword/index.js';
 import { speak } from './audio/index.js';
@@ -44,6 +44,36 @@ let scheduler: Scheduler;
 let localTransport: LocalTransport;
 let wsTransport: WebSocketTransport;
 const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? '8000', 10);
+let lastLocalRoutingDiagnosticsKey = '';
+
+function logLocalRoutingDiagnostics(): void {
+  const diagnostics = localTransport.getRoutingDiagnostics();
+  const key = [
+    diagnostics.inputDevice,
+    diagnostics.outputDevice,
+    diagnostics.echoCancelSourceSelected ? 'echo' : 'raw',
+    diagnostics.samePhysicalDeviceLikely ? 'shared' : 'separate',
+  ].join('|');
+
+  if (key === lastLocalRoutingDiagnosticsKey) {
+    return;
+  }
+  lastLocalRoutingDiagnosticsKey = key;
+
+  console.log(
+    `[LocalAudio] Routing input=${diagnostics.inputDevice} output=${diagnostics.outputDevice} echoCancel=${diagnostics.echoCancelSourceSelected ? 'on' : 'off'}`
+  );
+
+  if (
+    process.platform === 'linux' &&
+    !diagnostics.echoCancelSourceSelected &&
+    diagnostics.samePhysicalDeviceLikely
+  ) {
+    console.warn(
+      '[LocalAudio] Echo-risk routing detected: input/output appear to be the same device and no echo-cancel source is selected. Configure PipeWire echo-cancel or set LOCAL_AUDIO_INPUT_DEVICE / LOCAL_PREFER_ECHO_CANCEL_SOURCE.'
+    );
+  }
+}
 
 /**
  * Update service state and coordinate all components.
@@ -84,6 +114,7 @@ async function updateServiceState(): Promise<void> {
     if (audioMode === 'local') {
       // LOCAL MODE: Use wakeword detection when agent is idle
       wsTransport.stop(); // Ensure web transport is stopped
+      logLocalRoutingDiagnostics();
 
       if (!agent.isActive() && wakeword && !wakeword.isListening()) {
         try {
@@ -128,7 +159,11 @@ async function main() {
   }
 
   // Initialize both transports (but don't start them yet)
-  localTransport = new LocalTransport();
+  localTransport = new LocalTransport({
+    inputDevice: config.localAudio.inputDevice,
+    outputDevice: config.localAudio.outputDevice,
+    preferEchoCancelSource: config.localAudio.preferEchoCancelSource,
+  });
   wsTransport = new WebSocketTransport(getClients());
 
   // Wire up binary message handler to route browser audio to WebSocket transport

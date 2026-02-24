@@ -110,6 +110,17 @@ export interface RuntimeVoiceConfigDocument {
       silenceMs: number;
       minSpeechMs: number;
       minRms: number;
+      bargeInEnabled: boolean;
+      speechStartDebounceMs: number;
+      vadEngine: 'rms' | 'rnnoise' | 'webrtc-vad';
+      neuralFilterEnabled: boolean;
+      rnnoiseSpeechThreshold: number;
+      rnnoiseEchoSpeechThresholdBoost: number;
+      webrtcVadMode: 0 | 1 | 2 | 3;
+      webrtcVadSpeechRatioThreshold: number;
+      webrtcVadEchoSpeechRatioBoost: number;
+      assistantOutputMinRms: number;
+      assistantOutputSilenceMs: number;
       spokenStreamEnabled: boolean;
       wordAlignmentEnabled: boolean;
       customSttMode: 'provider' | 'custom' | 'hybrid';
@@ -155,6 +166,17 @@ export interface RuntimeResolvedConfig {
     silenceMs: number;
     minSpeechMs: number;
     minRms: number;
+    bargeInEnabled: boolean;
+    speechStartDebounceMs: number;
+    vadEngine: 'rms' | 'rnnoise' | 'webrtc-vad';
+    neuralFilterEnabled: boolean;
+    rnnoiseSpeechThreshold: number;
+    rnnoiseEchoSpeechThresholdBoost: number;
+    webrtcVadMode: 0 | 1 | 2 | 3;
+    webrtcVadSpeechRatioThreshold: number;
+    webrtcVadEchoSpeechRatioBoost: number;
+    assistantOutputMinRms: number;
+    assistantOutputSilenceMs: number;
     spokenStreamEnabled: boolean;
     wordAlignmentEnabled: boolean;
     customSttMode: 'provider' | 'custom' | 'hybrid';
@@ -318,6 +340,34 @@ export function createDefaultRuntimeVoiceConfig(
         silenceMs: parseInt(env.VOICE_TURN_SILENCE_MS ?? '700', 10),
         minSpeechMs: parseInt(env.VOICE_TURN_MIN_SPEECH_MS ?? '350', 10),
         minRms: parseFloat(env.VOICE_TURN_MIN_RMS ?? '0.015'),
+        bargeInEnabled: (env.VOICE_BARGE_IN_ENABLED ?? 'true') === 'true',
+        speechStartDebounceMs: parseInt(env.VOICE_SPEECH_START_DEBOUNCE_MS ?? '140', 10),
+        vadEngine:
+          env.VOICE_TURN_VAD_ENGINE === 'rms'
+            ? 'rms'
+            : env.VOICE_TURN_VAD_ENGINE === 'rnnoise'
+              ? 'rnnoise'
+              : 'webrtc-vad',
+        neuralFilterEnabled: (env.VOICE_NEURAL_FILTER_ENABLED ?? 'true') === 'true',
+        rnnoiseSpeechThreshold: parseFloat(env.VOICE_RNNOISE_SPEECH_THRESHOLD ?? '0.62'),
+        rnnoiseEchoSpeechThresholdBoost: parseFloat(
+          env.VOICE_RNNOISE_ECHO_THRESHOLD_BOOST ?? '0.12'
+        ),
+        webrtcVadMode: (() => {
+          const value = parseInt(env.VOICE_WEBRTC_VAD_MODE ?? '3', 10);
+          if (value === 0 || value === 1 || value === 2 || value === 3) {
+            return value;
+          }
+          return 3;
+        })(),
+        webrtcVadSpeechRatioThreshold: parseFloat(
+          env.VOICE_WEBRTC_VAD_SPEECH_RATIO_THRESHOLD ?? '0.7'
+        ),
+        webrtcVadEchoSpeechRatioBoost: parseFloat(
+          env.VOICE_WEBRTC_VAD_ECHO_RATIO_BOOST ?? '0.15'
+        ),
+        assistantOutputMinRms: parseFloat(env.VOICE_ASSISTANT_OUTPUT_MIN_RMS ?? '0.008'),
+        assistantOutputSilenceMs: parseInt(env.VOICE_ASSISTANT_OUTPUT_SILENCE_MS ?? '350', 10),
         spokenStreamEnabled: (env.VOICE_SPOKEN_STREAM_ENABLED ?? 'false') === 'true',
         wordAlignmentEnabled: (env.VOICE_WORD_ALIGNMENT_ENABLED ?? 'false') === 'true',
         customSttMode:
@@ -527,6 +577,20 @@ export function resolveRuntimeConfigFromDocuments(input: {
       silenceMs: input.voiceConfig.voice.turn.silenceMs,
       minSpeechMs: input.voiceConfig.voice.turn.minSpeechMs,
       minRms: input.voiceConfig.voice.turn.minRms,
+      bargeInEnabled: input.voiceConfig.voice.turn.bargeInEnabled,
+      speechStartDebounceMs: input.voiceConfig.voice.turn.speechStartDebounceMs,
+      vadEngine: input.voiceConfig.voice.turn.vadEngine,
+      neuralFilterEnabled: input.voiceConfig.voice.turn.neuralFilterEnabled,
+      rnnoiseSpeechThreshold: input.voiceConfig.voice.turn.rnnoiseSpeechThreshold,
+      rnnoiseEchoSpeechThresholdBoost:
+        input.voiceConfig.voice.turn.rnnoiseEchoSpeechThresholdBoost,
+      webrtcVadMode: input.voiceConfig.voice.turn.webrtcVadMode,
+      webrtcVadSpeechRatioThreshold:
+        input.voiceConfig.voice.turn.webrtcVadSpeechRatioThreshold,
+      webrtcVadEchoSpeechRatioBoost:
+        input.voiceConfig.voice.turn.webrtcVadEchoSpeechRatioBoost,
+      assistantOutputMinRms: input.voiceConfig.voice.turn.assistantOutputMinRms,
+      assistantOutputSilenceMs: input.voiceConfig.voice.turn.assistantOutputSilenceMs,
       spokenStreamEnabled: input.voiceConfig.voice.turn.spokenStreamEnabled,
       wordAlignmentEnabled: input.voiceConfig.voice.turn.wordAlignmentEnabled,
       customSttMode: input.voiceConfig.voice.turn.customSttMode,

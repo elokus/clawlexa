@@ -7,6 +7,20 @@ loadEnv({ path: resolve(process.cwd(), '../../.env') });
 
 const runtimeVoiceDefaults = createDefaultRuntimeVoiceConfig(process.env).voice;
 
+function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) {
+    return defaultValue;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true;
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false;
+  }
+  return defaultValue;
+}
+
 export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY ?? '',
@@ -27,6 +41,14 @@ export const config = {
     sampleRate: 24000,
     channels: 1,
     format: 'pcm16' as const,
+  },
+  localAudio: {
+    inputDevice: process.env.LOCAL_AUDIO_INPUT_DEVICE ?? 'default',
+    outputDevice: process.env.LOCAL_AUDIO_OUTPUT_DEVICE ?? 'default',
+    preferEchoCancelSource: parseBooleanEnv(
+      process.env.LOCAL_PREFER_ECHO_CANCEL_SOURCE,
+      true
+    ),
   },
   agent: {
     defaultVoice: 'ash' as const,

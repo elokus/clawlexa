@@ -32,6 +32,7 @@ const DECOMPOSED_LLM_PROVIDERS = [
 const DECOMPOSED_TTS_PROVIDERS = ['openai', 'deepgram'] as const;
 const DECOMPOSED_TTS_TRANSPORTS = ['websocket'] as const;
 const DECOMPOSED_CUSTOM_STT_MODES = ['provider', 'custom', 'hybrid'] as const;
+const DECOMPOSED_VAD_ENGINES = ['rms', 'rnnoise', 'webrtc-vad'] as const;
 
 type UnknownObject = Record<string, unknown>;
 
@@ -87,6 +88,40 @@ function optionalNonNegativeNumber(
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
     throw new Error(`${path}.${key} must be a non-negative number`);
+  }
+  return value;
+}
+
+function optionalUnitIntervalNumber(
+  object: UnknownObject,
+  key: string,
+  path: string
+): number | undefined {
+  const value = object[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${path}.${key} must be a number between 0 and 1`);
+  }
+  return value;
+}
+
+function optionalIntegerRange(
+  object: UnknownObject,
+  key: string,
+  path: string,
+  min: number,
+  max: number
+): number | undefined {
+  const value = object[key];
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < min ||
+    value > max
+  ) {
+    throw new Error(`${path}.${key} must be an integer between ${min} and ${max}`);
   }
   return value;
 }
@@ -222,6 +257,60 @@ function parseDecomposedTurnConfig(raw: unknown): DecomposedProviderConfig['turn
     silenceMs: optionalPositiveNumber(object, 'silenceMs', 'providerConfig.turn'),
     minSpeechMs: optionalPositiveNumber(object, 'minSpeechMs', 'providerConfig.turn'),
     minRms: optionalNonNegativeNumber(object, 'minRms', 'providerConfig.turn'),
+    bargeInEnabled: optionalBoolean(object, 'bargeInEnabled', 'providerConfig.turn'),
+    speechStartDebounceMs: optionalNonNegativeNumber(
+      object,
+      'speechStartDebounceMs',
+      'providerConfig.turn'
+    ),
+    vadEngine: optionalEnum(
+      object,
+      'vadEngine',
+      'providerConfig.turn',
+      DECOMPOSED_VAD_ENGINES
+    ),
+    neuralFilterEnabled: optionalBoolean(
+      object,
+      'neuralFilterEnabled',
+      'providerConfig.turn'
+    ),
+    rnnoiseSpeechThreshold: optionalUnitIntervalNumber(
+      object,
+      'rnnoiseSpeechThreshold',
+      'providerConfig.turn'
+    ),
+    rnnoiseEchoSpeechThresholdBoost: optionalUnitIntervalNumber(
+      object,
+      'rnnoiseEchoSpeechThresholdBoost',
+      'providerConfig.turn'
+    ),
+    webrtcVadMode: optionalIntegerRange(
+      object,
+      'webrtcVadMode',
+      'providerConfig.turn',
+      0,
+      3
+    ) as 0 | 1 | 2 | 3 | undefined,
+    webrtcVadSpeechRatioThreshold: optionalUnitIntervalNumber(
+      object,
+      'webrtcVadSpeechRatioThreshold',
+      'providerConfig.turn'
+    ),
+    webrtcVadEchoSpeechRatioBoost: optionalUnitIntervalNumber(
+      object,
+      'webrtcVadEchoSpeechRatioBoost',
+      'providerConfig.turn'
+    ),
+    assistantOutputMinRms: optionalNonNegativeNumber(
+      object,
+      'assistantOutputMinRms',
+      'providerConfig.turn'
+    ),
+    assistantOutputSilenceMs: optionalPositiveNumber(
+      object,
+      'assistantOutputSilenceMs',
+      'providerConfig.turn'
+    ),
     spokenStreamEnabled: optionalBoolean(
       object,
       'spokenStreamEnabled',

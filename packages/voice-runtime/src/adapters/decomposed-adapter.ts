@@ -1,5 +1,12 @@
 import { parseDecomposedProviderConfig } from '../provider-config.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
+import {
+  createTurnDetector,
+  type DecomposedVadEngine,
+  RnnoiseTurnDetector,
+  WebRtcVadTurnDetector,
+  type TurnDetector,
+} from '../vad/turn-detector.js';
 import { createClient, LiveTTSEvents, type SpeakLiveClient } from '@deepgram/sdk';
 import { createLlmRuntime } from '@voiceclaw/llm-runtime';
 import type {
@@ -21,10 +28,13 @@ import type {
 
 const AUDIO_SAMPLE_RATE = 24000;
 const PCM_BYTES_PER_100MS = (AUDIO_SAMPLE_RATE * 2) / 10;
-const MIN_BARGE_IN_MS = 180;
+const MIN_BARGE_IN_MS = 360;
 const DEEPGRAM_FLUSH_FALLBACK_POLL_MS = 500;
 const DEEPGRAM_FLUSH_FALLBACK_IDLE_MS = 1200;
 const DEEPGRAM_FLUSH_FALLBACK_FORCE_MS = 1400;
+const MIC_ECHO_COOLDOWN_MS = 520;
+const SPEAKING_START_COOLDOWN_MS = 220;
+const ASSISTANT_RMS_DECAY_MS = 420;
 const TURN_MARKERS = ['✓', '○', '◐'] as const;
 const decomposedLlmRuntime = createLlmRuntime();
 
@@ -46,6 +56,17 @@ interface DecomposedOptions {
   silenceMs: number;
   minSpeechMs: number;
   minRms: number;
+  bargeInEnabled: boolean;
+  speechStartDebounceMs: number;
+  vadEngine: DecomposedVadEngine;
+  neuralFilterEnabled: boolean;
+  rnnoiseSpeechThreshold: number;
+  rnnoiseEchoSpeechThresholdBoost: number;
+  webrtcVadMode: 0 | 1 | 2 | 3;
+  webrtcVadSpeechRatioThreshold: number;
+  webrtcVadEchoSpeechRatioBoost: number;
+  assistantOutputMinRms: number;
+  assistantOutputSilenceMs: number;
   spokenStreamEnabled: boolean;
   wordAlignmentEnabled: boolean;
   llmCompletionEnabled: boolean;
@@ -167,6 +188,11 @@ interface ConversationEntry {
   content: string;
 }
 
+interface BufferedSpeechFrame {
+  data: Uint8Array;
+  durationMs: number;
+}
+
 const DECOMPOSED_CONFIG_SCHEMA: ProviderConfigSchema = {
   providerId: 'decomposed',
   displayName: 'Decomposed (STT + LLM + TTS)',
@@ -205,6 +231,119 @@ const DECOMPOSED_CONFIG_SCHEMA: ProviderConfigSchema = {
       description: 'Audio level threshold for speech detection.',
     },
     {
+      key: 'turn.bargeInEnabled',
+      label: 'Barge-In Enabled',
+      type: 'boolean',
+      group: 'vad',
+      defaultValue: true,
+      description:
+        'When disabled, mic audio is ignored while assistant audio is speaking (no auto interruption).',
+    },
+    {
+      key: 'turn.speechStartDebounceMs',
+      label: 'Speech Start Debounce (ms)',
+      type: 'number',
+      group: 'vad',
+      min: 0,
+      max: 600,
+      step: 10,
+      defaultValue: 140,
+      description: 'Continuous speech required before opening a mic turn buffer.',
+    },
+    {
+      key: 'turn.vadEngine',
+      label: 'VAD Engine',
+      type: 'select',
+      group: 'vad',
+      options: [
+        { value: 'webrtc-vad', label: 'WebRTC VAD (proper speech classifier)' },
+        { value: 'rnnoise', label: 'RNNoise (neural, recommended)' },
+        { value: 'rms', label: 'RMS (legacy fallback)' },
+      ],
+      defaultValue: 'webrtc-vad',
+      description:
+        'Speech detector used for turn start/barge-in. WebRTC VAD is recommended for robust speech-vs-noise classification.',
+    },
+    {
+      key: 'turn.neuralFilterEnabled',
+      label: 'Neural Input Filter',
+      type: 'boolean',
+      group: 'vad',
+      defaultValue: true,
+      description:
+        'Denoises microphone audio with RNNoise before VAD/STT capture (fallbacks to raw audio if unavailable).',
+    },
+    {
+      key: 'turn.rnnoiseSpeechThreshold',
+      label: 'RNNoise Speech Threshold',
+      type: 'range',
+      group: 'vad',
+      min: 0.2,
+      max: 0.99,
+      step: 0.01,
+      defaultValue: 0.62,
+      dependsOn: { field: 'turn.vadEngine', value: 'rnnoise' },
+      description: 'Neural speech probability threshold in normal listening mode.',
+    },
+    {
+      key: 'turn.webrtcVadMode',
+      label: 'WebRTC VAD Mode',
+      type: 'number',
+      group: 'vad',
+      min: 0,
+      max: 3,
+      step: 1,
+      defaultValue: 3,
+      dependsOn: { field: 'turn.vadEngine', value: 'webrtc-vad' },
+      description: 'Aggressiveness of WebRTC VAD speech filtering.',
+    },
+    {
+      key: 'turn.webrtcVadSpeechRatioThreshold',
+      label: 'WebRTC Speech Ratio Threshold',
+      type: 'range',
+      group: 'vad',
+      min: 0.2,
+      max: 0.99,
+      step: 0.01,
+      defaultValue: 0.7,
+      dependsOn: { field: 'turn.vadEngine', value: 'webrtc-vad' },
+      description: 'Minimum voiced-frame ratio required to classify chunk as speech.',
+    },
+    {
+      key: 'turn.webrtcVadEchoSpeechRatioBoost',
+      label: 'WebRTC Speaking Boost',
+      type: 'range',
+      group: 'vad',
+      min: 0,
+      max: 0.4,
+      step: 0.01,
+      defaultValue: 0.15,
+      dependsOn: { field: 'turn.vadEngine', value: 'webrtc-vad' },
+      description: 'Extra voiced-ratio required while assistant is speaking.',
+    },
+    {
+      key: 'turn.assistantOutputMinRms',
+      label: 'Assistant Output VAD Min RMS',
+      type: 'number',
+      group: 'vad',
+      min: 0.001,
+      max: 0.08,
+      step: 0.001,
+      defaultValue: 0.008,
+      description: 'RMS threshold to consider assistant output actively speaking.',
+    },
+    {
+      key: 'turn.assistantOutputSilenceMs',
+      label: 'Assistant Output Silence Hold (ms)',
+      type: 'number',
+      group: 'vad',
+      min: 100,
+      max: 1200,
+      step: 10,
+      defaultValue: 350,
+      description: 'How long output stays "speaking" after last voiced chunk.',
+    },
+    {
       key: 'deepgramTtsPunctuationChunkingEnabled',
       label: 'Deepgram Punctuation Chunking',
       type: 'boolean',
@@ -229,12 +368,18 @@ export class DecomposedAdapter implements ProviderAdapter {
   private history: ConversationEntry[] = [];
 
   private speechChunks: Uint8Array[] = [];
+  private pendingSpeechFrames: BufferedSpeechFrame[] = [];
+  private pendingSpeechMs = 0;
   private speechStartedAtMs: number | null = null;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private completionTimer: ReturnType<typeof setTimeout> | null = null;
   private processingTurn = false;
   private interrupted = false;
   private speakingBargeInMs = 0;
+  private assistantOutputRms = 0;
+  private assistantOutputRmsAtMs = 0;
+  private assistantOutputVoiceAtMs = 0;
+  private micCaptureCooldownUntilMs = 0;
   private interruptionGeneration = 0;
   private activeLlmAbortController: AbortController | null = null;
   private activeTtsAbortController: AbortController | null = null;
@@ -242,6 +387,7 @@ export class DecomposedAdapter implements ProviderAdapter {
   private deepgramTtsConnection: SpeakLiveClient | null = null;
   private deepgramTtsConnectionReady: Promise<SpeakLiveClient> | null = null;
   private deepgramTtsRequestQueue: Promise<void> = Promise.resolve();
+  private turnDetector: TurnDetector | null = null;
 
   capabilities(): ProviderCapabilities {
     return DECOMPOSED_CAPABILITIES;
@@ -254,12 +400,48 @@ export class DecomposedAdapter implements ProviderAdapter {
   async connect(input: SessionInput): Promise<AudioNegotiation> {
     this.input = input;
     this.options = this.resolveOptions(input);
+    this.turnDetector?.destroy();
+    this.turnDetector = await createTurnDetector(this.options.vadEngine, {
+      rnnoiseOptions: {
+        speechThreshold: this.options.rnnoiseSpeechThreshold,
+        echoSpeechThresholdBoost: this.options.rnnoiseEchoSpeechThresholdBoost,
+        applyNeuralFilter: this.options.neuralFilterEnabled,
+      },
+      webrtcVadOptions: {
+        mode: this.options.webrtcVadMode,
+        speechRatioThreshold: this.options.webrtcVadSpeechRatioThreshold,
+        echoSpeechRatioBoost: this.options.webrtcVadEchoSpeechRatioBoost,
+        applyNeuralFilter: this.options.neuralFilterEnabled,
+      },
+    });
+    const runtimeMode = (() => {
+      if (this.turnDetector instanceof WebRtcVadTurnDetector) {
+        return this.turnDetector.isUsingRmsFallback()
+          ? 'rms-fallback'
+          : 'webrtc-vad-active';
+      }
+      if (this.turnDetector instanceof RnnoiseTurnDetector) {
+        return this.turnDetector.isUsingRmsFallback()
+          ? 'rms-fallback'
+          : 'rnnoise-active';
+      }
+      return 'rms-only';
+    })();
+    console.log(
+      `[DecomposedAdapter] VAD engine: ${this.options.vadEngine}` +
+        ` (filter=${this.options.neuralFilterEnabled ? 'on' : 'off'}, runtime=${runtimeMode}, bargeIn=${this.options.bargeInEnabled ? 'on' : 'off'})`
+    );
     console.log(`[DecomposedAdapter] Turn completion markers: ${this.options.llmCompletionEnabled ? 'enabled' : 'disabled'}`);
     this.cancelInFlightOutput();
     this.history = [];
     this.speechChunks = [];
+    this.resetPendingSpeechStart();
     this.speechStartedAtMs = null;
     this.speakingBargeInMs = 0;
+    this.assistantOutputRms = 0;
+    this.assistantOutputRmsAtMs = 0;
+    this.assistantOutputVoiceAtMs = 0;
+    this.micCaptureCooldownUntilMs = 0;
     this.processingTurn = false;
     this.interrupted = false;
     this.interruptionGeneration += 1;
@@ -286,20 +468,40 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.cancelInFlightOutput();
     this.connected = false;
     this.speechChunks = [];
+    this.resetPendingSpeechStart();
     this.speechStartedAtMs = null;
     this.speakingBargeInMs = 0;
+    this.assistantOutputRms = 0;
+    this.assistantOutputRmsAtMs = 0;
+    this.assistantOutputVoiceAtMs = 0;
+    this.micCaptureCooldownUntilMs = 0;
     this.processingTurn = false;
     this.interrupted = false;
     this.interruptionGeneration += 1;
     this.assistantTurnQueue = Promise.resolve();
     this.deepgramTtsRequestQueue = Promise.resolve();
     this.closeDeepgramTtsConnection();
+    this.turnDetector?.destroy();
+    this.turnDetector = null;
     this.setState('idle');
     this.events.emit('disconnected');
   }
 
   sendAudio(frame: AudioFrame): void {
     if (!this.connected || !this.options) return;
+    const nowMs = Date.now();
+    if (nowMs < this.micCaptureCooldownUntilMs) {
+      return;
+    }
+
+    // Fast exit: skip all processing (including WASM VAD) when mic input is
+    // not needed.  The synchronous WASM turn-detector blocks the event loop;
+    // running it during TTS pacing sleep() causes chunk delivery jitter that
+    // the browser hears as robotic "drrrrrr" artifacts.
+    if (this.state === 'speaking' && !this.options.bargeInEnabled) {
+      return;
+    }
+
     // During an in-flight turn, only keep accepting mic audio if we're actively
     // handling barge-in (speaking) or have already interrupted and are capturing
     // the follow-up user utterance.
@@ -309,10 +511,25 @@ export class DecomposedAdapter implements ProviderAdapter {
 
     const frameDurationMs = Math.max(
       1,
-      Math.floor((frame.data.byteLength / 2 / AUDIO_SAMPLE_RATE) * 1000)
+      Math.floor((frame.data.byteLength / 2 / frame.sampleRate) * 1000)
     );
-    const rms = computeRmsPcm16(frame.data);
-    const hasSpeech = rms >= this.options.minRms;
+    const copiedFrame = new Uint8Array(frame.data.slice(0));
+    const assistantRms = this.getDecayedAssistantOutputRms(nowMs);
+    const echoSensitivePhase =
+      this.isAssistantOutputActive(nowMs) ||
+      (this.processingTurn && this.interrupted);
+    const detection = this.turnDetector?.detect({
+      frameData: frame.data,
+      frameSampleRate: frame.sampleRate,
+      minRms: this.options.minRms,
+      assistantRms,
+      echoSensitivePhase,
+    });
+    const hasSpeech = detection?.hasSpeech ?? false;
+    const frameForSpeech =
+      detection?.processedFrameData instanceof ArrayBuffer
+        ? new Uint8Array(detection.processedFrameData.slice(0))
+        : copiedFrame;
 
     if (this.state === 'speaking') {
       if (hasSpeech) {
@@ -332,18 +549,30 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.speakingBargeInMs = 0;
     }
 
-    if (hasSpeech) {
-      this.clearCompletionTimer();
-      if (this.speechStartedAtMs === null) {
+    if (hasSpeech && this.speechStartedAtMs === null) {
+      this.queuePendingSpeechFrame(frameForSpeech, frameDurationMs);
+      if (this.pendingSpeechMs >= this.options.speechStartDebounceMs) {
+        this.clearCompletionTimer();
         this.speechStartedAtMs = Date.now();
+        for (const pending of this.pendingSpeechFrames) {
+          this.speechChunks.push(pending.data);
+        }
+        this.resetPendingSpeechStart();
+        this.clearSilenceTimer();
       }
-      this.speechChunks.push(new Uint8Array(frame.data.slice(0)));
-      this.clearSilenceTimer();
       return;
     }
 
-    if (this.speechStartedAtMs !== null) {
-      this.speechChunks.push(new Uint8Array(frame.data.slice(0)));
+    if (this.speechStartedAtMs === null) {
+      this.resetPendingSpeechStart();
+      return;
+    }
+
+    this.clearCompletionTimer();
+    this.speechChunks.push(frameForSpeech);
+    if (hasSpeech) {
+      this.clearSilenceTimer();
+    } else {
       this.armSilenceTimer();
     }
   }
@@ -361,10 +590,13 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.interruptionGeneration += 1;
     this.interrupted = true;
     this.speakingBargeInMs = 0;
+    this.micCaptureCooldownUntilMs = Date.now() + MIC_ECHO_COOLDOWN_MS;
     this.clearCompletionTimer();
     this.clearSilenceTimer();
     this.speechChunks = [];
+    this.resetPendingSpeechStart();
     this.speechStartedAtMs = null;
+    this.assistantOutputVoiceAtMs = 0;
     this.cancelInFlightOutput();
     this.events.emit('audioInterrupted');
     this.setState('listening');
@@ -473,10 +705,72 @@ export class DecomposedAdapter implements ProviderAdapter {
   private setState(next: VoiceState): void {
     if (this.state === next) return;
     this.state = next;
+    if (next === 'speaking') {
+      this.micCaptureCooldownUntilMs = Math.max(
+        this.micCaptureCooldownUntilMs,
+        Date.now() + SPEAKING_START_COOLDOWN_MS
+      );
+    }
     if (next !== 'speaking') {
       this.speakingBargeInMs = 0;
     }
     this.events.emit('stateChange', next);
+  }
+
+  private trackAssistantOutput(frame: ArrayBuffer): void {
+    if (!this.options) {
+      return;
+    }
+    const nowMs = Date.now();
+    const rms = computeRmsPcm16(frame);
+    const baseline = this.getDecayedAssistantOutputRms(nowMs);
+    const alpha = 0.35;
+    this.assistantOutputRms = baseline * (1 - alpha) + rms * alpha;
+    this.assistantOutputRmsAtMs = nowMs;
+    if (rms >= this.options.assistantOutputMinRms) {
+      this.assistantOutputVoiceAtMs = nowMs;
+    }
+  }
+
+  private getDecayedAssistantOutputRms(nowMs: number): number {
+    if (this.assistantOutputRmsAtMs <= 0 || this.assistantOutputRms <= 0) {
+      return 0;
+    }
+    const elapsedMs = Math.max(0, nowMs - this.assistantOutputRmsAtMs);
+    const decay = Math.exp(-elapsedMs / ASSISTANT_RMS_DECAY_MS);
+    return this.assistantOutputRms * decay;
+  }
+
+  private isAssistantOutputActive(nowMs: number): boolean {
+    if (!this.options || this.assistantOutputVoiceAtMs <= 0) {
+      return false;
+    }
+    return nowMs - this.assistantOutputVoiceAtMs <= this.options.assistantOutputSilenceMs;
+  }
+
+  private queuePendingSpeechFrame(frame: Uint8Array, frameDurationMs: number): void {
+    if (!this.options) {
+      return;
+    }
+    this.pendingSpeechFrames.push({
+      data: frame,
+      durationMs: frameDurationMs,
+    });
+    this.pendingSpeechMs += frameDurationMs;
+
+    const maxPendingMs = Math.max(this.options.speechStartDebounceMs + 120, 220);
+    while (this.pendingSpeechMs > maxPendingMs && this.pendingSpeechFrames.length > 0) {
+      const dropped = this.pendingSpeechFrames.shift();
+      if (!dropped) {
+        break;
+      }
+      this.pendingSpeechMs = Math.max(0, this.pendingSpeechMs - dropped.durationMs);
+    }
+  }
+
+  private resetPendingSpeechStart(): void {
+    this.pendingSpeechFrames = [];
+    this.pendingSpeechMs = 0;
   }
 
   private emitLatency(metric: {
@@ -821,6 +1115,10 @@ export class DecomposedAdapter implements ProviderAdapter {
       }
 
       if (this.options.ttsProvider === 'deepgram') {
+        console.log(
+          `[DecomposedAdapter] TTS path: deepgram-streaming` +
+            ` (punctuationChunking=${this.options.deepgramTtsPunctuationChunkingEnabled})`
+        );
         const request = this.deepgramTtsRequestQueue.then(() =>
           this.streamTextWithDeepgramTts(textStream, assistantId, llmStartedAtMs, turnGeneration)
         );
@@ -829,6 +1127,7 @@ export class DecomposedAdapter implements ProviderAdapter {
         return { ...result, marker };
       }
 
+      console.log(`[DecomposedAdapter] TTS path: inline-segment (provider=${this.options.ttsProvider})`);
       const result = await this.streamTextWithInlineTts(
         textStream,
         assistantId,
@@ -1201,12 +1500,19 @@ export class DecomposedAdapter implements ProviderAdapter {
           }
         }
 
+        this.trackAssistantOutput(chunk);
         this.events.emit('audio', {
           data: chunk,
           sampleRate: AUDIO_SAMPLE_RATE,
           format: 'pcm16',
         });
-        await sleep(chunkDurationMs(chunk.byteLength));
+        // Yield briefly to avoid starving the event loop, but do NOT sleep
+        // for the full chunk duration.  The browser's AudioContext handles
+        // precise real-time scheduling; the server just needs to deliver
+        // chunks promptly.  Sleeping for the full 100ms per chunk means any
+        // jitter (event loop, GC, network) causes the browser to run out
+        // of pre-scheduled audio → scheduling reset → audible gaps ("drrrrrr").
+        await sleep(20);
         return true;
       };
 
@@ -1315,15 +1621,27 @@ export class DecomposedAdapter implements ProviderAdapter {
             pendingText += delta;
             pendingChars += delta.length;
 
-            if (
-              shouldFlushDeepgramStream(
-                delta,
-                pendingChars,
-                expectedFlushes,
-                punctuationChunkingEnabled
-              )
-            ) {
-              requestFlush();
+            if (punctuationChunkingEnabled) {
+              // Chunked mode: flush at natural boundaries for lower latency
+              // at the cost of prosodic continuity between segments.
+              if (
+                shouldFlushDeepgramStream(
+                  delta,
+                  pendingChars,
+                  expectedFlushes,
+                  true
+                )
+              ) {
+                requestFlush();
+              }
+            } else {
+              // Continuous mode (per Deepgram docs): stream every LLM token
+              // directly to Deepgram via sendText WITHOUT flushing.  Deepgram
+              // buffers all Speak messages internally and synthesizes as one
+              // unit when Flush is sent at the end.  This preserves prosody
+              // and voice consistency across the entire response.
+              // See: https://developers.deepgram.com/docs/send-llm-outputs-to-the-tts-web-socket
+              connection.sendText(delta);
             }
           }
 
@@ -1332,7 +1650,20 @@ export class DecomposedAdapter implements ProviderAdapter {
           sendingCompleteAtMs = Date.now();
 
           if (!aborted && (pendingChars > 0 || expectedFlushes === 0)) {
-            requestFlush();
+            if (!punctuationChunkingEnabled) {
+              // Continuous mode: text was already streamed per-token via
+              // sendText during the loop above.  Only flush to trigger
+              // synthesis — do NOT re-send the text via requestFlush().
+              flushTextQueue.push(pendingText);
+              pendingText = '';
+              pendingChars = 0;
+              expectedFlushes += 1;
+              spokeAudio = true;
+              connection.flush();
+            } else {
+              // Chunked mode: send any remaining buffered text + flush.
+              requestFlush();
+            }
           }
 
           maybeResolve();
@@ -1919,12 +2250,13 @@ export class DecomposedAdapter implements ProviderAdapter {
         firstAudioAtMs = Date.now();
         onFirstAudio?.();
       }
+      this.trackAssistantOutput(chunk);
       this.events.emit('audio', {
         data: chunk,
         sampleRate: AUDIO_SAMPLE_RATE,
         format: 'pcm16',
       });
-      await sleep(chunkDurationMs(chunk.byteLength));
+      await sleep(20);
       return true;
     };
 
@@ -2391,6 +2723,18 @@ export class DecomposedAdapter implements ProviderAdapter {
       silenceMs: providerConfig.turn?.silenceMs ?? 700,
       minSpeechMs: providerConfig.turn?.minSpeechMs ?? 350,
       minRms: providerConfig.turn?.minRms ?? 0.015,
+      bargeInEnabled: providerConfig.turn?.bargeInEnabled ?? true,
+      speechStartDebounceMs: providerConfig.turn?.speechStartDebounceMs ?? 140,
+      vadEngine: providerConfig.turn?.vadEngine ?? 'webrtc-vad',
+      neuralFilterEnabled: providerConfig.turn?.neuralFilterEnabled ?? true,
+      rnnoiseSpeechThreshold: providerConfig.turn?.rnnoiseSpeechThreshold ?? 0.62,
+      rnnoiseEchoSpeechThresholdBoost: providerConfig.turn?.rnnoiseEchoSpeechThresholdBoost ?? 0.12,
+      webrtcVadMode: providerConfig.turn?.webrtcVadMode ?? 3,
+      webrtcVadSpeechRatioThreshold: providerConfig.turn?.webrtcVadSpeechRatioThreshold ?? 0.7,
+      webrtcVadEchoSpeechRatioBoost:
+        providerConfig.turn?.webrtcVadEchoSpeechRatioBoost ?? 0.15,
+      assistantOutputMinRms: providerConfig.turn?.assistantOutputMinRms ?? 0.008,
+      assistantOutputSilenceMs: providerConfig.turn?.assistantOutputSilenceMs ?? 350,
       spokenStreamEnabled: providerConfig.turn?.spokenStreamEnabled ?? false,
       wordAlignmentEnabled: providerConfig.turn?.wordAlignmentEnabled ?? false,
       llmCompletionEnabled: providerConfig.turn?.llmCompletionEnabled ?? false,
@@ -2756,11 +3100,3 @@ function countWords(text: string): number {
   return trimmed.split(/\s+/).length;
 }
 
-function chunkDurationMs(byteLength: number): number {
-  if (byteLength <= 0) {
-    return 1;
-  }
-  const samples = byteLength / 2;
-  const durationMs = (samples / AUDIO_SAMPLE_RATE) * 1000;
-  return Math.max(1, Math.round(durationMs));
-}

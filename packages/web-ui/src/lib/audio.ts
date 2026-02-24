@@ -57,6 +57,18 @@ export class AudioController {
         },
         video: false,
       });
+      const micTrack = this.mediaStream.getAudioTracks()[0];
+      const micSettings = micTrack?.getSettings();
+      const micConstraints = micTrack?.getConstraints();
+      console.log('[Audio] Mic capture settings', {
+        deviceId: micSettings?.deviceId ?? 'unknown',
+        sampleRate: micSettings?.sampleRate ?? 'unknown',
+        channelCount: micSettings?.channelCount ?? 'unknown',
+        echoCancellation: micSettings?.echoCancellation ?? 'unknown',
+        noiseSuppression: micSettings?.noiseSuppression ?? 'unknown',
+        autoGainControl: micSettings?.autoGainControl ?? 'unknown',
+      });
+      console.log('[Audio] Mic capture constraints', micConstraints ?? {});
 
       // Create AudioContext
       this.context = new AudioContext({

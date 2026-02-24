@@ -114,6 +114,17 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
     silenceMs?: number;
     minSpeechMs?: number;
     minRms?: number;
+    bargeInEnabled?: boolean;
+    speechStartDebounceMs?: number;
+    vadEngine?: 'rms' | 'rnnoise' | 'webrtc-vad';
+    neuralFilterEnabled?: boolean;
+    rnnoiseSpeechThreshold?: number;
+    rnnoiseEchoSpeechThresholdBoost?: number;
+    webrtcVadMode?: 0 | 1 | 2 | 3;
+    webrtcVadSpeechRatioThreshold?: number;
+    webrtcVadEchoSpeechRatioBoost?: number;
+    assistantOutputMinRms?: number;
+    assistantOutputSilenceMs?: number;
     spokenStreamEnabled?: boolean;
     wordAlignmentEnabled?: boolean;
     llmCompletionEnabled?: boolean;

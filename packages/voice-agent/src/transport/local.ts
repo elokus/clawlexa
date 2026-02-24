@@ -23,6 +23,144 @@ export interface LocalAudioDeviceInfo {
 export interface LocalTransportOptions {
   inputDevice?: string;
   outputDevice?: string;
+  preferEchoCancelSource?: boolean;
+}
+
+export interface LocalRoutingDiagnostics {
+  inputDevice: string;
+  outputDevice: string;
+  echoCancelSourceSelected: boolean;
+  samePhysicalDeviceLikely: boolean;
+}
+
+const ECHO_CANCEL_SOURCE_PATTERNS = [/echo[-_. ]?cancel/i, /\baec\b/i, /webrtc/i];
+const DEVICE_IDENTITY_STOPWORDS = new Set([
+  'alsa',
+  'analog',
+  'audio',
+  'builtin',
+  'card',
+  'coreaudio',
+  'default',
+  'hdmi',
+  'iec958',
+  'input',
+  'mic',
+  'microphone',
+  'monitor',
+  'mono',
+  'output',
+  'pcm',
+  'sink',
+  'source',
+  'speaker',
+  'speakers',
+  'stereo',
+  'usb',
+]);
+
+export function isEchoCancelSourceName(deviceName: string): boolean {
+  const normalized = deviceName.trim().toLowerCase();
+  if (!normalized || normalized === 'default') {
+    return false;
+  }
+  return ECHO_CANCEL_SOURCE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function selectPreferredLinuxInputDevice(options: {
+  requestedInputDevice: string;
+  inventory: LocalAudioDeviceInfo;
+  preferEchoCancelSource: boolean;
+}): string {
+  const requestedInput = options.requestedInputDevice.trim() || 'default';
+  if (requestedInput !== 'default') {
+    return requestedInput;
+  }
+
+  const fallbackDefault =
+    options.inventory.defaultInputDevice || options.inventory.inputDevices[0] || 'default';
+  if (!options.preferEchoCancelSource) {
+    return fallbackDefault;
+  }
+
+  const candidates = options.inventory.inputDevices
+    .filter((device) => isEchoCancelSourceName(device))
+    .sort((left, right) => {
+      const scoreDiff = scoreEchoCancelCandidate(right) - scoreEchoCancelCandidate(left);
+      if (scoreDiff !== 0) return scoreDiff;
+      return left.localeCompare(right);
+    });
+
+  return candidates[0] ?? fallbackDefault;
+}
+
+export function areLikelySamePhysicalAudioDevice(
+  inputDevice: string,
+  outputDevice: string
+): boolean {
+  const inputNormalized = inputDevice.trim().toLowerCase() || 'default';
+  const outputNormalized = outputDevice.trim().toLowerCase() || 'default';
+
+  if (inputNormalized === 'default' && outputNormalized === 'default') {
+    return true;
+  }
+  if (inputNormalized === outputNormalized) {
+    return true;
+  }
+
+  const inputBackendCanonical = canonicalBackendNode(inputNormalized);
+  const outputBackendCanonical = canonicalBackendNode(outputNormalized);
+  if (inputBackendCanonical && inputBackendCanonical === outputBackendCanonical) {
+    return true;
+  }
+
+  const inputTokens = tokenizeDeviceIdentity(inputNormalized);
+  const outputTokens = tokenizeDeviceIdentity(outputNormalized);
+  if (inputTokens.length === 0 || outputTokens.length === 0) {
+    return false;
+  }
+
+  const outputSet = new Set(outputTokens);
+  let overlap = 0;
+  for (const token of inputTokens) {
+    if (outputSet.has(token)) {
+      overlap += 1;
+    }
+  }
+
+  const minSize = Math.min(inputTokens.length, outputTokens.length);
+  return overlap >= 2 && overlap / minSize >= 0.6;
+}
+
+function scoreEchoCancelCandidate(deviceName: string): number {
+  const normalized = deviceName.toLowerCase();
+  let score = 0;
+  if (/echo[-_. ]?cancel/.test(normalized)) score += 10;
+  if (/\baec\b/.test(normalized)) score += 6;
+  if (/webrtc/.test(normalized)) score += 4;
+  if (/\bsource\b/.test(normalized)) score += 1;
+  return score;
+}
+
+function canonicalBackendNode(deviceName: string): string {
+  if (!deviceName) return '';
+  return deviceName
+    .replace(/^(alsa|bluez|coreaudio|pipewire)_(input|output)\./, '')
+    .replace(/^(input|output)\./, '')
+    .replace(/\.monitor$/, '')
+    .replace(/\.analog-(stereo|mono)$/, '')
+    .replace(/\.iec958-stereo$/, '');
+}
+
+function tokenizeDeviceIdentity(deviceName: string): string[] {
+  return deviceName
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => {
+      if (!token || token.length < 2) return false;
+      if (DEVICE_IDENTITY_STOPWORDS.has(token)) return false;
+      return true;
+    });
 }
 
 export function parseMacAudioDevices(systemProfilerOutput: string): LocalAudioDeviceInfo {
@@ -126,6 +264,7 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
   private playbackSampleRate: number = AUDIO_CONFIG.API_SAMPLE_RATE;
   private inputDevice: string;
   private outputDevice: string;
+  private readonly preferEchoCancelSource: boolean;
   private captureFallbackAttempted = false;
   private playbackFallbackAttempted = false;
   private playbackReady = false;
@@ -136,8 +275,36 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
 
   constructor(options?: LocalTransportOptions) {
     super();
-    this.inputDevice = options?.inputDevice ?? 'default';
-    this.outputDevice = options?.outputDevice ?? 'default';
+    const requestedInputDevice = options?.inputDevice?.trim() || 'default';
+    const requestedOutputDevice = options?.outputDevice?.trim() || 'default';
+    this.preferEchoCancelSource = options?.preferEchoCancelSource ?? false;
+
+    this.inputDevice = requestedInputDevice;
+    this.outputDevice = requestedOutputDevice;
+
+    if (isLinux) {
+      const inventory = parseLinuxAudioDevices();
+      this.inputDevice = selectPreferredLinuxInputDevice({
+        requestedInputDevice,
+        inventory,
+        preferEchoCancelSource: this.preferEchoCancelSource,
+      });
+      this.outputDevice =
+        requestedOutputDevice === 'default'
+          ? inventory.defaultOutputDevice || 'default'
+          : requestedOutputDevice;
+
+      if (
+        this.preferEchoCancelSource &&
+        requestedInputDevice === 'default' &&
+        this.inputDevice !== inventory.defaultInputDevice &&
+        this.inputDevice !== 'default'
+      ) {
+        console.log(
+          `[LocalTransport] Using echo-cancel input source: ${this.inputDevice} (default source: ${inventory.defaultInputDevice})`
+        );
+      }
+    }
 
     if (!isLinux && !isMac) {
       console.warn(`[LocalTransport] Unsupported platform: ${process.platform}`);
@@ -202,14 +369,19 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
    * Start Linux capture using pw-cat (PipeWire).
    */
   private startLinuxCapture(): void {
-    this.recorder = spawn('pw-cat', [
+    const args = [
       '--record',
       '--raw',
       '--channels', String(AUDIO_CONFIG.CHANNELS),
       '--rate', String(AUDIO_CONFIG.API_SAMPLE_RATE),
       '--format', AUDIO_CONFIG.FORMAT,
-      '-',
-    ], {
+    ];
+    if (this.inputDevice !== 'default') {
+      args.push('--target', this.inputDevice);
+    }
+    args.push('-');
+
+    this.recorder = spawn('pw-cat', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -277,7 +449,6 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
     this.recorder.on('exit', (code) => {
       if (
         this.isRecording &&
-        isMac &&
         code !== 0 &&
         this.inputDevice !== 'default' &&
         !this.captureFallbackAttempted
@@ -292,7 +463,11 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
           'error',
           new Error(`Input device "${failedDevice}" unavailable; switched to default input`)
         );
-        this.startMacCapture();
+        if (isLinux) {
+          this.startLinuxCapture();
+        } else if (isMac) {
+          this.startMacCapture();
+        }
         this.isRecording = true;
         return;
       }
@@ -391,14 +566,19 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
    * Start Linux playback using pw-cat (PipeWire).
    */
   private startLinuxPlayback(): void {
-    this.player = spawn('pw-cat', [
+    const args = [
       '--playback',
       '--raw',
       '--channels', String(AUDIO_CONFIG.CHANNELS),
       '--rate', String(this.playbackSampleRate),
       '--format', AUDIO_CONFIG.FORMAT,
-      '-',
-    ], {
+    ];
+    if (this.outputDevice !== 'default') {
+      args.push('--target', this.outputDevice);
+    }
+    args.push('-');
+
+    this.player = spawn('pw-cat', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -435,6 +615,31 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
   private setupPlayerHandlers(name: string): void {
     if (!this.player) return;
 
+    const fallbackToDefaultOutput = (trigger: string): boolean => {
+      if (
+        !(isLinux || isMac) ||
+        !this.isPlaying ||
+        this.outputDevice === 'default' ||
+        this.playbackFallbackAttempted
+      ) {
+        return false;
+      }
+
+      const failedDevice = this.outputDevice;
+      this.playbackFallbackAttempted = true;
+      this.outputDevice = 'default';
+      console.error(
+        `[LocalTransport] output device "${failedDevice}" ${trigger}; falling back to default output`
+      );
+      this.emit(
+        'error',
+        new Error(`Output device "${failedDevice}" unavailable; switched to default output`)
+      );
+      this.player = null;
+      this.startPlayback(this.playbackSampleRate);
+      return true;
+    };
+
     this.player.stderr?.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
       if (msg) {
@@ -444,24 +649,7 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
 
     this.player.on('error', (err) => {
       console.error(`[LocalTransport] ${name} error:`, err.message);
-      if (
-        isMac &&
-        this.isPlaying &&
-        this.outputDevice !== 'default' &&
-        !this.playbackFallbackAttempted
-      ) {
-        const failedDevice = this.outputDevice;
-        this.playbackFallbackAttempted = true;
-        this.outputDevice = 'default';
-        console.error(
-          `[LocalTransport] output device "${failedDevice}" failed; falling back to default output`
-        );
-        this.emit(
-          'error',
-          new Error(`Output device "${failedDevice}" unavailable; switched to default output`)
-        );
-        this.player = null;
-        this.startPlayback(this.playbackSampleRate);
+      if (fallbackToDefaultOutput('failed')) {
         return;
       }
       this.player = null;
@@ -471,25 +659,7 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
     });
 
     this.player.on('exit', (code, signal) => {
-      if (
-        isMac &&
-        this.isPlaying &&
-        code !== 0 &&
-        this.outputDevice !== 'default' &&
-        !this.playbackFallbackAttempted
-      ) {
-        const failedDevice = this.outputDevice;
-        this.playbackFallbackAttempted = true;
-        this.outputDevice = 'default';
-        console.error(
-          `[LocalTransport] output device "${failedDevice}" exited with code ${code}; retrying default output`
-        );
-        this.emit(
-          'error',
-          new Error(`Output device "${failedDevice}" unavailable; switched to default output`)
-        );
-        this.player = null;
-        this.startPlayback(this.playbackSampleRate);
+      if (code !== 0 && fallbackToDefaultOutput(`exited with code ${code}`)) {
         return;
       }
       console.error(`[LocalTransport] ${name} exited: code=${code} signal=${signal} (wasPlaying=${this.isPlaying})`);
@@ -554,7 +724,7 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
   }
 
   setInputDevice(device: string): void {
-    const normalized = device.trim() || 'default';
+    const normalized = this.resolveInputDevice(device.trim() || 'default');
     if (normalized === this.inputDevice) return;
     this.inputDevice = normalized;
     if (this.isRecording) {
@@ -563,7 +733,7 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
   }
 
   setOutputDevice(device: string): void {
-    const normalized = device.trim() || 'default';
+    const normalized = this.resolveOutputDevice(device.trim() || 'default');
     if (normalized === this.outputDevice) return;
     this.outputDevice = normalized;
     // Restart playback pipe; next chunk continues on selected output.
@@ -574,11 +744,44 @@ export class LocalTransport extends EventEmitter implements IAudioTransport {
     return { inputDevice: this.inputDevice, outputDevice: this.outputDevice };
   }
 
+  getRoutingDiagnostics(): LocalRoutingDiagnostics {
+    return {
+      inputDevice: this.inputDevice,
+      outputDevice: this.outputDevice,
+      echoCancelSourceSelected: isEchoCancelSourceName(this.inputDevice),
+      samePhysicalDeviceLikely: areLikelySamePhysicalAudioDevice(
+        this.inputDevice,
+        this.outputDevice
+      ),
+    };
+  }
+
   /**
    * Check if transport is currently playing audio.
    */
   isPlayingAudio(): boolean {
     return this.isPlaying;
+  }
+
+  private resolveInputDevice(requested: string): string {
+    if (!isLinux) {
+      return requested;
+    }
+
+    const inventory = parseLinuxAudioDevices();
+    return selectPreferredLinuxInputDevice({
+      requestedInputDevice: requested,
+      inventory,
+      preferEchoCancelSource: this.preferEchoCancelSource,
+    });
+  }
+
+  private resolveOutputDevice(requested: string): string {
+    if (!isLinux || requested !== 'default') {
+      return requested;
+    }
+    const inventory = parseLinuxAudioDevices();
+    return inventory.defaultOutputDevice || 'default';
   }
 
   private restartCapture(): void {

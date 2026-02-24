@@ -57,6 +57,17 @@ Controls voice mode, provider, model, and turn detection settings.
       "silenceMs": 700,
       "minSpeechMs": 350,
       "minRms": 0.015,
+      "bargeInEnabled": true,
+      "speechStartDebounceMs": 140,
+      "vadEngine": "webrtc-vad",
+      "neuralFilterEnabled": true,
+      "rnnoiseSpeechThreshold": 0.62,
+      "rnnoiseEchoSpeechThresholdBoost": 0.12,
+      "webrtcVadMode": 3,
+      "webrtcVadSpeechRatioThreshold": 0.7,
+      "webrtcVadEchoSpeechRatioBoost": 0.15,
+      "assistantOutputMinRms": 0.008,
+      "assistantOutputSilenceMs": 350,
       "llmCompletion": {
         "enabled": false,
         "shortTimeoutMs": 5000,
@@ -160,6 +171,17 @@ Key resolution (`resolveApiKey()`): auth profile API key > env var fallback.
 | `VOICE_TURN_SILENCE_MS` | `700` | Silence threshold (ms) |
 | `VOICE_TURN_MIN_SPEECH_MS` | `350` | Minimum speech duration (ms) |
 | `VOICE_TURN_MIN_RMS` | `0.015` | Minimum RMS amplitude |
+| `VOICE_BARGE_IN_ENABLED` | `true` | Enable interruption while assistant is speaking (`false` = mic ignored during speaking) |
+| `VOICE_SPEECH_START_DEBOUNCE_MS` | `140` | Continuous VAD-positive time required before opening a new mic turn |
+| `VOICE_TURN_VAD_ENGINE` | `webrtc-vad` | `webrtc-vad` (proper speech classifier), `rnnoise`, or `rms` |
+| `VOICE_NEURAL_FILTER_ENABLED` | `true` | Enable RNNoise denoiser before VAD/STT buffering |
+| `VOICE_RNNOISE_SPEECH_THRESHOLD` | `0.62` | RNNoise speech probability threshold |
+| `VOICE_RNNOISE_ECHO_THRESHOLD_BOOST` | `0.12` | Extra RNNoise threshold while assistant is speaking |
+| `VOICE_WEBRTC_VAD_MODE` | `3` | WebRTC VAD aggressiveness (0-3, higher = stricter) |
+| `VOICE_WEBRTC_VAD_SPEECH_RATIO_THRESHOLD` | `0.7` | Minimum voiced-frame ratio to classify chunk as speech |
+| `VOICE_WEBRTC_VAD_ECHO_RATIO_BOOST` | `0.15` | Extra voiced-ratio required while assistant is speaking |
+| `VOICE_ASSISTANT_OUTPUT_MIN_RMS` | `0.008` | Output RMS threshold for assistant-output activity detection |
+| `VOICE_ASSISTANT_OUTPUT_SILENCE_MS` | `350` | Hold time after last voiced output chunk before disabling echo-sensitive phase |
 | `VOICE_LLM_COMPLETION_ENABLED` | `false` | Enable LLM completion detection |
 
 ### Optional - Infrastructure
@@ -168,11 +190,49 @@ Key resolution (`resolveApiKey()`): auth profile API key > env var fallback.
 |----------|---------|-------------|
 | `MAC_DAEMON_URL` | - | Mac daemon URL for CLI sessions |
 | `TRANSPORT_MODE` | `web` | `web` (browser audio) or `local` (device audio) |
+| `LOCAL_AUDIO_INPUT_DEVICE` | `default` | Local transport input device/source name (`pactl list short sources`) |
+| `LOCAL_AUDIO_OUTPUT_DEVICE` | `default` | Local transport output device/sink name (`pactl list short sinks`) |
+| `LOCAL_PREFER_ECHO_CANCEL_SOURCE` | `true` | In local Linux mode, auto-select echo-cancel source when input device is `default` |
 | `SKIP_STATIC_SERVER` | - | Skip static file server (use in dev with Bun dev server) |
 | `SHUTDOWN_TIMEOUT_MS` | `8000` | Graceful shutdown timeout |
 | `VOICE_CONFIG_DIR` | `.voiceclaw/` | Config directory path |
 | `VOICE_CONFIG_PATH` | `.voiceclaw/voice.config.json` | Voice config file path |
 | `AUTH_PROFILES_PATH` | `.voiceclaw/auth-profiles.json` | Auth profiles file path |
+
+### Local Linux Echo-Cancel Runbook (PipeWire)
+
+Use this when running `TRANSPORT_MODE=local` with speaker + mic on the same hardware (for example Jabra speakerphone).
+
+1. Inspect current devices:
+
+```bash
+pactl list short sources
+pactl list short sinks
+pactl info | rg "Default Source|Default Sink"
+```
+
+2. Create/enable an echo-cancel source (module name can vary by distro):
+
+```bash
+pactl load-module module-echo-cancel source_name=echo_cancel_source sink_name=echo_cancel_sink aec_method=webrtc
+```
+
+3. Verify that an echo-cancel source exists (name usually contains `echo`, `aec`, or `webrtc`):
+
+```bash
+pactl list short sources | rg -i "echo|aec|webrtc"
+```
+
+4. Run the agent in local mode. Keep `LOCAL_PREFER_ECHO_CANCEL_SOURCE=true` (default), or pin explicit source/sink:
+
+```bash
+TRANSPORT_MODE=local \
+LOCAL_AUDIO_INPUT_DEVICE=echo_cancel_source \
+LOCAL_AUDIO_OUTPUT_DEVICE=echo_cancel_sink \
+bun run dev
+```
+
+At startup, the backend logs local routing and warns when input/output likely share hardware without echo-cancel.
 
 ### Web Environment (web/.env)
 
