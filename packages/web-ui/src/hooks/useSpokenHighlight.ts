@@ -78,10 +78,11 @@ export function useSpokenHighlight({
         ? countCuesForPlayback(cueTimeline, playbackMs)
         : Math.floor(playbackMs / msPerWord);
 
-      if (isFinalized && !hasPendingAudio) {
-        nextWordCount = cueTimeline
-          ? Math.min(totalWords, cueTimeline.length)
-          : totalWords;
+      if (isFinalized && !hasPendingAudio && !cueTimeline) {
+        // Only force-complete for pace-fallback mode (no cues). For cue-driven
+        // turns, forcing to full count causes visible jump-flush when cue tails
+        // extend beyond real playback.
+        nextWordCount = totalWords;
       }
 
       nextWordCount = clamp(nextWordCount, 0, totalWords);

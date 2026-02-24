@@ -163,6 +163,32 @@ describe('WordCueTimelineBuilder', () => {
     expect(final.timeline[2]!.endMs).toBeGreaterThanOrEqual(600);
   });
 
+  test('spokenFinal preserves streaming synthetic timeline when final playback would compress it', () => {
+    const builder = new WordCueTimelineBuilder({
+      minMsPerWord: 500,
+      punctuationPauseMs: 440,
+    });
+
+    const streamed = builder.ingestDelta({
+      spokenText: "Langer Witz ist nicht drin, dafür fehlt mir echt die Geduld. Aber ich geb dir gern 'nen kurzen Witz, wenn du ",
+      playbackMs: 1280,
+      speechOnsetMs: 1240,
+    });
+    const streamedLastEnd = streamed.timeline[streamed.timeline.length - 1]!.endMs;
+
+    // Same words arrive in spoken-final, but with shorter final playback.
+    const final = builder.ingestFinal({
+      spokenText: "Langer Witz ist nicht drin, dafür fehlt mir echt die Geduld. Aber ich geb dir gern 'nen kurzen Witz, wenn du",
+      playbackMs: 3851,
+    });
+    const finalLastEnd = final.timeline[final.timeline.length - 1]!.endMs;
+
+    expect(final.update?.mode).toBe('replace');
+    expect(final.timeline.length).toBe(streamed.timeline.length);
+    expect(finalLastEnd).toBeCloseTo(streamedLastEnd, 6);
+    expect(finalLastEnd).toBeGreaterThan(3851);
+  });
+
   test('punctuation pause gives extra time to words ending with punctuation', () => {
     const builder = new WordCueTimelineBuilder({ punctuationPauseMs: 120 });
 

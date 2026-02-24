@@ -136,7 +136,13 @@ export class WordCueTimelineBuilder {
     if (hasProviderTimestamps) {
       cues = this.buildProviderTimeline(input.providerWordTimestamps!, providerTimeBase, 0);
     } else {
-      cues = this.buildSyntheticTimeline(spokenText, playbackMs);
+      // Preserve already-streaming synthetic timing when spoken-final arrives
+      // with a smaller playbackMs (common when text was buffered before audio
+      // onset). Rebuilding against the smaller final window compresses cues and
+      // causes a visible mid-speech highlight jump.
+      cues =
+        this.maybePreserveSyntheticTimeline(spokenText, playbackMs) ??
+        this.buildSyntheticTimeline(spokenText, playbackMs);
     }
 
     this.replaceTimeline(cues);
@@ -147,6 +153,37 @@ export class WordCueTimelineBuilder {
       update: { mode: 'replace', cues: this.getTimeline() },
       timeline: this.getTimeline(),
     };
+  }
+
+  private maybePreserveSyntheticTimeline(
+    spokenText: string,
+    playbackMs: number
+  ): SpokenWordCue[] | null {
+    if (this.cues.length === 0) {
+      return null;
+    }
+
+    if (!this.cues.every((cue) => cue.source === 'synthetic')) {
+      return null;
+    }
+
+    const finalWords = tokenizeWords(spokenText);
+    if (finalWords.length !== this.cues.length) {
+      return null;
+    }
+
+    for (let index = 0; index < finalWords.length; index += 1) {
+      if (finalWords[index] !== this.cues[index]?.word) {
+        return null;
+      }
+    }
+
+    const lastCueEndMs = this.cues[this.cues.length - 1]?.endMs ?? 0;
+    if (playbackMs > lastCueEndMs) {
+      return null;
+    }
+
+    return this.getTimeline();
   }
 
   private appendProviderWordTimestamps(

@@ -326,14 +326,17 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
           const key = `${message.id}-part-${idx}`;
           switch (part.type) {
             case 'text': {
-              // Only highlight the currently active assistant turn.
-              // Completed/history turns should render as normal static text.
+              // Highlight the currently active assistant voice turn.
+              // Keep SpokenTextHighlight mounted after spoken-final (pending=false)
+              // as long as word cues exist — audio may still be playing in the
+              // browser's AudioContext buffer.  SpokenTextHighlight handles the
+              // endgame internally (force-complete when AudioContext drains).
               const isActiveVoiceTurn =
                 !isUser &&
                 !!isLatest &&
-                !!message.pending &&
                 typeof message.generatedText === 'string' &&
-                message.generatedText.length > 0;
+                message.generatedText.length > 0 &&
+                (!!message.pending || (Array.isArray(message.wordCues) && message.wordCues.length > 0));
 
               if (isActiveVoiceTurn) {
                 return (
