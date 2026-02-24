@@ -1,4 +1,9 @@
-import type { AudioFrame, InterruptionContext } from '../types.js';
+import type {
+  AudioFrame,
+  InterruptionContext,
+  SpokenWordTimestamp,
+} from '../types.js';
+import { WordTimeline } from './word-timeline.js';
 
 interface SpokenSegment {
   id: string;
@@ -28,6 +33,7 @@ export class InterruptionTracker {
     | 'provider-word-timestamps'
     | null = null;
   private explicitSegments: SpokenSegment[] = [];
+  private readonly wordTimeline = new WordTimeline();
   private segmentCounter = 0;
 
   beginAssistantItem(itemId?: string): void {
@@ -59,6 +65,7 @@ export class InterruptionTracker {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: SpokenWordTimestamp[];
     }
   ): void {
     this.beginAssistantItem(itemId);
@@ -83,8 +90,11 @@ export class InterruptionTracker {
     }
 
     this.explicitSpokenText = nextText;
+    this.ingestWordTimestamps(meta?.wordTimestamps, this.explicitPlaybackMs);
     this.explicitPlaybackMs = playbackMs;
-    this.explicitPrecision = meta?.precision ?? this.explicitPrecision ?? 'segment';
+    this.explicitPrecision = this.wordTimeline.hasWords()
+      ? 'provider-word-timestamps'
+      : meta?.precision ?? this.explicitPrecision ?? 'segment';
     this.explicitSpokenWordCount =
       typeof meta?.spokenWords === 'number' && meta.spokenWords >= 0
         ? meta.spokenWords
@@ -123,7 +133,9 @@ export class InterruptionTracker {
 
     this.explicitSpokenText = nextText;
     this.explicitPlaybackMs = playbackMs;
-    this.explicitPrecision = progress.precision;
+    this.explicitPrecision = this.wordTimeline.hasWords()
+      ? 'provider-word-timestamps'
+      : progress.precision;
     this.explicitSpokenWordCount = Math.max(0, progress.spokenWords);
   }
 
@@ -135,14 +147,20 @@ export class InterruptionTracker {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: SpokenWordTimestamp[];
     }
   ): void {
     this.beginAssistantItem(itemId);
     const playbackMs = this.normalizeMs(meta?.playbackMs, this.explicitPlaybackMs);
     const finalText = text ?? '';
     this.explicitSpokenText = finalText;
+    if (!this.wordTimeline.hasWords()) {
+      this.ingestWordTimestamps(meta?.wordTimestamps, 0);
+    }
     this.explicitPlaybackMs = playbackMs;
-    this.explicitPrecision = meta?.precision ?? this.explicitPrecision ?? 'segment';
+    this.explicitPrecision = this.wordTimeline.hasWords()
+      ? 'provider-word-timestamps'
+      : meta?.precision ?? this.explicitPrecision ?? 'segment';
     this.explicitSpokenWordCount =
       typeof meta?.spokenWords === 'number' && meta.spokenWords >= 0
         ? meta.spokenWords
@@ -210,14 +228,43 @@ export class InterruptionTracker {
     let precision: InterruptionContext['precision'] = this.explicitPrecision ?? 'segment';
     let spokenText = '';
     let spans: InterruptionContext['spans'] | undefined;
+    let explicitInterpolated = false;
+    let resolvedSpokenWordCount: number | undefined;
+    let resolvedSpokenWordIndex: number | undefined;
 
     const hasExplicitSpokenData =
       this.explicitSpokenText.length > 0 ||
       this.explicitSegments.length > 0 ||
       this.explicitPlaybackMs > 0;
 
-    if (hasExplicitSpokenData) {
-      spokenText = this.explicitSpokenText;
+    if (this.wordTimeline.hasWords()) {
+      const timelineResolution = this.wordTimeline.getSpokenTextAt(clampedPlaybackMs);
+      precision = 'provider-word-timestamps';
+      spans = this.wordTimeline.getWordSpans();
+      spokenText =
+        playbackPositionMs === undefined && hasExplicitSpokenData
+          ? this.explicitSpokenText
+          : timelineResolution.text;
+      resolvedSpokenWordCount =
+        playbackPositionMs === undefined &&
+        hasExplicitSpokenData &&
+        this.explicitSpokenWordCount > 0
+          ? this.explicitSpokenWordCount
+          : timelineResolution.wordCount;
+      resolvedSpokenWordIndex =
+        playbackPositionMs === undefined && hasExplicitSpokenData
+          ? undefined
+          : timelineResolution.wordIndex;
+    } else if (hasExplicitSpokenData) {
+      const shouldInterpolateExplicitSegments =
+        playbackPositionMs !== undefined &&
+        clampedPlaybackMs > 0 &&
+        clampedPlaybackMs < this.explicitPlaybackMs &&
+        this.explicitSegments.length > 0;
+      spokenText = shouldInterpolateExplicitSegments
+        ? interpolateSegmentsToPlayback(this.explicitSegments, clampedPlaybackMs)
+        : this.explicitSpokenText;
+      explicitInterpolated = shouldInterpolateExplicitSegments;
       spans = this.explicitSegments.map((segment) => ({
         id: segment.id,
         text: segment.text,
@@ -256,11 +303,17 @@ export class InterruptionTracker {
     }
 
     const spokenWordCount =
-      hasExplicitSpokenData && this.explicitSpokenWordCount > 0
+      typeof resolvedSpokenWordCount === 'number'
+        ? resolvedSpokenWordCount
+        : hasExplicitSpokenData && this.explicitSpokenWordCount > 0 && !explicitInterpolated
         ? this.explicitSpokenWordCount
         : countWords(spokenText);
     const spokenWordIndex =
-      spokenWordCount > 0 ? Math.max(0, spokenWordCount - 1) : undefined;
+      typeof resolvedSpokenWordIndex === 'number'
+        ? resolvedSpokenWordIndex
+        : spokenWordCount > 0
+          ? Math.max(0, spokenWordCount - 1)
+          : undefined;
 
     return {
       itemId: this.currentItemId ?? undefined,
@@ -271,7 +324,10 @@ export class InterruptionTracker {
       spokenWordCount: spokenWordCount > 0 ? spokenWordCount : undefined,
       spokenWordIndex,
       precision,
-      spans: precision === 'segment' ? spans : undefined,
+      spans:
+        precision === 'segment' || precision === 'provider-word-timestamps'
+          ? spans
+          : undefined,
     };
   }
 
@@ -286,6 +342,7 @@ export class InterruptionTracker {
     this.explicitPlaybackMs = 0;
     this.explicitPrecision = null;
     this.explicitSegments = [];
+    this.wordTimeline.reset();
     this.segmentCounter = 0;
   }
 
@@ -305,6 +362,17 @@ export class InterruptionTracker {
   private nextSegmentId(): string {
     this.segmentCounter += 1;
     return `seg-${this.segmentCounter}`;
+  }
+
+  private ingestWordTimestamps(
+    wordTimestamps: SpokenWordTimestamp[] | undefined,
+    offsetMs: number
+  ): void {
+    if (!wordTimestamps || wordTimestamps.length === 0) {
+      return;
+    }
+    this.wordTimeline.beginSegment(offsetMs);
+    this.wordTimeline.addWords(wordTimestamps);
   }
 }
 
@@ -332,4 +400,50 @@ function trimSegmentsToChars(segments: SpokenSegment[], maxChars: number): Spoke
     remaining = 0;
   }
   return trimmed;
+}
+
+function interpolateSegmentsToPlayback(
+  segments: SpokenSegment[],
+  playbackPositionMs: number
+): string {
+  if (segments.length === 0 || playbackPositionMs <= 0) {
+    return '';
+  }
+
+  let text = '';
+  for (const segment of segments) {
+    if (segment.audioStartMs >= playbackPositionMs) {
+      break;
+    }
+
+    const segmentDuration = Math.max(0, segment.audioEndMs - segment.audioStartMs);
+    if (segmentDuration <= 0 || segment.audioEndMs <= playbackPositionMs) {
+      text += segment.text;
+      continue;
+    }
+
+    const ratio = (playbackPositionMs - segment.audioStartMs) / segmentDuration;
+    const interpolatedChars = Math.max(
+      0,
+      Math.min(segment.text.length, Math.floor(segment.text.length * ratio))
+    );
+    const snappedChars = snapToWordBoundary(segment.text, interpolatedChars);
+    text += segment.text.slice(0, snappedChars);
+    break;
+  }
+  return text;
+}
+
+function snapToWordBoundary(text: string, chars: number): number {
+  if (chars <= 0) {
+    return 0;
+  }
+  if (chars >= text.length) {
+    return text.length;
+  }
+  if (text[chars] === ' ') {
+    return chars;
+  }
+  const lastSpace = text.lastIndexOf(' ', chars);
+  return lastSpace > 0 ? lastSpace : chars;
 }

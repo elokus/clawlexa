@@ -29,6 +29,7 @@ export class AudioController {
   private isPlaying = false;
   private playbackStartTime = 0;
   private samplesScheduled = 0;
+  private activeSources = new Set<AudioBufferSourceNode>();
 
   constructor(config: AudioControllerConfig = {}) {
     this.onAudio = config.onAudio || null;
@@ -142,6 +143,7 @@ export class AudioController {
     this.isPlaying = false;
     this.playbackStartTime = 0;
     this.samplesScheduled = 0;
+    this.stopAllSources();
 
     if (this.playbackContext) {
       this.playbackContext.close();
@@ -250,9 +252,11 @@ export class AudioController {
 
       source.start(startTime);
       this.samplesScheduled += float32.length;
+      this.activeSources.add(source);
 
       // When this buffer ends, check for more
       source.onended = () => {
+        this.activeSources.delete(source);
         if (this.playbackQueue.length > 0) {
           this.processPlaybackQueue();
         } else {
@@ -266,6 +270,24 @@ export class AudioController {
   }
 
   /**
+   * Get current playback position in milliseconds.
+   * Based on AudioContext.currentTime — the real clock of what the user has heard.
+   * Clamped to [0, scheduledDuration] so stale values between turns don't overshoot.
+   */
+  getPlaybackPositionMs(): number {
+    const snapshot = this.getPlaybackSnapshot();
+    return snapshot.positionMs;
+  }
+
+  /**
+   * Get total scheduled audio duration in milliseconds.
+   */
+  getScheduledDurationMs(): number {
+    const snapshot = this.getPlaybackSnapshot();
+    return snapshot.scheduledMs;
+  }
+
+  /**
    * Interrupt current playback.
    */
   interrupt(): void {
@@ -273,12 +295,13 @@ export class AudioController {
     this.samplesScheduled = 0;
     this.playbackStartTime = 0;
     this.isPlaying = false;
+    this.stopAllSources();
 
-    // Create new context to immediately stop all scheduled audio
     if (this.playbackContext) {
-      this.playbackContext.close();
-      this.playbackContext = new AudioContext({
-        sampleRate: TARGET_SAMPLE_RATE,
+      const oldContext = this.playbackContext;
+      this.playbackContext = null;
+      void oldContext.close().catch((error) => {
+        console.warn('[Audio] Failed to close interrupted playback context:', error);
       });
     }
   }
@@ -288,5 +311,51 @@ export class AudioController {
    */
   isCapturing(): boolean {
     return this.context !== null && this.context.state === 'running';
+  }
+
+  /**
+   * Snapshot of the current playback timeline.
+   * Returns zeros once the scheduled timeline has fully elapsed.
+   */
+  private getPlaybackSnapshot(): { positionMs: number; scheduledMs: number } {
+    if (!this.playbackContext || this.samplesScheduled === 0) {
+      return { positionMs: 0, scheduledMs: 0 };
+    }
+
+    const scheduledDurationSec = this.samplesScheduled / TARGET_SAMPLE_RATE;
+    const scheduledEndSec = this.playbackStartTime + scheduledDurationSec;
+    const nowSec = this.playbackContext.currentTime;
+
+    // Reset stale schedule after playback drained (between turns).
+    if (scheduledEndSec <= nowSec) {
+      this.samplesScheduled = 0;
+      this.playbackStartTime = 0;
+      return { positionMs: 0, scheduledMs: 0 };
+    }
+
+    const elapsedSec = Math.max(0, nowSec - this.playbackStartTime);
+    const positionMs = Math.min(elapsedSec, scheduledDurationSec) * 1000;
+    const scheduledMs = scheduledDurationSec * 1000;
+    return { positionMs, scheduledMs };
+  }
+
+  /**
+   * Stop and disconnect all active playback sources immediately.
+   */
+  private stopAllSources(): void {
+    for (const source of this.activeSources) {
+      try {
+        source.onended = null;
+        source.stop(0);
+      } catch {
+        // Source may already be ended/stopped.
+      }
+      try {
+        source.disconnect();
+      } catch {
+        // No-op if already disconnected.
+      }
+    }
+    this.activeSources.clear();
   }
 }

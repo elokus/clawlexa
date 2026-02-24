@@ -98,7 +98,8 @@ export class LegacyAudioTransportBridge implements ClientTransport {
   private advancePlaybackClock(): void {
     const now = Date.now();
     const elapsedMs = Math.max(0, now - this.lastClockMs);
-    const consumedMs = Math.min(elapsedMs, this.pendingMs);
+    const clampedElapsedMs = Math.min(elapsedMs, 500);
+    const consumedMs = Math.min(clampedElapsedMs, this.pendingMs);
     this.pendingMs -= consumedMs;
     this.playedMs += consumedMs;
     this.lastClockMs = now;

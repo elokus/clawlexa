@@ -10,6 +10,9 @@ const server = Bun.serve({
 
   static: {
     "/": index,
+    "/session/*": index,
+    "/dev": index,
+    "/dev/*": index,
   },
 
   async fetch(req, server) {
@@ -43,8 +46,15 @@ const server = Bun.serve({
       });
     }
 
-    // SPA fallback for client-side routes
-    return new Response(Bun.file("./index.html"));
+    // Unknown routes:
+    // - Browser navigations should land on root for client-side routing.
+    // - Non-HTML requests should fail with 404 (don't return HTML for JS/CSS).
+    const accept = req.headers.get("accept") ?? "";
+    if (accept.includes("text/html")) {
+      return Response.redirect(new URL("/", req.url), 302);
+    }
+
+    return new Response("Not Found", { status: 404 });
   },
 
   websocket: {

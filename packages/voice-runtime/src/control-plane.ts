@@ -123,6 +123,8 @@ export interface RuntimeVoiceConfigDocument {
       assistantOutputSilenceMs: number;
       spokenStreamEnabled: boolean;
       wordAlignmentEnabled: boolean;
+      spokenHighlightMsPerWord: number;
+      spokenHighlightPunctuationPauseMs: number;
       customSttMode: 'provider' | 'custom' | 'hybrid';
       llmCompletion: {
         enabled: boolean;
@@ -179,6 +181,8 @@ export interface RuntimeResolvedConfig {
     assistantOutputSilenceMs: number;
     spokenStreamEnabled: boolean;
     wordAlignmentEnabled: boolean;
+    spokenHighlightMsPerWord: number;
+    spokenHighlightPunctuationPauseMs: number;
     customSttMode: 'provider' | 'custom' | 'hybrid';
     llmCompletionEnabled: boolean;
     llmShortTimeoutMs: number;
@@ -370,6 +374,14 @@ export function createDefaultRuntimeVoiceConfig(
         assistantOutputSilenceMs: parseInt(env.VOICE_ASSISTANT_OUTPUT_SILENCE_MS ?? '350', 10),
         spokenStreamEnabled: (env.VOICE_SPOKEN_STREAM_ENABLED ?? 'false') === 'true',
         wordAlignmentEnabled: (env.VOICE_WORD_ALIGNMENT_ENABLED ?? 'false') === 'true',
+        spokenHighlightMsPerWord: parseInt(
+          env.VOICE_SPOKEN_HIGHLIGHT_MS_PER_WORD ?? '340',
+          10
+        ),
+        spokenHighlightPunctuationPauseMs: parseInt(
+          env.VOICE_SPOKEN_HIGHLIGHT_PUNCTUATION_PAUSE_MS ?? '120',
+          10
+        ),
         customSttMode:
           env.VOICE_CUSTOM_STT_MODE === 'custom' || env.VOICE_CUSTOM_STT_MODE === 'hybrid'
             ? env.VOICE_CUSTOM_STT_MODE
@@ -593,6 +605,9 @@ export function resolveRuntimeConfigFromDocuments(input: {
       assistantOutputSilenceMs: input.voiceConfig.voice.turn.assistantOutputSilenceMs,
       spokenStreamEnabled: input.voiceConfig.voice.turn.spokenStreamEnabled,
       wordAlignmentEnabled: input.voiceConfig.voice.turn.wordAlignmentEnabled,
+      spokenHighlightMsPerWord: input.voiceConfig.voice.turn.spokenHighlightMsPerWord,
+      spokenHighlightPunctuationPauseMs:
+        input.voiceConfig.voice.turn.spokenHighlightPunctuationPauseMs,
       customSttMode: input.voiceConfig.voice.turn.customSttMode,
       llmCompletionEnabled: input.voiceConfig.voice.turn.llmCompletion.enabled,
       llmShortTimeoutMs: input.voiceConfig.voice.turn.llmCompletion.shortTimeoutMs,

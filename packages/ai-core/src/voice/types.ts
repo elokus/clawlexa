@@ -127,6 +127,8 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
     assistantOutputSilenceMs?: number;
     spokenStreamEnabled?: boolean;
     wordAlignmentEnabled?: boolean;
+    spokenHighlightMsPerWord?: number;
+    spokenHighlightPunctuationPauseMs?: number;
     llmCompletionEnabled?: boolean;
     llmShortTimeoutMs?: number;
     llmLongTimeoutMs?: number;

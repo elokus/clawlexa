@@ -21,6 +21,7 @@ export type {
   ProviderTransportKind,
   ProviderVoiceEntry,
   SessionInput,
+  SpokenWordTimestamp,
   ToolCallContext,
   ToolCallHandler,
   ToolCallResult,

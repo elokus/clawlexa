@@ -321,6 +321,16 @@ function parseDecomposedTurnConfig(raw: unknown): DecomposedProviderConfig['turn
       'wordAlignmentEnabled',
       'providerConfig.turn'
     ),
+    spokenHighlightMsPerWord: optionalPositiveNumber(
+      object,
+      'spokenHighlightMsPerWord',
+      'providerConfig.turn'
+    ),
+    spokenHighlightPunctuationPauseMs: optionalNonNegativeNumber(
+      object,
+      'spokenHighlightPunctuationPauseMs',
+      'providerConfig.turn'
+    ),
     llmCompletionEnabled: optionalBoolean(
       object,
       'llmCompletionEnabled',

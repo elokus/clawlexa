@@ -87,4 +87,98 @@ describe('InterruptionTracker', () => {
     expect(context?.spokenWordCount).toBe(2);
     expect(context?.precision).toBe('provider-word-timestamps');
   });
+
+  test('interpolates within explicit segments when playback is behind emitted audio', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-5');
+    tracker.trackAssistantTranscript('One two three four five six', 'assistant-5');
+    tracker.trackAssistantSpokenDelta('One two ', 'assistant-5', {
+      spokenChars: 8,
+      spokenWords: 2,
+      playbackMs: 1000,
+      precision: 'segment',
+    });
+    tracker.trackAssistantSpokenDelta('three four ', 'assistant-5', {
+      spokenChars: 19,
+      spokenWords: 4,
+      playbackMs: 2000,
+      precision: 'segment',
+    });
+    tracker.trackAssistantSpokenDelta('five six', 'assistant-5', {
+      spokenChars: 27,
+      spokenWords: 6,
+      playbackMs: 3000,
+      precision: 'segment',
+    });
+
+    const context = tracker.resolve(1500);
+    expect(context).not.toBeNull();
+    expect(context?.spokenText).toBe('One two three');
+    expect(context?.spokenWordCount).toBe(3);
+    expect(context?.precision).toBe('segment');
+    expect(context?.spans?.length).toBe(3);
+  });
+
+  test('keeps full explicit spoken text when playback position is not provided', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-6');
+    tracker.trackAssistantTranscript('Hello world from runtime', 'assistant-6');
+    tracker.trackAssistantSpokenFinal('Hello world from runtime', 'assistant-6', {
+      spokenChars: 24,
+      spokenWords: 4,
+      playbackMs: 400,
+      precision: 'segment',
+    });
+
+    const context = tracker.resolve();
+    expect(context).not.toBeNull();
+    expect(context?.spokenText).toBe('Hello world from runtime');
+    expect(context?.spokenWordCount).toBe(4);
+  });
+
+  test('interpolates within a single explicit segment (continuous flush mode)', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-6b');
+    tracker.trackAssistantTranscript('The quick brown fox', 'assistant-6b');
+    tracker.trackAssistantSpokenFinal('The quick brown fox', 'assistant-6b', {
+      spokenChars: 19,
+      spokenWords: 4,
+      playbackMs: 400,
+      precision: 'segment',
+    });
+
+    const context = tracker.resolve(200);
+    expect(context).not.toBeNull();
+    expect(context?.spokenText).toBe('The quick');
+    expect(context?.spokenWordCount).toBe(2);
+    expect(context?.precision).toBe('segment');
+  });
+
+  test('prefers provider word timeline over segment interpolation when available', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-7');
+    tracker.trackAssistantTranscript('Hello world again', 'assistant-7');
+    tracker.trackAssistantSpokenFinal('Hello world again', 'assistant-7', {
+      spokenChars: 17,
+      spokenWords: 3,
+      playbackMs: 300,
+      precision: 'segment',
+      wordTimestamps: [
+        { word: 'Hello', startMs: 0, endMs: 40 },
+        { word: 'world', startMs: 40, endMs: 80 },
+        { word: 'again', startMs: 220, endMs: 300 },
+      ],
+    });
+
+    const context = tracker.resolve(90);
+    expect(context).not.toBeNull();
+    expect(context?.spokenText).toBe('Hello world');
+    expect(context?.spokenWordCount).toBe(2);
+    expect(context?.precision).toBe('provider-word-timestamps');
+    expect(context?.spans?.every((span) => span.type === 'word')).toBe(true);
+  });
 });

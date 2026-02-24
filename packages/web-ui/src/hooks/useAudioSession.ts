@@ -45,6 +45,8 @@ export interface AudioSessionState {
   toggleService: () => void;
   /** Set audio mode */
   setAudioMode: (mode: AudioMode) => void;
+  /** AudioController ref for playback position queries */
+  audioControllerRef: React.RefObject<AudioController | null>;
 }
 
 export function useAudioSession(): AudioSessionState {
@@ -55,6 +57,7 @@ export function useAudioSession(): AudioSessionState {
 
   const audioControllerRef = useRef<AudioController | null>(null);
   const prevStateRef = useRef<string | null>(null);
+  const dropPlaybackUntilMsRef = useRef(0);
   // Track state in ref for use in audio callback (avoids stale closure)
   const stateRef = useRef<string>('idle');
 
@@ -91,6 +94,18 @@ export function useAudioSession(): AudioSessionState {
     const handleAudio = (event: CustomEvent<ArrayBuffer>) => {
       if (audioControllerRef.current) {
         try {
+          // Drop stale chunks right after an interrupt/stop to avoid hearing
+          // already-sent audio from the cancelled turn.
+          if (Date.now() < dropPlaybackUntilMsRef.current) {
+            return;
+          }
+
+          // Only accept incoming transport audio while the agent is speaking.
+          // This prevents stale turn audio from continuing during listening/thinking.
+          if (stateRef.current !== 'speaking') {
+            return;
+          }
+
           audioControllerRef.current.playAudio(event.detail);
         } catch (err) {
           console.error('[AudioSession] Error playing audio:', err);
@@ -109,10 +124,13 @@ export function useAudioSession(): AudioSessionState {
   useEffect(() => {
     const handleAudioControl = (event: CustomEvent<string>) => {
       const action = event.detail;
-      if (action === 'interrupt') {
+      if (action === 'interrupt' || action === 'stop') {
+        dropPlaybackUntilMsRef.current = Date.now() + 120;
         if (audioControllerRef.current) {
           audioControllerRef.current.interrupt();
         }
+      } else if (action === 'start') {
+        dropPlaybackUntilMsRef.current = 0;
       }
     };
 
@@ -255,5 +273,6 @@ export function useAudioSession(): AudioSessionState {
     audioMode,
     toggleService,
     setAudioMode: setAudioModeCmd,
+    audioControllerRef,
   };
 }

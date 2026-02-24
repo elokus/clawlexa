@@ -7,6 +7,8 @@ import { useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceTimeline, useVoiceState, useFocusedSession } from '../../stores';
 import { VoiceIndicator } from '../VoiceIndicator';
+import { useAudioControllerRef, useSpokenHighlightConfig } from '../../contexts/audio-context';
+import { buildWordCueTimelineMs, useSpokenHighlight } from '../../hooks/useSpokenHighlight';
 import type { TranscriptItem, TimelineItem } from '../../types';
 
 interface GlassHUDProps {
@@ -35,8 +37,9 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
     return assistantTranscripts[assistantTranscripts.length - 1] || null;
   }, [timeline]);
 
+  const audioControllerRef = useAudioControllerRef();
+  const spokenHighlight = useSpokenHighlightConfig();
   const generatedText = latestMessage?.generatedContent ?? latestMessage?.content ?? '';
-  const spokenText = latestMessage?.spokenContent ?? '';
 
   // Split generated text into words for highlighting effect
   const words = useMemo(() => {
@@ -44,15 +47,26 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
     return generatedText.split(/\s+/).filter(Boolean);
   }, [generatedText]);
 
-  // Highlight is driven by spoken progress from runtime events.
-  const spokenWordCount = useMemo(() => {
-    if (!latestMessage) return 0;
-    if (typeof latestMessage.spokenWords === 'number') {
-      return Math.max(0, Math.min(latestMessage.spokenWords, words.length));
-    }
-    if (!spokenText.trim()) return 0;
-    return Math.max(0, Math.min(spokenText.trim().split(/\s+/).length, words.length));
-  }, [latestMessage, spokenText, words.length]);
+  const wordCueEndMs = useMemo(
+    () =>
+      buildWordCueTimelineMs(
+        words,
+        spokenHighlight.msPerWord,
+        spokenHighlight.punctuationPauseMs
+      ),
+    [words, spokenHighlight.msPerWord, spokenHighlight.punctuationPauseMs]
+  );
+
+  // Highlight is driven by the client-side AudioContext playback clock.
+  const spokenWordCount = useSpokenHighlight({
+    totalWords: words.length,
+    isFinalized: latestMessage?.spokenFinalized ?? false,
+    isSpeaking: state === 'speaking',
+    audioController: audioControllerRef.current,
+    turnKey: latestMessage?.id ?? null,
+    wordCueEndMs,
+    fallbackMsPerWord: spokenHighlight.msPerWord,
+  });
 
   return (
     <AnimatePresence>

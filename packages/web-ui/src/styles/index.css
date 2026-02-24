@@ -916,3 +916,34 @@ button:focus-visible {
     @apply bg-background text-foreground;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPOKEN WORD HIGHLIGHTING - AudioContext-driven word-by-word reveal
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.spoken-highlight-container {
+  line-height: 1.7;
+}
+
+.spoken-highlight {
+  display: inline;
+}
+
+.spoken-word {
+  display: inline;
+  transition: color 0.12s ease;
+  color: var(--color-text-ghost);
+}
+
+.spoken-word.spoken {
+  color: var(--color-text-bright);
+}
+
+.spoken-word.current {
+  color: var(--color-cyan);
+  text-shadow: 0 0 6px rgba(56, 189, 248, 0.3);
+}
+
+.spoken-word.pending {
+  color: var(--color-text-ghost);
+}

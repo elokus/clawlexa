@@ -50,6 +50,10 @@
       "webrtcVadEchoSpeechRatioBoost": 0.15,
       "assistantOutputMinRms": 0.008,
       "assistantOutputSilenceMs": 350,
+      "spokenStreamEnabled": true,
+      "wordAlignmentEnabled": false,
+      "spokenHighlightMsPerWord": 340,
+      "spokenHighlightPunctuationPauseMs": 120,
       "llmCompletion": {
         "enabled": false,
         "shortTimeoutMs": 5000,

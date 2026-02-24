@@ -55,6 +55,8 @@ describe('provider-config parsers', () => {
         assistantOutputSilenceMs: 320,
         spokenStreamEnabled: true,
         wordAlignmentEnabled: true,
+        spokenHighlightMsPerWord: 360,
+        spokenHighlightPunctuationPauseMs: 180,
       },
     });
     expect(parsed.sttProvider).toBe('deepgram');
@@ -75,6 +77,8 @@ describe('provider-config parsers', () => {
     expect(parsed.turn?.assistantOutputSilenceMs).toBe(320);
     expect(parsed.turn?.spokenStreamEnabled).toBe(true);
     expect(parsed.turn?.wordAlignmentEnabled).toBe(true);
+    expect(parsed.turn?.spokenHighlightMsPerWord).toBe(360);
+    expect(parsed.turn?.spokenHighlightPunctuationPauseMs).toBe(180);
   });
 
   test('rejects invalid decomposed Deepgram punctuation chunking type', () => {
@@ -141,6 +145,28 @@ describe('provider-config parsers', () => {
         },
       })
     ).toThrow('providerConfig.turn.bargeInEnabled must be a boolean');
+  });
+
+  test('rejects invalid decomposed spoken highlight speed', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        turn: {
+          spokenHighlightMsPerWord: 0,
+        },
+      })
+    ).toThrow('providerConfig.turn.spokenHighlightMsPerWord must be a positive number');
+  });
+
+  test('rejects invalid decomposed spoken punctuation pause', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        turn: {
+          spokenHighlightPunctuationPauseMs: -1,
+        },
+      })
+    ).toThrow(
+      'providerConfig.turn.spokenHighlightPunctuationPauseMs must be a non-negative number'
+    );
   });
 
   test('requires llm model ref when pipecat pipeline is set', () => {

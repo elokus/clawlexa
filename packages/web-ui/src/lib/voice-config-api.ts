@@ -57,6 +57,8 @@ export interface VoiceConfigDocument {
       silenceMs: number;
       minSpeechMs: number;
       minRms: number;
+      spokenHighlightMsPerWord: number;
+      spokenHighlightPunctuationPauseMs: number;
       llmCompletion: {
         enabled: boolean;
         shortTimeoutMs: number;

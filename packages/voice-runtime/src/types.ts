@@ -76,6 +76,12 @@ export interface UsageMetrics {
   };
 }
 
+export interface SpokenWordTimestamp {
+  word: string;
+  startMs: number;
+  endMs: number;
+}
+
 export interface ProviderCapabilities {
   toolCalling: boolean;
   transcriptDeltas: boolean;
@@ -142,6 +148,7 @@ export interface VoiceSessionEvents {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: SpokenWordTimestamp[];
     }
   ) => void;
   spokenProgress?: (
@@ -162,6 +169,7 @@ export interface VoiceSessionEvents {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: SpokenWordTimestamp[];
     }
   ) => void;
   userItemCreated: (itemId: string, order?: number) => void;

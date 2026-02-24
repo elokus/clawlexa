@@ -896,6 +896,44 @@ export function VoiceRuntimePanel({
           </ConfigSection>
         )}
 
+        <ConfigSection
+          title="Spoken Highlighting"
+          description="Fallback timing for word highlighting when provider word timestamps are unavailable."
+          columns={2}
+        >
+          <ConfigField label="Speed (ms/word)">
+            <input
+              type="number"
+              value={config.voice.turn.spokenHighlightMsPerWord}
+              onChange={(event) => {
+                updateTurn({
+                  spokenHighlightMsPerWord: parseNumeric(
+                    event.target.value,
+                    config.voice.turn.spokenHighlightMsPerWord,
+                    1
+                  ),
+                });
+              }}
+            />
+          </ConfigField>
+
+          <ConfigField label="Punctuation Pause (ms)">
+            <input
+              type="number"
+              value={config.voice.turn.spokenHighlightPunctuationPauseMs}
+              onChange={(event) => {
+                updateTurn({
+                  spokenHighlightPunctuationPauseMs: parseNumeric(
+                    event.target.value,
+                    config.voice.turn.spokenHighlightPunctuationPauseMs,
+                    0
+                  ),
+                });
+              }}
+            />
+          </ConfigField>
+        </ConfigSection>
+
         {activeSchema && (
           <ProviderSettingsSection
             schema={activeSchema}

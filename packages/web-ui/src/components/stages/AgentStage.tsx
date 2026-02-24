@@ -17,6 +17,7 @@ import {
   MessageContent,
   MessageResponse,
 } from '@/components/ai-elements/message';
+import { SpokenTextHighlight } from '@/components/ai-elements/spoken-highlight';
 import { Loader } from '@/components/ai-elements/loader';
 import { cn } from '@/lib/utils';
 import {
@@ -47,6 +48,14 @@ interface DisplayMessage {
   parts: MessagePart[];
   timestamp: number;
   pending?: boolean;
+  /** Full LLM-generated text (for spoken highlighting) */
+  generatedText?: string;
+  /** Spoken word count from server events */
+  spokenWords?: number;
+  /** Total audio duration in ms (TTS audio bytes) */
+  playbackMs?: number;
+  /** Whether the spoken stream is finalized */
+  spokenFinalized?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -66,6 +75,10 @@ function timelineToMessages(timeline: TimelineItem[]): DisplayMessage[] {
         parts: [{ type: 'text', text: transcript.content }],
         timestamp: transcript.timestamp,
         pending: transcript.pending,
+        generatedText: transcript.generatedContent,
+        spokenWords: transcript.spokenWords,
+        playbackMs: transcript.playbackMs,
+        spokenFinalized: transcript.spokenFinalized,
       });
     } else if (item.type === 'tool') {
       const tool = item as ToolItem;
@@ -303,7 +316,27 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
         {message.parts.map((part, idx) => {
           const key = `${message.id}-part-${idx}`;
           switch (part.type) {
-            case 'text':
+            case 'text': {
+              // Only highlight the currently active assistant turn.
+              // Completed/history turns should render as normal static text.
+              const isActiveVoiceTurn =
+                !isUser &&
+                !!isLatest &&
+                !!message.pending &&
+                typeof message.generatedText === 'string' &&
+                message.generatedText.length > 0;
+
+              if (isActiveVoiceTurn) {
+                return (
+                  <SpokenTextHighlight
+                    key={key}
+                    generatedText={message.generatedText!}
+                    spokenFinalized={message.spokenFinalized ?? false}
+                    pending={message.pending && idx === message.parts.length - 1}
+                    turnKey={message.id}
+                  />
+                );
+              }
               return (
                 <TextPart
                   key={key}
@@ -311,6 +344,7 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
                   pending={message.pending && idx === message.parts.length - 1}
                 />
               );
+            }
             case 'reasoning':
               return (
                 <ReasoningPart
