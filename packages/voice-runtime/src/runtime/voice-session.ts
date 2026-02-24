@@ -19,7 +19,11 @@ import type {
 } from '../types.js';
 import { InterruptionTracker } from './interruption-tracker.js';
 import { TypedEventEmitter } from './typed-emitter.js';
-import { cuesToWordTimestamps, WordCueTimelineBuilder } from './word-cue-timeline.js';
+import {
+  cuesToWordTimestamps,
+  resolveWordCountAtPlaybackMs,
+  WordCueTimelineBuilder,
+} from './word-cue-timeline.js';
 
 export class VoiceSessionImpl implements VoiceSession {
   private readonly events = new TypedEventEmitter<VoiceSessionEvents>();
@@ -304,8 +308,9 @@ export class VoiceSessionImpl implements VoiceSession {
 
   private resolveInterruptionContext(): void {
     const playbackPositionMs = this.getPlaybackPositionMs();
-    const context = this.interruptionTracker.resolve(playbackPositionMs);
+    let context = this.interruptionTracker.resolve(playbackPositionMs);
     if (!context) return;
+    context = this.resolveInterruptionFromCueTimeline(context, playbackPositionMs);
 
     if (context.truncated && context.itemId) {
       if (this.capabilities.nativeTruncation && this.adapter.truncateOutput) {
@@ -428,6 +433,40 @@ export class VoiceSessionImpl implements VoiceSession {
       },
     };
     this.events.emit('historyUpdated', [...this.history]);
+  }
+
+  private resolveInterruptionFromCueTimeline(
+    context: InterruptionContext,
+    playbackPositionMs: number | undefined
+  ): InterruptionContext {
+    if (!this.adapterProvidedSpokenEvents) {
+      return context;
+    }
+
+    const fullText = context.fullText ?? '';
+    if (!fullText) {
+      return context;
+    }
+
+    const cues = this.spokenCueTimeline.getTimeline();
+    if (cues.length === 0) {
+      return context;
+    }
+
+    const effectivePlaybackMs = Number.isFinite(playbackPositionMs)
+      ? Math.max(0, playbackPositionMs ?? 0)
+      : Math.max(0, context.playbackPositionMs);
+    const resolvedWordCount = resolveWordCountAtPlaybackMs(cues, effectivePlaybackMs);
+    const truncated = truncateTextToWordCount(fullText, resolvedWordCount);
+
+    return {
+      ...context,
+      spokenText: truncated.text,
+      truncated: truncated.text !== fullText,
+      spokenWordCount: truncated.wordCount > 0 ? truncated.wordCount : undefined,
+      spokenWordIndex:
+        truncated.wordCount > 0 ? Math.max(0, truncated.wordCount - 1) : undefined,
+    };
   }
 
   private bindAdapterEvents(): void {
@@ -988,4 +1027,35 @@ function joinSpokenChunks(previous: string, delta: string): string {
   }
 
   return previous + delta;
+}
+
+function truncateTextToWordCount(
+  text: string,
+  wordCount: number
+): { text: string; wordCount: number } {
+  if (!text || wordCount <= 0) {
+    return { text: '', wordCount: 0 };
+  }
+
+  const matcher = /\S+/gu;
+  let matchedWords = 0;
+  let endIndex = 0;
+  let match: RegExpExecArray | null = null;
+
+  while ((match = matcher.exec(text)) !== null) {
+    matchedWords += 1;
+    endIndex = match.index + match[0].length;
+    if (matchedWords >= wordCount) {
+      break;
+    }
+  }
+
+  if (matchedWords === 0 || endIndex <= 0) {
+    return { text: '', wordCount: 0 };
+  }
+
+  return {
+    text: text.slice(0, endIndex),
+    wordCount: matchedWords,
+  };
 }

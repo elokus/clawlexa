@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { WordCueTimelineBuilder } from '../src/runtime/word-cue-timeline.js';
+import {
+  resolveWordCountAtPlaybackMs,
+  WordCueTimelineBuilder,
+} from '../src/runtime/word-cue-timeline.js';
 
 describe('WordCueTimelineBuilder', () => {
   test('emits append updates for deltas and replace update for final', () => {
@@ -224,5 +227,26 @@ describe('WordCueTimelineBuilder', () => {
     });
 
     expect(result.timeline.every((cue) => cue.source === 'synthetic')).toBe(true);
+  });
+
+  test('resolveWordCountAtPlaybackMs counts completed words by cue endMs', () => {
+    const builder = new WordCueTimelineBuilder();
+    const final = builder.ingestFinal({
+      spokenText: 'one two three',
+      playbackMs: 300,
+    });
+    const cues = final.timeline;
+
+    expect(resolveWordCountAtPlaybackMs(cues, 0)).toBe(0);
+    expect(resolveWordCountAtPlaybackMs(cues, 99)).toBe(0);
+    expect(resolveWordCountAtPlaybackMs(cues, 100)).toBe(1);
+    expect(resolveWordCountAtPlaybackMs(cues, 250)).toBe(2);
+    expect(resolveWordCountAtPlaybackMs(cues, 300)).toBe(3);
+    expect(resolveWordCountAtPlaybackMs(cues, 999)).toBe(3);
+  });
+
+  test('resolveWordCountAtPlaybackMs returns 0 for empty cue timelines', () => {
+    expect(resolveWordCountAtPlaybackMs([], 100)).toBe(0);
+    expect(resolveWordCountAtPlaybackMs([], -1)).toBe(0);
   });
 });

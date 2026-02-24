@@ -310,6 +310,38 @@ export function cuesToWordTimestamps(cues: SpokenWordCue[]): SpokenWordTimestamp
   }));
 }
 
+/**
+ * Resolve how many words are fully heard at a playback position.
+ * Uses cue end boundaries (not start) so partially spoken words are excluded.
+ */
+export function resolveWordCountAtPlaybackMs(
+  cues: SpokenWordCue[],
+  playbackMs: number
+): number {
+  if (!Array.isArray(cues) || cues.length === 0) {
+    return 0;
+  }
+
+  const timeMs = Number.isFinite(playbackMs) ? Math.max(0, playbackMs) : 0;
+  let low = 0;
+  let high = cues.length - 1;
+  let count = 0;
+
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const cue = cues[middle];
+    const cueEndMs = cue ? Math.max(0, cue.endMs) : 0;
+    if (cueEndMs <= timeMs) {
+      count = middle + 1;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return count;
+}
+
 function distributeWordsIntoWindow(
   words: string[],
   startMsInput: number,

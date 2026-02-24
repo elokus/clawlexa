@@ -470,6 +470,60 @@ describe('VoiceSessionImpl interruption resolution', () => {
     expect(interruptionContexts[0]?.spokenText).not.toBe('Alpha Beta Gamma Delta');
   });
 
+  test('resolves interruption using cue boundaries instead of coarse spoken segments', async () => {
+    const adapter = new FakeAdapter();
+    const transport = new FakeTransport();
+    const session = new VoiceSessionImpl(adapter, {
+      provider: 'ultravox-ws',
+      instructions: 'Be concise',
+      voice: 'echo',
+      model: 'test-model',
+    });
+
+    const interruptionContexts: Array<{
+      spokenText: string;
+      fullText: string;
+      spokenWordCount?: number;
+    }> = [];
+    const historyUpdates: VoiceHistoryItem[][] = [];
+
+    session.on('interruptionResolved', (context) => {
+      interruptionContexts.push({
+        spokenText: context.spokenText,
+        fullText: context.fullText,
+        spokenWordCount: context.spokenWordCount,
+      });
+    });
+    session.on('historyUpdated', (history) => {
+      historyUpdates.push(history);
+    });
+
+    await session.attachClientTransport(transport);
+    await session.connect();
+
+    const fullText = 'a b c d extraordinarilylongword';
+    adapter.emit('assistantItemCreated', 'assistant-cue');
+    adapter.emit('transcript', fullText, 'assistant', 'assistant-cue');
+    // Emit one coarse spoken segment covering all words over 1200ms.
+    // Segment-based interpolation tends to over-credit short early words.
+    adapter.emit('spokenDelta', fullText, 'assistant', 'assistant-cue', {
+      spokenChars: fullText.length,
+      spokenWords: 5,
+      playbackMs: 1200,
+      precision: 'segment',
+    });
+
+    // Interrupt while only the first cue should be fully completed.
+    transport.setPlaybackPositionMs(450);
+    adapter.emit('audioInterrupted');
+
+    expect(interruptionContexts).toHaveLength(1);
+    expect(interruptionContexts[0]?.fullText).toBe(fullText);
+    expect(interruptionContexts[0]?.spokenText).toBe('a');
+    expect(interruptionContexts[0]?.spokenWordCount).toBe(1);
+    expect(historyUpdates.at(-1)?.[0]?.text).toBe('a');
+  });
+
   test('emits incremental cue updates for adapter spoken events', async () => {
     const adapter = new FakeAdapter();
     const transport = new FakeTransport();
