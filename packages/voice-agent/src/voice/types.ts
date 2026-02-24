@@ -23,6 +23,19 @@ export interface VoiceRuntimeHistoryItem {
   content: Array<{ type: 'text'; text: string }>;
 }
 
+type SpokenWordCue = {
+  word: string;
+  startMs: number;
+  endMs: number;
+  source: 'provider' | 'synthetic';
+  timeBase: 'utterance';
+};
+
+type SpokenWordCueUpdate = {
+  mode: 'append' | 'replace';
+  cues: SpokenWordCue[];
+};
+
 export interface VoiceRuntimeEvents {
   stateChange: (state: AgentState) => void;
   audio: (audio: VoiceRuntimeAudio) => void;
@@ -48,6 +61,10 @@ export interface VoiceRuntimeEvents {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+      wordTimestampsTimeBase?: 'segment' | 'utterance';
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
   ) => void;
   spokenProgress: (
@@ -68,6 +85,10 @@ export interface VoiceRuntimeEvents {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+      wordTimestampsTimeBase?: 'segment' | 'utterance';
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
   ) => void;
   userItemCreated: (itemId: string, order?: number) => void;

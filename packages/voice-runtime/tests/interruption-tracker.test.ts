@@ -181,4 +181,79 @@ describe('InterruptionTracker', () => {
     expect(context?.precision).toBe('provider-word-timestamps');
     expect(context?.spans?.every((span) => span.type === 'word')).toBe(true);
   });
+
+  test('respects explicit utterance-relative time base for deltas', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-8');
+    tracker.trackAssistantTranscript('Alpha Beta Gamma', 'assistant-8');
+    // First delta: segment-relative (starts at 0), offset 0 → no shift
+    tracker.trackAssistantSpokenDelta('Alpha ', 'assistant-8', {
+      spokenChars: 6,
+      spokenWords: 1,
+      playbackMs: 200,
+      precision: 'provider-word-timestamps',
+      wordTimestampsTimeBase: 'segment',
+      wordTimestamps: [
+        { word: 'Alpha', startMs: 0, endMs: 100 },
+      ],
+    });
+    // Second delta: utterance-relative (starts near the offset of 200ms)
+    // Should NOT be shifted by another 200ms.
+    tracker.trackAssistantSpokenDelta('Beta ', 'assistant-8', {
+      spokenChars: 11,
+      spokenWords: 2,
+      playbackMs: 400,
+      precision: 'provider-word-timestamps',
+      wordTimestampsTimeBase: 'utterance',
+      wordTimestamps: [
+        { word: 'Beta', startMs: 200, endMs: 350 },
+      ],
+    });
+
+    const context = tracker.resolve(250);
+    expect(context).not.toBeNull();
+    expect(context?.spokenText).toBe('Alpha Beta');
+    expect(context?.spokenWordCount).toBe(2);
+    expect(context?.precision).toBe('provider-word-timestamps');
+  });
+
+  test('spokenFinal replaces partial delta timestamps with corrected data', () => {
+    const tracker = new InterruptionTracker();
+
+    tracker.beginAssistantItem('assistant-9');
+    tracker.trackAssistantTranscript('One Two Three', 'assistant-9');
+    // Delta with partial timestamps
+    tracker.trackAssistantSpokenDelta('One Two ', 'assistant-9', {
+      spokenChars: 8,
+      spokenWords: 2,
+      playbackMs: 200,
+      precision: 'provider-word-timestamps',
+      wordTimestamps: [
+        { word: 'One', startMs: 0, endMs: 80 },
+        { word: 'Two', startMs: 80, endMs: 160 },
+      ],
+    });
+    // Final with corrected complete timestamps — should replace delta data
+    tracker.trackAssistantSpokenFinal('One Two Three', 'assistant-9', {
+      spokenChars: 13,
+      spokenWords: 3,
+      playbackMs: 500,
+      precision: 'provider-word-timestamps',
+      wordTimestamps: [
+        { word: 'One', startMs: 0, endMs: 100 },
+        { word: 'Two', startMs: 100, endMs: 250 },
+        { word: 'Three', startMs: 250, endMs: 500 },
+      ],
+    });
+
+    // The corrected timestamps should be used, not the delta ones
+    const context = tracker.resolve(200);
+    expect(context).not.toBeNull();
+    expect(context?.spokenText).toBe('One Two');
+    expect(context?.spokenWordCount).toBe(2);
+    // At 200ms, "Two" (endMs: 250) hasn't started yet with corrected data
+    // "One" has startMs < 200 and "Two" has startMs: 100 < 200
+    expect(context?.precision).toBe('provider-word-timestamps');
+  });
 });

@@ -12,6 +12,19 @@ export interface BaseTimelineItem {
   timestamp: number;
 }
 
+export interface SpokenWordCue {
+  word: string;
+  startMs: number;
+  endMs: number;
+  source: 'provider' | 'synthetic';
+  timeBase: 'utterance';
+}
+
+export interface SpokenWordCueUpdate {
+  mode: 'append' | 'replace';
+  cues: SpokenWordCue[];
+}
+
 export interface TranscriptItem extends BaseTimelineItem {
   type: 'transcript';
   role: MessageRole;
@@ -22,6 +35,7 @@ export interface TranscriptItem extends BaseTimelineItem {
   spokenWords?: number;
   playbackMs?: number;
   precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+  wordCues?: SpokenWordCue[];
   spokenFinalized?: boolean;
   pending?: boolean;
   itemId?: string; // OpenAI item correlation for message ordering

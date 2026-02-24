@@ -66,6 +66,7 @@ export class InterruptionTracker {
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
       wordTimestamps?: SpokenWordTimestamp[];
+      wordTimestampsTimeBase?: 'segment' | 'utterance';
     }
   ): void {
     this.beginAssistantItem(itemId);
@@ -90,7 +91,11 @@ export class InterruptionTracker {
     }
 
     this.explicitSpokenText = nextText;
-    this.ingestWordTimestamps(meta?.wordTimestamps, this.explicitPlaybackMs);
+    this.ingestWordTimestamps(
+      meta?.wordTimestamps,
+      this.explicitPlaybackMs,
+      meta?.wordTimestampsTimeBase ?? 'segment'
+    );
     this.explicitPlaybackMs = playbackMs;
     this.explicitPrecision = this.wordTimeline.hasWords()
       ? 'provider-word-timestamps'
@@ -148,14 +153,23 @@ export class InterruptionTracker {
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
       wordTimestamps?: SpokenWordTimestamp[];
+      wordTimestampsTimeBase?: 'segment' | 'utterance';
     }
   ): void {
     this.beginAssistantItem(itemId);
     const playbackMs = this.normalizeMs(meta?.playbackMs, this.explicitPlaybackMs);
     const finalText = text ?? '';
     this.explicitSpokenText = finalText;
-    if (!this.wordTimeline.hasWords()) {
-      this.ingestWordTimestamps(meta?.wordTimestamps, 0);
+    // spokenFinal can always replace the word timeline — it carries the
+    // authoritative final timestamps, correcting any partial/inaccurate
+    // data from earlier deltas.
+    if (meta?.wordTimestamps && meta.wordTimestamps.length > 0) {
+      this.wordTimeline.reset();
+      this.ingestWordTimestamps(
+        meta.wordTimestamps,
+        0,
+        meta.wordTimestampsTimeBase ?? 'utterance'
+      );
     }
     this.explicitPlaybackMs = playbackMs;
     this.explicitPrecision = this.wordTimeline.hasWords()
@@ -366,12 +380,14 @@ export class InterruptionTracker {
 
   private ingestWordTimestamps(
     wordTimestamps: SpokenWordTimestamp[] | undefined,
-    offsetMs: number
+    offsetMs: number,
+    timeBase: 'segment' | 'utterance'
   ): void {
     if (!wordTimestamps || wordTimestamps.length === 0) {
       return;
     }
-    this.wordTimeline.beginSegment(offsetMs);
+    const effectiveOffset = timeBase === 'utterance' ? 0 : offsetMs;
+    this.wordTimeline.beginSegment(effectiveOffset);
     this.wordTimeline.addWords(wordTimestamps);
   }
 }

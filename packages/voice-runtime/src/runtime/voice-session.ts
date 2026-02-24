@@ -9,6 +9,8 @@ import type {
   ProviderAdapter,
   ProviderCapabilities,
   SessionInput,
+  SpokenWordCue,
+  SpokenWordTimestamp,
   ToolCallResult,
   VoiceHistoryItem,
   VoiceSession,
@@ -17,6 +19,7 @@ import type {
 } from '../types.js';
 import { InterruptionTracker } from './interruption-tracker.js';
 import { TypedEventEmitter } from './typed-emitter.js';
+import { cuesToWordTimestamps, WordCueTimelineBuilder } from './word-cue-timeline.js';
 
 export class VoiceSessionImpl implements VoiceSession {
   private readonly events = new TypedEventEmitter<VoiceSessionEvents>();
@@ -46,11 +49,24 @@ export class VoiceSessionImpl implements VoiceSession {
   private spokenCursorPrecision: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps' =
     'segment';
   private readonly spokenFinalizedItemIds = new Set<string>();
+  private readonly spokenCueTimeline: WordCueTimelineBuilder;
+  private playbackPositionOffsetMs = 0;
 
   constructor(adapter: ProviderAdapter, input: SessionInput) {
     this.adapter = adapter;
     this.input = input;
     this.capabilities = adapter.capabilities();
+
+    // Derive min-pace for synthetic word cues from config if available.
+    const turnConfig = (input.providerConfig as Record<string, unknown> | undefined)
+      ?.turn as Record<string, unknown> | undefined;
+    const configuredMsPerWord = turnConfig?.spokenHighlightMsPerWord;
+    const minMsPerWord =
+      typeof configuredMsPerWord === 'number' && configuredMsPerWord > 0
+        ? Math.max(100, configuredMsPerWord * 0.5)
+        : undefined;
+    this.spokenCueTimeline = new WordCueTimelineBuilder(minMsPerWord);
+
     this.bindAdapterEvents();
   }
 
@@ -79,6 +95,7 @@ export class VoiceSessionImpl implements VoiceSession {
     this.resetAssistantTranscriptDedup();
     this.resetConversationOrderState();
     this.resetSpokenSynthesisState();
+    this.playbackPositionOffsetMs = 0;
     this.resamplerPool.clear();
   }
 
@@ -115,6 +132,7 @@ export class VoiceSessionImpl implements VoiceSession {
     }
     await this.clientTransport.stop();
     this.clientTransport = null;
+    this.playbackPositionOffsetMs = 0;
   }
 
   sendAudio(frame: AudioFrame): void {
@@ -301,24 +319,101 @@ export class VoiceSessionImpl implements VoiceSession {
     this.events.emit('interruptionResolved', context);
     this.interruptionTracker.reset();
     this.activeAssistantItemId = null;
+    this.spokenCueTimeline.reset();
+    this.spokenCursorItemId = null;
+    this.spokenCursorText = '';
+    this.spokenCursorPlaybackMs = 0;
+    this.spokenCursorPrecision = 'segment';
   }
 
   private getPlaybackPositionMs(): number | undefined {
     if (!this.clientTransport?.getPlaybackPositionMs) return undefined;
     const position = this.clientTransport.getPlaybackPositionMs();
     if (!Number.isFinite(position) || position < 0) return undefined;
-    return position;
+    return Math.max(0, position - this.playbackPositionOffsetMs);
+  }
+
+  private capturePlaybackPositionOffset(): void {
+    if (!this.clientTransport?.getPlaybackPositionMs) {
+      this.playbackPositionOffsetMs = 0;
+      return;
+    }
+    const position = this.clientTransport.getPlaybackPositionMs();
+    if (!Number.isFinite(position) || position < 0) {
+      this.playbackPositionOffsetMs = 0;
+      return;
+    }
+    this.playbackPositionOffsetMs = position;
+  }
+
+  private normalizeSpokenPlaybackMs(value: number | undefined, fallback: number): number {
+    if (!Number.isFinite(value) || value === undefined || value < 0) {
+      return Math.max(0, fallback);
+    }
+    return Math.max(0, value);
+  }
+
+  private resolveSpokenTextFromDelta(
+    previousText: string,
+    delta: string,
+    spokenChars?: number
+  ): string {
+    const safePrevious = previousText ?? '';
+    const safeDelta = delta ?? '';
+    const expanded = joinSpokenChunks(safePrevious, safeDelta);
+    if (!Number.isFinite(spokenChars) || spokenChars === undefined || spokenChars < 0) {
+      return expanded;
+    }
+    const targetChars = Math.max(0, spokenChars);
+    if (targetChars >= expanded.length) {
+      return expanded;
+    }
+    if (targetChars <= safePrevious.length) {
+      return safePrevious.slice(0, targetChars);
+    }
+    return expanded.slice(0, targetChars);
+  }
+
+  private resolveSpokenTextFromChars(text: string, spokenChars: number): string {
+    if (!Number.isFinite(spokenChars) || spokenChars < 0) {
+      return text;
+    }
+    return text.slice(0, Math.max(0, Math.min(text.length, spokenChars)));
+  }
+
+  private extractProviderWordTimestamps(cues: SpokenWordCue[]): SpokenWordTimestamp[] | undefined {
+    const providerCues = cues.filter((cue) => cue.source === 'provider');
+    if (providerCues.length === 0) {
+      return undefined;
+    }
+    return cuesToWordTimestamps(providerCues);
   }
 
   private truncateLocalHistory(itemId: string, spokenText: string): void {
+    const truncatedText = spokenText ?? '';
+    if (!truncatedText.trim()) {
+      return;
+    }
     const historyIndex = this.history.findIndex((item) => item.id === itemId);
-    if (historyIndex < 0) return;
+    if (historyIndex < 0) {
+      this.history.push({
+        id: itemId,
+        role: 'assistant',
+        text: truncatedText,
+        createdAt: Date.now(),
+        providerMeta: {
+          interrupted: true,
+        },
+      });
+      this.events.emit('historyUpdated', [...this.history]);
+      return;
+    }
     const existingItem = this.history[historyIndex];
     if (!existingItem || existingItem.role !== 'assistant') return;
 
     this.history[historyIndex] = {
       ...existingItem,
-      text: spokenText,
+      text: truncatedText,
       providerMeta: {
         ...(existingItem.providerMeta ?? {}),
         interrupted: true,
@@ -393,20 +488,112 @@ export class VoiceSessionImpl implements VoiceSession {
 
     this.adapter.on('spokenDelta', (delta, role, itemId, meta) => {
       this.adapterProvidedSpokenEvents = true;
-      this.interruptionTracker.trackAssistantSpokenDelta(delta, itemId, meta);
-      this.events.emit('spokenDelta', delta, role, itemId, meta);
+      const playbackMs = this.normalizeSpokenPlaybackMs(
+        meta?.playbackMs,
+        this.spokenCursorPlaybackMs
+      );
+      const previousSpokenText =
+        this.spokenCursorItemId === itemId ? this.spokenCursorText : '';
+      const nextSpokenText = this.resolveSpokenTextFromDelta(
+        previousSpokenText,
+        delta,
+        meta?.spokenChars
+      );
+      const cues = this.spokenCueTimeline.ingestDelta({
+        spokenText: nextSpokenText,
+        playbackMs,
+        speechOnsetMs: meta?.speechOnsetMs,
+        providerWordTimestamps: meta?.wordTimestamps,
+        providerTimeBase: meta?.wordTimestampsTimeBase ?? 'segment',
+      });
+
+      const providerWordTimestamps = this.extractProviderWordTimestamps(cues.timeline);
+      this.interruptionTracker.trackAssistantSpokenDelta(delta, itemId, {
+        ...meta,
+        playbackMs,
+        wordTimestamps: providerWordTimestamps,
+        wordTimestampsTimeBase: providerWordTimestamps ? 'utterance' : undefined,
+      });
+
+      this.events.emit('spokenDelta', delta, role, itemId, {
+        ...meta,
+        spokenChars: meta?.spokenChars ?? nextSpokenText.length,
+        spokenWords: meta?.spokenWords ?? countWords(nextSpokenText),
+        playbackMs,
+        wordCueUpdate: cues.update ?? undefined,
+      });
+
+      this.spokenCursorItemId = itemId ?? this.spokenCursorItemId ?? this.activeAssistantItemId;
+      this.spokenCursorText = nextSpokenText;
+      this.spokenCursorPlaybackMs = playbackMs;
+      this.spokenCursorPrecision = meta?.precision ?? this.spokenCursorPrecision;
     });
 
     this.adapter.on('spokenProgress', (itemId, progress) => {
       this.adapterProvidedSpokenEvents = true;
-      this.interruptionTracker.trackAssistantSpokenProgress(itemId, progress);
-      this.events.emit('spokenProgress', itemId, progress);
+      const playbackMs = this.normalizeSpokenPlaybackMs(
+        progress.playbackMs,
+        this.spokenCursorPlaybackMs
+      );
+      const spokenText =
+        this.spokenCursorItemId === itemId
+          ? this.resolveSpokenTextFromChars(this.spokenCursorText, progress.spokenChars)
+          : '';
+      this.spokenCueTimeline.ingestDelta({
+        spokenText,
+        playbackMs,
+      });
+      this.interruptionTracker.trackAssistantSpokenProgress(itemId, {
+        ...progress,
+        playbackMs,
+      });
+      this.events.emit('spokenProgress', itemId, {
+        ...progress,
+        playbackMs,
+      });
+      this.spokenCursorItemId = itemId;
+      this.spokenCursorText = spokenText;
+      this.spokenCursorPlaybackMs = playbackMs;
+      this.spokenCursorPrecision = progress.precision;
     });
 
     this.adapter.on('spokenFinal', (text, role, itemId, meta) => {
       this.adapterProvidedSpokenEvents = true;
-      this.interruptionTracker.trackAssistantSpokenFinal(text, itemId, meta);
-      this.events.emit('spokenFinal', text, role, itemId, meta);
+      const spokenText = text ?? '';
+      const playbackMs = this.normalizeSpokenPlaybackMs(
+        meta?.playbackMs,
+        this.spokenCursorPlaybackMs
+      );
+      const cues = this.spokenCueTimeline.ingestFinal({
+        spokenText,
+        playbackMs,
+        providerWordTimestamps: meta?.wordTimestamps,
+        providerTimeBase: meta?.wordTimestampsTimeBase ?? 'utterance',
+      });
+
+      const providerWordTimestamps = this.extractProviderWordTimestamps(cues.timeline);
+      this.interruptionTracker.trackAssistantSpokenFinal(spokenText, itemId, {
+        ...meta,
+        spokenChars: meta?.spokenChars ?? spokenText.length,
+        spokenWords: meta?.spokenWords ?? countWords(spokenText),
+        playbackMs,
+        wordTimestamps: providerWordTimestamps,
+        wordTimestampsTimeBase: providerWordTimestamps ? 'utterance' : undefined,
+      });
+
+      this.events.emit('spokenFinal', spokenText, role, itemId, {
+        ...meta,
+        spokenChars: meta?.spokenChars ?? spokenText.length,
+        spokenWords: meta?.spokenWords ?? countWords(spokenText),
+        playbackMs,
+        wordCues: cues.timeline,
+        wordCueUpdate: cues.update ?? undefined,
+      });
+
+      this.spokenCursorItemId = itemId ?? this.spokenCursorItemId ?? this.activeAssistantItemId;
+      this.spokenCursorText = spokenText;
+      this.spokenCursorPlaybackMs = playbackMs;
+      this.spokenCursorPrecision = meta?.precision ?? this.spokenCursorPrecision;
     });
 
     this.adapter.on('userItemCreated', (itemId, orderHint) => {
@@ -418,6 +605,7 @@ export class VoiceSessionImpl implements VoiceSession {
     this.adapter.on('assistantItemCreated', (itemId, previousItemId, orderHint) => {
       this.interruptionTracker.beginAssistantItem(itemId);
       this.activeAssistantItemId = itemId;
+      this.capturePlaybackPositionOffset();
       this.assistantDeltaSeenThisTurn = false;
       this.assistantDeltaItemIds.delete(itemId);
       this.spokenFinalizedItemIds.delete(itemId);
@@ -426,6 +614,7 @@ export class VoiceSessionImpl implements VoiceSession {
         this.spokenCursorText = '';
         this.spokenCursorPlaybackMs = 0;
         this.spokenCursorPrecision = 'segment';
+        this.spokenCueTimeline.reset();
       }
       const order = this.getOrCreateConversationOrderAfter(itemId, previousItemId, orderHint);
       this.lastAssistantConversationOrder = order;
@@ -462,9 +651,25 @@ export class VoiceSessionImpl implements VoiceSession {
       this.emitSynthesizedSpokenProgress();
       this.emitSynthesizedSpokenFinal();
       this.events.emit('turnComplete');
-      this.interruptionTracker.reset();
       this.resetAssistantTranscriptDedup();
-      this.activeAssistantItemId = null;
+      this.playbackPositionOffsetMs = 0;
+
+      if (this.adapterProvidedSpokenEvents) {
+        // When the adapter provides spoken events, TTS generation may finish
+        // before audio playback completes.  Keep the interruption tracker and
+        // spoken-cursor state alive so that a barge-in during the "playback
+        // tail" can still resolve what the user actually heard.  All of this
+        // state is naturally reset when the next assistant item starts
+        // (beginAssistantItem), on disconnect, or on close.
+      } else {
+        this.interruptionTracker.reset();
+        this.activeAssistantItemId = null;
+        this.spokenCueTimeline.reset();
+        this.spokenCursorItemId = null;
+        this.spokenCursorText = '';
+        this.spokenCursorPlaybackMs = 0;
+        this.spokenCursorPrecision = 'segment';
+      }
     });
 
     this.adapter.on('toolCancelled', (callIds) => {
@@ -496,6 +701,7 @@ export class VoiceSessionImpl implements VoiceSession {
     this.spokenCursorPlaybackMs = 0;
     this.spokenCursorPrecision = 'segment';
     this.spokenFinalizedItemIds.clear();
+    this.spokenCueTimeline.reset();
   }
 
   private emitSynthesizedSpokenProgress(context?: InterruptionContext): void {
@@ -536,13 +742,18 @@ export class VoiceSessionImpl implements VoiceSession {
       spokenText !== previousSpokenText ||
       playbackMs !== previousPlaybackMs ||
       precision !== previousPrecision;
+    const cues = this.spokenCueTimeline.ingestDelta({
+      spokenText,
+      playbackMs,
+    });
 
-    if (delta.length > 0) {
+    if (delta.length > 0 || cues.update) {
       this.events.emit('spokenDelta', delta, 'assistant', itemId, {
         spokenChars,
         spokenWords,
         playbackMs,
         precision,
+        wordCueUpdate: cues.update ?? undefined,
       });
     }
 
@@ -580,11 +791,17 @@ export class VoiceSessionImpl implements VoiceSession {
     const spokenChars = spokenText.length;
     const spokenWords = countWords(spokenText);
     const playbackMs = resolved.playbackPositionMs;
+    const cues = this.spokenCueTimeline.ingestFinal({
+      spokenText,
+      playbackMs,
+    });
     this.events.emit('spokenFinal', spokenText, 'assistant', itemId, {
       spokenChars,
       spokenWords,
       playbackMs,
       precision,
+      wordCues: cues.timeline,
+      wordCueUpdate: cues.update ?? undefined,
     });
     this.spokenFinalizedItemIds.add(itemId);
     this.spokenCursorItemId = itemId;
@@ -604,6 +821,10 @@ export class VoiceSessionImpl implements VoiceSession {
     const spokenWords = countWords(spokenText);
     const playbackMs = context.playbackPositionMs;
     const precision = context.precision ?? 'segment';
+    const cues = this.spokenCueTimeline.ingestFinal({
+      spokenText,
+      playbackMs,
+    });
 
     this.events.emit('spokenProgress', itemId, {
       spokenChars,
@@ -616,6 +837,8 @@ export class VoiceSessionImpl implements VoiceSession {
       spokenWords,
       playbackMs,
       precision,
+      wordCues: cues.timeline,
+      wordCueUpdate: cues.update ?? undefined,
     });
     this.spokenFinalizedItemIds.add(itemId);
     this.spokenCursorItemId = itemId;
@@ -732,4 +955,29 @@ function countWords(text: string): number {
     return 0;
   }
   return trimmed.split(/\s+/).length;
+}
+
+function joinSpokenChunks(previous: string, delta: string): string {
+  if (!previous) {
+    return delta;
+  }
+  if (!delta) {
+    return previous;
+  }
+  const previousEndsWithWhitespace = /\s$/u.test(previous);
+  const deltaStartsWithWhitespace = /^\s/u.test(delta);
+  if (previousEndsWithWhitespace || deltaStartsWithWhitespace) {
+    return previous + delta;
+  }
+
+  const previousTail = previous[previous.length - 1] ?? '';
+  const deltaHead = delta[0] ?? '';
+  const needsSeparator =
+    /[\p{L}\p{N}]/u.test(previousTail) && /[\p{L}\p{N}]/u.test(deltaHead);
+  const punctuationBoundary = /[.,!?;:]/u.test(previousTail) && /[\p{L}\p{N}]/u.test(deltaHead);
+  if (needsSeparator || punctuationBoundary) {
+    return `${previous} ${delta}`;
+  }
+
+  return previous + delta;
 }

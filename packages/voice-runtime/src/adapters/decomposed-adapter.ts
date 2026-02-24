@@ -9,6 +9,7 @@ import {
 } from '../vad/turn-detector.js';
 import { createClient, LiveTTSEvents, type SpeakLiveClient } from '@deepgram/sdk';
 import { createLlmRuntime } from '@voiceclaw/llm-runtime';
+import { DecomposedSpokenWordBuffer } from './decomposed-spoken-buffer.js';
 import type {
   AudioFrame,
   AudioNegotiation,
@@ -18,7 +19,6 @@ import type {
   ProviderCapabilities,
   ProviderConfigSchema,
   SessionInput,
-  SpokenWordTimestamp,
   ToolCallContext,
   ToolDefinition,
   ToolCallResult,
@@ -29,6 +29,50 @@ import type {
 
 const AUDIO_SAMPLE_RATE = 24000;
 const PCM_BYTES_PER_100MS = (AUDIO_SAMPLE_RATE * 2) / 10;
+
+/**
+ * RMS threshold for detecting speech onset in PCM16 audio.
+ * Values below this are considered silence (Deepgram TTS preamble).
+ * PCM16 range is [-32768, 32767]; a typical quiet signal has RMS < 200.
+ */
+const SPEECH_ONSET_RMS_THRESHOLD = 300;
+
+/**
+ * Detect the sample offset within a PCM16 chunk where speech begins.
+ * Returns the byte offset relative to the chunk start, or -1 if the
+ * entire chunk is silence.  Uses a small sliding window (128 samples ≈ 5ms)
+ * to avoid triggering on isolated clicks/pops.
+ */
+function detectSpeechOnsetInChunk(chunk: ArrayBuffer): number {
+  const samples = new Int16Array(chunk);
+  const windowSize = Math.min(128, samples.length);
+  if (windowSize === 0) return -1;
+
+  let sumSquares = 0;
+  // Seed the sliding window
+  for (let i = 0; i < windowSize; i++) {
+    const s = samples[i]!;
+    sumSquares += s * s;
+  }
+  if (Math.sqrt(sumSquares / windowSize) >= SPEECH_ONSET_RMS_THRESHOLD) {
+    return 0; // Speech starts at the very beginning
+  }
+
+  // Slide the window forward one sample at a time
+  for (let i = windowSize; i < samples.length; i++) {
+    const entering = samples[i]!;
+    const leaving = samples[i - windowSize]!;
+    sumSquares += entering * entering - leaving * leaving;
+    const rms = Math.sqrt(Math.max(0, sumSquares) / windowSize);
+    if (rms >= SPEECH_ONSET_RMS_THRESHOLD) {
+      // Speech starts at the leading edge of this window
+      const onsetSample = i - windowSize + 1;
+      return onsetSample * 2; // Convert sample offset → byte offset (PCM16 = 2 bytes/sample)
+    }
+  }
+
+  return -1; // Entire chunk is silence
+}
 const MIN_BARGE_IN_MS = 360;
 const DEEPGRAM_FLUSH_FALLBACK_POLL_MS = 500;
 const DEEPGRAM_FLUSH_FALLBACK_IDLE_MS = 1200;
@@ -183,22 +227,19 @@ const DECOMPOSED_CAPABILITIES: ProviderCapabilities = {
   wordLevelTimestamps: false,
 };
 
-const DECOMPOSED_TTS_PROVIDER_CAPABILITIES: Record<
-  DecomposedOptions['ttsProvider'],
-  Pick<ProviderCapabilities, 'wordLevelTimestamps'>
-> = {
-  openai: {
-    wordLevelTimestamps: false,
-  },
-  deepgram: {
-    wordLevelTimestamps: false,
-  },
-};
-
 interface ConversationEntry {
   id: string;
   role: ConversationRole;
   content: string;
+}
+
+interface StreamedAssistantTurnResult {
+  marker: TurnMarker;
+  text: string;
+  spokenText: string;
+  spokeAudio: boolean;
+  llmDurationMs: number;
+  interrupted: boolean;
 }
 
 interface BufferedSpeechFrame {
@@ -401,10 +442,8 @@ export class DecomposedAdapter implements ProviderAdapter {
   private deepgramTtsConnectionReady: Promise<SpeakLiveClient> | null = null;
   private deepgramTtsRequestQueue: Promise<void> = Promise.resolve();
   private turnDetector: TurnDetector | null = null;
-  private runtimeCapabilities: ProviderCapabilities = this.resolveRuntimeCapabilities(null);
-
   capabilities(): ProviderCapabilities {
-    return this.runtimeCapabilities;
+    return DECOMPOSED_CAPABILITIES;
   }
 
   configSchema(): ProviderConfigSchema {
@@ -414,7 +453,6 @@ export class DecomposedAdapter implements ProviderAdapter {
   async connect(input: SessionInput): Promise<AudioNegotiation> {
     this.input = input;
     this.options = this.resolveOptions(input);
-    this.runtimeCapabilities = this.resolveRuntimeCapabilities(this.options);
     this.turnDetector?.destroy();
     this.turnDetector = await createTurnDetector(this.options.vadEngine, {
       rnnoiseOptions: {
@@ -498,7 +536,6 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.closeDeepgramTtsConnection();
     this.turnDetector?.destroy();
     this.turnDetector = null;
-    this.runtimeCapabilities = this.resolveRuntimeCapabilities(null);
     this.setState('idle');
     this.events.emit('disconnected');
   }
@@ -799,23 +836,6 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.events.emit('latency', metric);
   }
 
-  private buildSpokenWordTimestamps(
-    _text: string,
-    _startMs: number,
-    _endMs: number
-  ): SpokenWordTimestamp[] | undefined {
-    if (!this.options?.wordAlignmentEnabled) {
-      return undefined;
-    }
-    if (!this.runtimeCapabilities.wordLevelTimestamps) {
-      return undefined;
-    }
-    // Phase A: decomposed providers currently do not emit native word timestamps.
-    // Keep the plumbing in place so provider-specific timestamp streams can be
-    // forwarded here without changing spoken event contracts again.
-    return undefined;
-  }
-
   private async finalizeSpeechTurn(): Promise<void> {
     if (!this.options) return;
     if (this.processingTurn) {
@@ -889,6 +909,24 @@ export class DecomposedAdapter implements ProviderAdapter {
       text: entry.content,
       createdAt: Date.now(),
     }));
+  }
+
+  private commitAssistantHistory(itemId: string, text: string): void {
+    const content = text.trim();
+    if (!content) {
+      return;
+    }
+    const existingIndex = this.history.findIndex((entry) => entry.id === itemId);
+    if (existingIndex >= 0) {
+      this.history[existingIndex] = {
+        ...this.history[existingIndex]!,
+        role: 'assistant',
+        content,
+      };
+    } else {
+      this.history.push({ id: itemId, role: 'assistant', content });
+    }
+    this.events.emit('historyUpdated', this.getHistoryItems());
   }
 
   private async transcribeAudio(pcm: Uint8Array): Promise<string> {
@@ -1000,6 +1038,7 @@ export class DecomposedAdapter implements ProviderAdapter {
 
     let marker: TurnMarker = '✓';
     let assistantText = '';
+    let spokenText = '';
     let spokeWhileStreaming = false;
     let llmDurationMs = 0;
     let interruptedDuringGeneration = false;
@@ -1011,6 +1050,7 @@ export class DecomposedAdapter implements ProviderAdapter {
         turnGeneration
       );
       assistantText = streamed.text;
+      spokenText = streamed.spokenText;
       marker = streamed.marker;
       spokeWhileStreaming = streamed.spokeAudio;
       llmDurationMs = streamed.llmDurationMs;
@@ -1025,6 +1065,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     }
 
     if (interruptedDuringGeneration || !this.isTurnCurrent(turnGeneration)) {
+      this.commitAssistantHistory(assistantId, spokenText);
       return;
     }
 
@@ -1067,8 +1108,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       return;
     }
 
-    this.history.push({ id: assistantId, role: 'assistant', content: finalText });
-    this.events.emit('historyUpdated', this.getHistoryItems());
+    this.commitAssistantHistory(assistantId, finalText);
     this.events.emit('transcript', finalText, 'assistant', assistantId);
     this.events.emit('turnComplete');
   }
@@ -1091,17 +1131,12 @@ export class DecomposedAdapter implements ProviderAdapter {
     systemPrompt: string,
     assistantId: string,
     turnGeneration: number
-  ): Promise<{
-    marker: TurnMarker;
-    text: string;
-    spokeAudio: boolean;
-    llmDurationMs: number;
-    interrupted: boolean;
-  }> {
+  ): Promise<StreamedAssistantTurnResult> {
     if (!this.options) {
       return {
         marker: '✓',
         text: '',
+        spokenText: '',
         spokeAudio: false,
         llmDurationMs: 0,
         interrupted: true,
@@ -1138,6 +1173,7 @@ export class DecomposedAdapter implements ProviderAdapter {
           return {
             marker,
             text: '',
+            spokenText: '',
             spokeAudio: false,
             llmDurationMs: Date.now() - llmStartedAtMs,
             interrupted: !this.isTurnCurrent(turnGeneration),
@@ -1221,7 +1257,13 @@ export class DecomposedAdapter implements ProviderAdapter {
     assistantId: string,
     llmStartedAtMs: number,
     turnGeneration: number
-  ): Promise<{ text: string; spokeAudio: boolean; llmDurationMs: number; interrupted: boolean }> {
+  ): Promise<{
+    text: string;
+    spokenText: string;
+    spokeAudio: boolean;
+    llmDurationMs: number;
+    interrupted: boolean;
+  }> {
     let assistantText = '';
     let speechBuffer = '';
     let segmentIndex = 0;
@@ -1231,28 +1273,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     let spokenChars = 0;
     let spokenWords = 0;
     let spokenPlaybackMs = 0;
-    const spokenWordTimestamps: SpokenWordTimestamp[] = [];
     const spokenStreamEnabled = this.options?.spokenStreamEnabled === true;
-    let inlineSpokenWordBuffer = '';
-
-    const emitInlineSpokenWord = (word: string): void => {
-      if (!word || !spokenStreamEnabled || !this.isTurnCurrent(turnGeneration)) return;
-      spokenText += word;
-      spokenChars = spokenText.length;
-      spokenWords = countWords(spokenText);
-      this.events.emit('spokenDelta', word, 'assistant', assistantId, {
-        spokenChars,
-        spokenWords,
-        playbackMs: spokenPlaybackMs,
-        precision: 'segment',
-      });
-      this.events.emit('spokenProgress', assistantId, {
-        spokenChars,
-        spokenWords,
-        playbackMs: spokenPlaybackMs,
-        precision: 'segment',
-      });
-    };
 
     let speakQueue: Promise<void> = Promise.resolve();
     const queueSegment = (segmentText: string): void => {
@@ -1271,9 +1292,25 @@ export class DecomposedAdapter implements ProviderAdapter {
             }
           },
         });
-        // Update audio-sync playback position from segment completion.
-        // Word-level spoken deltas are emitted in the LLM token loop above.
+        // Emit spoken delta AFTER TTS completes so playbackMs is truthful.
         spokenPlaybackMs += Math.max(0, segmentPlaybackMs);
+        if (spokenStreamEnabled && this.isTurnCurrent(turnGeneration)) {
+          spokenText += normalized;
+          spokenChars = spokenText.length;
+          spokenWords = countWords(spokenText);
+          this.events.emit('spokenDelta', normalized, 'assistant', assistantId, {
+            spokenChars,
+            spokenWords,
+            playbackMs: spokenPlaybackMs,
+            precision: 'segment',
+          });
+          this.events.emit('spokenProgress', assistantId, {
+            spokenChars,
+            spokenWords,
+            playbackMs: spokenPlaybackMs,
+            precision: 'segment',
+          });
+        }
       });
     };
 
@@ -1284,16 +1321,6 @@ export class DecomposedAdapter implements ProviderAdapter {
       if (!delta) continue;
       assistantText += delta;
       this.events.emit('transcriptDelta', delta, 'assistant', assistantId);
-
-      if (spokenStreamEnabled) {
-        inlineSpokenWordBuffer += delta;
-        const lastSpaceIdx = inlineSpokenWordBuffer.lastIndexOf(' ');
-        if (lastSpaceIdx > 0) {
-          const completeWords = inlineSpokenWordBuffer.slice(0, lastSpaceIdx + 1);
-          inlineSpokenWordBuffer = inlineSpokenWordBuffer.slice(lastSpaceIdx + 1);
-          emitInlineSpokenWord(completeWords);
-        }
-      }
 
       speechBuffer += delta;
       const split = splitSpeakableText(speechBuffer);
@@ -1315,25 +1342,18 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.setState('listening');
     }
 
-    // Flush remaining buffered word
-    if (inlineSpokenWordBuffer.trim()) {
-      emitInlineSpokenWord(inlineSpokenWordBuffer);
-      inlineSpokenWordBuffer = '';
-    }
-
     if (spokenStreamEnabled && spokenText && this.isTurnCurrent(turnGeneration)) {
       this.events.emit('spokenFinal', spokenText, 'assistant', assistantId, {
         spokenChars,
         spokenWords,
         playbackMs: spokenPlaybackMs,
         precision: 'segment',
-        wordTimestamps:
-          spokenWordTimestamps.length > 0 ? [...spokenWordTimestamps] : undefined,
       });
     }
 
     return {
       text: assistantText,
+      spokenText,
       spokeAudio,
       llmDurationMs,
       interrupted: !this.isTurnCurrent(turnGeneration),
@@ -1345,7 +1365,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     assistantId: string,
     signal: AbortSignal,
     turnGeneration: number
-  ): Promise<{ marker: TurnMarker; text: string; spokeAudio: boolean; llmDurationMs: number; interrupted: boolean }> {
+  ): Promise<StreamedAssistantTurnResult> {
     const llmStartedAtMs = Date.now();
     const rawText = await this.generateAssistantTextWithTools(systemPrompt, signal);
     const { marker, text } = this.options?.llmCompletionEnabled
@@ -1357,6 +1377,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     return {
       marker,
       text,
+      spokenText: '',
       spokeAudio: false,
       llmDurationMs: Date.now() - llmStartedAtMs,
       interrupted: !this.isTurnCurrent(turnGeneration),
@@ -1368,18 +1389,24 @@ export class DecomposedAdapter implements ProviderAdapter {
     assistantId: string,
     llmStartedAtMs: number,
     turnGeneration: number
-  ): Promise<{ text: string; spokeAudio: boolean; llmDurationMs: number; interrupted: boolean }> {
+  ): Promise<{
+    text: string;
+    spokenText: string;
+    spokeAudio: boolean;
+    llmDurationMs: number;
+    interrupted: boolean;
+  }> {
     if (!this.options) {
-      return { text: '', spokeAudio: false, llmDurationMs: 0, interrupted: true };
+      return { text: '', spokenText: '', spokeAudio: false, llmDurationMs: 0, interrupted: true };
     }
 
     if (!this.isTurnCurrent(turnGeneration)) {
-      return { text: '', spokeAudio: false, llmDurationMs: 0, interrupted: true };
+      return { text: '', spokenText: '', spokeAudio: false, llmDurationMs: 0, interrupted: true };
     }
 
     const connection = await this.ensureDeepgramTtsConnection();
     if (!this.isTurnCurrent(turnGeneration)) {
-      return { text: '', spokeAudio: false, llmDurationMs: 0, interrupted: true };
+      return { text: '', spokenText: '', spokeAudio: false, llmDurationMs: 0, interrupted: true };
     }
 
     const ttsStartedAtMs = Date.now();
@@ -1403,25 +1430,35 @@ export class DecomposedAdapter implements ProviderAdapter {
     let forceReconnectAfterTurn = false;
     let audioPipeline: Promise<void> = Promise.resolve();
     const spokenStreamEnabled = this.options.spokenStreamEnabled === true;
+
+    // Speech onset detection: track where audible speech actually begins
+    // in the emitted audio stream (skipping TTS silence preamble).
+    let speechOnsetBytes = 0;
+    let speechOnsetDetected = false;
     const flushTextQueue: string[] = [];
     let spokenText = '';
     let spokenChars = 0;
     let spokenWords = 0;
     let spokenPlaybackMs = 0;
-    const spokenWordTimestamps: SpokenWordTimestamp[] = [];
-    let spokenWordBuffer = '';
+    const spokenWordBuffer = new DecomposedSpokenWordBuffer();
 
+    // Emit spoken words using the audio-derived playback clock.
+    // Pre-audio buffering is handled by DecomposedSpokenWordBuffer.
     const emitSpokenWord = (word: string): void => {
       if (!word || !spokenStreamEnabled || !this.isTurnCurrent(turnGeneration)) return;
       spokenText += word;
       spokenChars = spokenText.length;
       spokenWords = countWords(spokenText);
       const playbackMs = Math.floor((emittedAudioBytes / 2 / AUDIO_SAMPLE_RATE) * 1000);
+      const onsetMs = speechOnsetDetected
+        ? Math.floor((speechOnsetBytes / 2 / AUDIO_SAMPLE_RATE) * 1000)
+        : 0;
       spokenPlaybackMs = playbackMs;
       this.events.emit('spokenDelta', word, 'assistant', assistantId, {
         spokenChars,
         spokenWords,
         playbackMs,
+        speechOnsetMs: onsetMs,
         precision: 'segment',
       });
       this.events.emit('spokenProgress', assistantId, {
@@ -1432,11 +1469,11 @@ export class DecomposedAdapter implements ProviderAdapter {
       });
     };
 
-    const flushSpokenWordBuffer = (): void => {
-      const remaining = spokenWordBuffer.trim();
-      if (remaining) {
-        emitSpokenWord(spokenWordBuffer);
-        spokenWordBuffer = '';
+    // Flush any words buffered while waiting for audio to start.
+    const drainSpokenWordBuffer = (): void => {
+      const buffered = spokenWordBuffer.markAudioStarted();
+      if (buffered) {
+        emitSpokenWord(buffered);
       }
     };
 
@@ -1474,16 +1511,11 @@ export class DecomposedAdapter implements ProviderAdapter {
         reject(error);
       };
 
-      // Flush-based spoken emission is now only used when word-level emission
-      // is NOT active (i.e. punctuation chunking mode without per-word streaming).
-      // When spokenStreamEnabled is true, words are emitted per-LLM-token via
-      // emitSpokenWord() above, so flush events just track audio-sync state.
-      const emitSpokenFlushText = (flushedText: string): void => {
+      // Track audio-sync playback position when a Flush event arrives.
+      const updatePlaybackOnFlush = (flushedText: string): void => {
         if (!flushedText || !this.isTurnCurrent(turnGeneration)) {
           return;
         }
-        // Word-level emission already handles spokenText/spokenDelta above.
-        // Only update audio-sync playback position from flush events.
         const playbackMs = Math.floor((emittedAudioBytes / 2 / AUDIO_SAMPLE_RATE) * 1000);
         spokenPlaybackMs = playbackMs;
       };
@@ -1491,7 +1523,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       const drainPendingFlushQueue = (): void => {
         while (flushTextQueue.length > 0) {
           const flushedText = flushTextQueue.shift() ?? '';
-          emitSpokenFlushText(flushedText);
+          updatePlaybackOnFlush(flushedText);
           receivedFlushes += 1;
         }
       };
@@ -1572,9 +1604,22 @@ export class DecomposedAdapter implements ProviderAdapter {
           return false;
         }
 
+        // Detect speech onset before advancing the byte counter so the
+        // offset is relative to the start of the emitted audio stream.
+        let onsetDetectedInChunk = false;
+        if (!speechOnsetDetected) {
+          const onsetByteInChunk = detectSpeechOnsetInChunk(chunk);
+          if (onsetByteInChunk >= 0) {
+            speechOnsetBytes = emittedAudioBytes + onsetByteInChunk;
+            speechOnsetDetected = true;
+            onsetDetectedInChunk = true;
+          }
+        }
+
         emittedAudioBytes += chunk.byteLength;
         emittedChunks += 1;
-        if (firstAudioAtMs === null) {
+        const isFirstAudio = firstAudioAtMs === null;
+        if (isFirstAudio) {
           firstAudioAtMs = Date.now();
           if (!speaking) {
             this.setState('speaking');
@@ -1588,6 +1633,13 @@ export class DecomposedAdapter implements ProviderAdapter {
           sampleRate: AUDIO_SAMPLE_RATE,
           format: 'pcm16',
         });
+
+        // Only release buffered spoken words when actual speech onset is detected.
+        // This avoids advancing highlight during leading TTS silence.
+        if (onsetDetectedInChunk) {
+          drainSpokenWordBuffer();
+        }
+
         // Yield briefly to avoid starving the event loop, but do NOT sleep
         // for the full chunk duration.  The browser's AudioContext handles
         // precise real-time scheduling; the server just needs to deliver
@@ -1643,7 +1695,7 @@ export class DecomposedAdapter implements ProviderAdapter {
 
       const onFlushed = (): void => {
         const flushedText = flushTextQueue.shift() ?? '';
-        emitSpokenFlushText(flushedText);
+        updatePlaybackOnFlush(flushedText);
         receivedFlushes += 1;
         maybeResolve();
       };
@@ -1700,15 +1752,12 @@ export class DecomposedAdapter implements ProviderAdapter {
             assistantText += delta;
             this.events.emit('transcriptDelta', delta, 'assistant', assistantId);
 
-            // Emit spoken deltas at word boundaries as LLM tokens arrive.
-            // LLM tokens are typically " word" (space-prefixed), so we buffer
-            // and emit each time we see whitespace after accumulated text.
+            // Buffer words from LLM tokens and emit complete-word chunks.
+            // Before the first audio chunk, chunks stay buffered so playbackMs
+            // remains truthful once emitted.
             if (spokenStreamEnabled) {
-              spokenWordBuffer += delta;
-              const lastSpaceIdx = spokenWordBuffer.lastIndexOf(' ');
-              if (lastSpaceIdx > 0) {
-                const completeWords = spokenWordBuffer.slice(0, lastSpaceIdx + 1);
-                spokenWordBuffer = spokenWordBuffer.slice(lastSpaceIdx + 1);
+              const completeWords = spokenWordBuffer.ingestDelta(delta);
+              if (completeWords) {
                 emitSpokenWord(completeWords);
               }
             }
@@ -1796,19 +1845,25 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.setState('listening');
     }
 
-    // Flush any remaining buffered word before emitting spokenFinal.
-    flushSpokenWordBuffer();
+    // If onset was never detected (for example near-silent output), release
+    // buffered words at turn end so spoken stream events are still emitted.
+    if (!speechOnsetDetected && emittedAudioBytes > 0) {
+      drainSpokenWordBuffer();
+    }
+
+    // Flush remaining buffered words before spokenFinal.
+    const trailingWords = spokenWordBuffer.flushRemainder();
+    if (trailingWords) {
+      emitSpokenWord(trailingWords);
+    }
 
     if (spokenStreamEnabled && spokenText && this.isTurnCurrent(turnGeneration)) {
-      // Use the final audio-derived playback position (same formula as emitSpokenWord).
       spokenPlaybackMs = Math.floor((emittedAudioBytes / 2 / AUDIO_SAMPLE_RATE) * 1000);
       this.events.emit('spokenFinal', spokenText, 'assistant', assistantId, {
         spokenChars,
         spokenWords,
         playbackMs: spokenPlaybackMs,
         precision: 'segment',
-        wordTimestamps:
-          spokenWordTimestamps.length > 0 ? [...spokenWordTimestamps] : undefined,
       });
     }
 
@@ -1818,6 +1873,7 @@ export class DecomposedAdapter implements ProviderAdapter {
 
     return {
       text: assistantText,
+      spokenText,
       spokeAudio,
       llmDurationMs,
       interrupted: !this.isTurnCurrent(turnGeneration),
@@ -2298,17 +2354,11 @@ export class DecomposedAdapter implements ProviderAdapter {
     ) {
       const spokenChars = spokenText.length;
       const spokenWords = countWords(spokenText);
-      const wordTimestamps = this.buildSpokenWordTimestamps(
-        spokenText,
-        0,
-        Math.max(0, playbackMs)
-      );
       this.events.emit('spokenDelta', spokenText, 'assistant', assistantId, {
         spokenChars,
         spokenWords,
         playbackMs,
         precision: 'segment',
-        wordTimestamps,
       });
       this.events.emit('spokenProgress', assistantId, {
         spokenChars,
@@ -2321,7 +2371,6 @@ export class DecomposedAdapter implements ProviderAdapter {
         spokenWords,
         playbackMs,
         precision: 'segment',
-        wordTimestamps,
       });
     }
 
@@ -2805,16 +2854,6 @@ export class DecomposedAdapter implements ProviderAdapter {
     }
 
     return new Error(fallback);
-  }
-
-  private resolveRuntimeCapabilities(
-    options: DecomposedOptions | null
-  ): ProviderCapabilities {
-    const ttsProvider = options?.ttsProvider ?? 'openai';
-    return {
-      ...DECOMPOSED_CAPABILITIES,
-      ...DECOMPOSED_TTS_PROVIDER_CAPABILITIES[ttsProvider],
-    };
   }
 
   private resolveOptions(input: SessionInput): DecomposedOptions {

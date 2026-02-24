@@ -200,6 +200,47 @@ describe('VoiceSessionImpl interruption resolution', () => {
     expect(historyUpdates.at(-1)?.[0]?.text).toBe('Hello ');
   });
 
+  test('creates interrupted assistant history item when adapter has not committed it yet', async () => {
+    const adapter = new FakeAdapter();
+    const transport = new FakeTransport();
+    const session = new VoiceSessionImpl(adapter, {
+      provider: 'ultravox-ws',
+      instructions: 'Be concise',
+      voice: 'echo',
+      model: 'test-model',
+    });
+
+    const historyUpdates: VoiceHistoryItem[][] = [];
+    session.on('historyUpdated', (history) => {
+      historyUpdates.push(history);
+    });
+
+    await session.attachClientTransport(transport);
+    await session.connect();
+
+    adapter.emit('assistantItemCreated', 'assistant-precommit');
+    adapter.emit('transcript', 'Hello world', 'assistant', 'assistant-precommit');
+    adapter.emit('spokenProgress', 'assistant-precommit', {
+      spokenChars: 6,
+      spokenWords: 1,
+      playbackMs: 120,
+      precision: 'segment',
+    });
+
+    session.interrupt();
+
+    const latestHistory = historyUpdates.at(-1) ?? [];
+    expect(
+      latestHistory.some(
+        (item) =>
+          item.id === 'assistant-precommit' &&
+          item.role === 'assistant' &&
+          item.text === 'Hello ' &&
+          item.providerMeta?.interrupted === true
+      )
+    ).toBe(true);
+  });
+
   test('resolves interruption when adapter emits audioInterrupted', async () => {
     const adapter = new FakeAdapter();
     const transport = new FakeTransport();
@@ -262,12 +303,30 @@ describe('VoiceSessionImpl interruption resolution', () => {
       model: 'test-model',
     });
 
-    const spokenDeltas: Array<{ delta: string; itemId?: string }> = [];
+    const spokenDeltas: Array<{
+      delta: string;
+      itemId?: string;
+      cueMode?: 'append' | 'replace';
+      cueCount?: number;
+    }> = [];
     const spokenProgress: Array<{ itemId: string; spokenChars: number; spokenWords: number }> = [];
-    const spokenFinals: Array<{ text: string; itemId?: string; precision?: string }> = [];
+    const spokenFinals: Array<{
+      text: string;
+      itemId?: string;
+      precision?: string;
+      cueMode?: 'append' | 'replace';
+      cueCount?: number;
+      cueSource?: 'provider' | 'synthetic';
+      cueTimeBase?: 'utterance';
+    }> = [];
 
-    session.on('spokenDelta', (delta, _role, itemId) => {
-      spokenDeltas.push({ delta, itemId });
+    session.on('spokenDelta', (delta, _role, itemId, meta) => {
+      spokenDeltas.push({
+        delta,
+        itemId,
+        cueMode: meta?.wordCueUpdate?.mode,
+        cueCount: meta?.wordCueUpdate?.cues.length,
+      });
     });
     session.on('spokenProgress', (itemId, progress) => {
       spokenProgress.push({
@@ -277,7 +336,15 @@ describe('VoiceSessionImpl interruption resolution', () => {
       });
     });
     session.on('spokenFinal', (text, _role, itemId, meta) => {
-      spokenFinals.push({ text, itemId, precision: meta?.precision });
+      spokenFinals.push({
+        text,
+        itemId,
+        precision: meta?.precision,
+        cueMode: meta?.wordCueUpdate?.mode,
+        cueCount: meta?.wordCues?.length,
+        cueSource: meta?.wordCues?.[0]?.source,
+        cueTimeBase: meta?.wordCues?.[0]?.timeBase,
+      });
     });
 
     await session.attachClientTransport(transport);
@@ -290,7 +357,14 @@ describe('VoiceSessionImpl interruption resolution', () => {
     adapter.emit('transcript', 'Hello world', 'assistant', 'assistant-3');
     adapter.emit('turnComplete');
 
-    expect(spokenDeltas).toEqual([{ delta: 'Hello ', itemId: 'assistant-3' }]);
+    expect(spokenDeltas).toEqual([
+      {
+        delta: 'Hello ',
+        itemId: 'assistant-3',
+        cueMode: 'append',
+        cueCount: 1,
+      },
+    ]);
     expect(spokenProgress.length).toBeGreaterThan(0);
     expect(spokenProgress[0]?.itemId).toBe('assistant-3');
     expect(spokenProgress[0]?.spokenChars).toBe(6);
@@ -300,6 +374,10 @@ describe('VoiceSessionImpl interruption resolution', () => {
         text: 'Hello ',
         itemId: 'assistant-3',
         precision: 'segment',
+        cueMode: 'replace',
+        cueCount: 1,
+        cueSource: 'synthetic',
+        cueTimeBase: 'utterance',
       },
     ]);
   });
@@ -346,5 +424,108 @@ describe('VoiceSessionImpl interruption resolution', () => {
     expect(interruptionContexts[0]?.spokenText).toBe('Hello ');
     expect(interruptionContexts[0]?.precision).toBe('segment');
     expect(interruptionContexts[0]?.spokenWordCount).toBe(1);
+  });
+
+  test('normalizes cumulative transport playback into per-turn interruption position', async () => {
+    const adapter = new FakeAdapter();
+    const transport = new FakeTransport();
+    const session = new VoiceSessionImpl(adapter, {
+      provider: 'ultravox-ws',
+      instructions: 'Be concise',
+      voice: 'echo',
+      model: 'test-model',
+    });
+
+    const interruptionContexts: Array<{ spokenText: string; fullText: string; truncated: boolean }> = [];
+    session.on('interruptionResolved', (context) => {
+      interruptionContexts.push({
+        spokenText: context.spokenText,
+        fullText: context.fullText,
+        truncated: context.truncated,
+      });
+    });
+
+    await session.attachClientTransport(transport);
+    await session.connect();
+
+    // Simulate prior turn playback already consumed by transport clock.
+    transport.setPlaybackPositionMs(1000);
+
+    adapter.emit('assistantItemCreated', 'assistant-cumulative');
+    adapter.emit('transcript', 'Alpha Beta Gamma Delta', 'assistant', 'assistant-cumulative');
+    adapter.emit('spokenFinal', 'Alpha Beta Gamma Delta', 'assistant', 'assistant-cumulative', {
+      spokenChars: 22,
+      spokenWords: 4,
+      playbackMs: 400,
+      precision: 'segment',
+    });
+
+    // Cumulative playback moved forward, but per-turn playback is only 300ms.
+    transport.setPlaybackPositionMs(1300);
+    session.interrupt();
+
+    expect(interruptionContexts).toHaveLength(1);
+    expect(interruptionContexts[0]?.fullText).toBe('Alpha Beta Gamma Delta');
+    expect(interruptionContexts[0]?.truncated).toBe(true);
+    expect(interruptionContexts[0]?.spokenText).not.toBe('Alpha Beta Gamma Delta');
+  });
+
+  test('emits incremental cue updates for adapter spoken events', async () => {
+    const adapter = new FakeAdapter();
+    const transport = new FakeTransport();
+    const session = new VoiceSessionImpl(adapter, {
+      provider: 'ultravox-ws',
+      instructions: 'Be concise',
+      voice: 'echo',
+      model: 'test-model',
+    });
+
+    const deltaUpdates: Array<{ mode?: 'append' | 'replace'; count?: number }> = [];
+    const finalUpdates: Array<{
+      mode?: 'append' | 'replace';
+      timelineCount?: number;
+      source?: 'provider' | 'synthetic';
+    }> = [];
+
+    session.on('spokenDelta', (_delta, _role, _itemId, meta) => {
+      deltaUpdates.push({
+        mode: meta?.wordCueUpdate?.mode,
+        count: meta?.wordCueUpdate?.cues.length,
+      });
+    });
+
+    session.on('spokenFinal', (_text, _role, _itemId, meta) => {
+      finalUpdates.push({
+        mode: meta?.wordCueUpdate?.mode,
+        timelineCount: meta?.wordCues?.length,
+        source: meta?.wordCues?.[0]?.source,
+      });
+    });
+
+    await session.attachClientTransport(transport);
+    await session.connect();
+
+    adapter.emit('assistantItemCreated', 'assistant-5');
+    adapter.emit('spokenDelta', 'Hello ', 'assistant', 'assistant-5', {
+      spokenChars: 6,
+      spokenWords: 1,
+      playbackMs: 100,
+      precision: 'segment',
+    });
+    adapter.emit('spokenFinal', 'Hello world', 'assistant', 'assistant-5', {
+      spokenChars: 11,
+      spokenWords: 2,
+      playbackMs: 220,
+      precision: 'segment',
+    });
+
+    expect(deltaUpdates).toEqual([{ mode: 'append', count: 1 }]);
+    expect(finalUpdates).toEqual([
+      {
+        mode: 'replace',
+        timelineCount: 2,
+        source: 'synthetic',
+      },
+    ]);
   });
 });

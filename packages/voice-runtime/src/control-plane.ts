@@ -125,6 +125,7 @@ export interface RuntimeVoiceConfigDocument {
       wordAlignmentEnabled: boolean;
       spokenHighlightMsPerWord: number;
       spokenHighlightPunctuationPauseMs: number;
+      preferProviderTimestamps: boolean;
       customSttMode: 'provider' | 'custom' | 'hybrid';
       llmCompletion: {
         enabled: boolean;
@@ -382,6 +383,8 @@ export function createDefaultRuntimeVoiceConfig(
           env.VOICE_SPOKEN_HIGHLIGHT_PUNCTUATION_PAUSE_MS ?? '120',
           10
         ),
+        preferProviderTimestamps:
+          (env.VOICE_PREFER_PROVIDER_TIMESTAMPS ?? 'true') === 'true',
         customSttMode:
           env.VOICE_CUSTOM_STT_MODE === 'custom' || env.VOICE_CUSTOM_STT_MODE === 'hybrid'
             ? env.VOICE_CUSTOM_STT_MODE
@@ -608,6 +611,8 @@ export function resolveRuntimeConfigFromDocuments(input: {
       spokenHighlightMsPerWord: input.voiceConfig.voice.turn.spokenHighlightMsPerWord,
       spokenHighlightPunctuationPauseMs:
         input.voiceConfig.voice.turn.spokenHighlightPunctuationPauseMs,
+      preferProviderTimestamps:
+        input.voiceConfig.voice.turn.preferProviderTimestamps,
       customSttMode: input.voiceConfig.voice.turn.customSttMode,
       llmCompletionEnabled: input.voiceConfig.voice.turn.llmCompletion.enabled,
       llmShortTimeoutMs: input.voiceConfig.voice.turn.llmCompletion.shortTimeoutMs,
@@ -748,6 +753,11 @@ export function resolveRuntimeSessionInput(
     toolHandler: input.toolHandler,
     providerConfig,
     ...(vad ? { vad } : {}),
+    turn: {
+      spokenHighlightMsPerWord: input.turn.spokenHighlightMsPerWord,
+      spokenHighlightPunctuationPauseMs: input.turn.spokenHighlightPunctuationPauseMs,
+      preferProviderTimestamps: input.turn.preferProviderTimestamps,
+    },
   };
 }
 

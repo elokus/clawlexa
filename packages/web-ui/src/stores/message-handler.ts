@@ -16,6 +16,7 @@ import {
   type ToolItem,
 } from './unified-sessions';
 import type { WSMessage } from '../types';
+import { applyWordCueUpdate } from '../lib/spoken-cues';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types (Phase 5: Simplified Protocol)
@@ -505,6 +506,10 @@ export function handleWebSocketMessage(msg: WSMessage): void {
             if (targetItem) {
               const nextSpoken = `${targetItem.spokenContent ?? ''}${deltaText}`;
               const nextContent = nextSpoken || targetItem.content;
+              const nextWordCues = applyWordCueUpdate(
+                event.wordCues ?? targetItem.wordCues,
+                event.wordCueUpdate
+              );
               store.updateVoiceTimelineItem(targetItem.id, {
                 content: nextContent,
                 spokenContent: nextSpoken,
@@ -512,6 +517,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 spokenWords: event.spokenWords,
                 playbackMs: event.playbackMs,
                 precision: event.precision,
+                wordCues: nextWordCues,
                 spokenFinalized: false,
                 order: event.order ?? targetItem.order,
               } as Partial<TranscriptItem>);
@@ -533,6 +539,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               spokenWords: event.spokenWords,
               playbackMs: event.playbackMs,
               precision: event.precision,
+              wordCues: applyWordCueUpdate(event.wordCues, event.wordCueUpdate),
               spokenFinalized: false,
               timestamp,
               pending: true,
@@ -609,13 +616,24 @@ export function handleWebSocketMessage(msg: WSMessage): void {
             }
 
             if (targetItem) {
+              const nextWordCues = applyWordCueUpdate(
+                event.wordCues ?? targetItem.wordCues,
+                event.wordCueUpdate
+              );
+              // Preserve generatedContent if the item already has it.
+              // spoken-final text represents what was *spoken* (possibly truncated
+              // by interruption), not what the LLM generated.
+              const generatedContent =
+                targetItem.generatedContent || event.text;
               store.updateVoiceTimelineItem(targetItem.id, {
                 content: event.text,
+                generatedContent,
                 spokenContent: event.text,
                 spokenChars: event.spokenChars ?? event.text.length,
                 spokenWords: event.spokenWords,
                 playbackMs: event.playbackMs,
                 precision: event.precision,
+                wordCues: nextWordCues,
                 spokenFinalized: true,
                 pending: false,
                 order: event.order ?? targetItem.order,
@@ -628,12 +646,13 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               type: 'transcript',
               role: 'assistant',
               content: event.text,
-              generatedContent: '',
+              generatedContent: event.text,
               spokenContent: event.text,
               spokenChars: event.spokenChars ?? event.text.length,
               spokenWords: event.spokenWords,
               playbackMs: event.playbackMs,
               precision: event.precision,
+              wordCues: applyWordCueUpdate(event.wordCues, event.wordCueUpdate),
               spokenFinalized: true,
               timestamp,
               pending: false,
@@ -757,9 +776,10 @@ export function handleWebSocketMessage(msg: WSMessage): void {
             for (const item of pendingAssistantItems) {
               const spokenText = item.spokenContent || '';
               const generatedText = item.generatedContent || item.content || '';
-              const content = item.spokenFinalized
-                ? (spokenText || generatedText)
-                : (generatedText || spokenText);
+              // Voice UI must prefer audio-confirmed spoken text on finish.
+              // If interruption happens before spokenFinal arrives, generated text
+              // may already contain tokens the user never heard.
+              const content = spokenText || generatedText;
               store.updateVoiceTimelineItem(item.id, {
                 content,
                 pending: false,

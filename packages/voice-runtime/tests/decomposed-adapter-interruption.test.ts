@@ -40,6 +40,18 @@ function makePcmFrame(
   };
 }
 
+function makePcmChunkBytes(
+  options: { sampleCount?: number; amplitude?: number } = {}
+): Uint8Array {
+  const sampleCount = options.sampleCount ?? PCM_BYTES_PER_100MS / 2;
+  const amplitude = options.amplitude ?? 0;
+  const pcm = new Int16Array(sampleCount);
+  for (let i = 0; i < sampleCount; i += 1) {
+    pcm[i] = i % 2 === 0 ? amplitude : -amplitude;
+  }
+  return new Uint8Array(pcm.buffer);
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 250): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -281,6 +293,7 @@ describe('DecomposedAdapter interruption hardening', () => {
       ) => Promise<{
         marker: '✓' | '○' | '◐';
         text: string;
+        spokenText: string;
         spokeAudio: boolean;
         llmDurationMs: number;
         interrupted: boolean;
@@ -300,6 +313,7 @@ describe('DecomposedAdapter interruption hardening', () => {
       return {
         marker: '✓',
         text: 'stale answer should never commit',
+        spokenText: '',
         spokeAudio: false,
         llmDurationMs: 30,
         interrupted: false,
@@ -331,6 +345,50 @@ describe('DecomposedAdapter interruption hardening', () => {
     await adapter.disconnect();
   });
 
+  test('commits interrupted spoken assistant text to history for next-turn context', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      runAssistantTurn: (
+        text: string,
+        options: { emitUserTranscript: boolean; previousItemId?: string }
+      ) => Promise<void>;
+      generateAssistantResponseStreaming: (
+        systemPrompt: string,
+        assistantId: string,
+        turnGeneration: number
+      ) => Promise<{
+        marker: '✓' | '○' | '◐';
+        text: string;
+        spokenText: string;
+        spokeAudio: boolean;
+        llmDurationMs: number;
+        interrupted: boolean;
+      }>;
+    };
+
+    const historyUpdates: Array<Array<{ role: string; text: string }>> = [];
+    adapter.on('historyUpdated', (history) => {
+      historyUpdates.push(history.map((item) => ({ role: item.role, text: item.text })));
+    });
+
+    adapterAny.generateAssistantResponseStreaming = async () => ({
+      marker: '✓',
+      text: 'Hello there world',
+      spokenText: 'Hello there ',
+      spokeAudio: true,
+      llmDurationMs: 12,
+      interrupted: true,
+    });
+
+    await adapter.connect(createInput());
+    await adapterAny.runAssistantTurn('test prompt', { emitUserTranscript: true });
+
+    const finalHistory = historyUpdates.at(-1) ?? [];
+    expect(finalHistory.some((entry) => entry.role === 'assistant' && entry.text === 'Hello there')).toBe(true);
+
+    await adapter.disconnect();
+  });
+
   test('emits spoken stream events for inline TTS segments when enabled', async () => {
     const adapter = new DecomposedAdapter();
     const adapterAny = adapter as unknown as {
@@ -342,6 +400,7 @@ describe('DecomposedAdapter interruption hardening', () => {
         turnGeneration: number
       ) => Promise<{
         text: string;
+        spokenText: string;
         spokeAudio: boolean;
         llmDurationMs: number;
         interrupted: boolean;
@@ -394,6 +453,7 @@ describe('DecomposedAdapter interruption hardening', () => {
     expect(result.interrupted).toBe(false);
     expect(result.spokeAudio).toBe(true);
     expect(result.text).toBe('Hello world');
+    expect(result.spokenText).toBe('Hello world');
     expect(spokenDeltas.join('')).toBe('Hello world');
     expect(spokenProgress.length).toBeGreaterThan(0);
     expect(spokenProgress.at(-1)?.spokenChars).toBe('Hello world'.length);
@@ -413,6 +473,7 @@ describe('DecomposedAdapter interruption hardening', () => {
       ) => Promise<{
         marker: '✓' | '○' | '◐';
         text: string;
+        spokenText: string;
         spokeAudio: boolean;
         llmDurationMs: number;
         interrupted: boolean;
@@ -423,6 +484,7 @@ describe('DecomposedAdapter interruption hardening', () => {
     adapterAny.generateAssistantResponseStreaming = async () => ({
       marker: '✓',
       text: 'streamed response',
+      spokenText: '',
       spokeAudio: true,
       llmDurationMs: 1,
       interrupted: false,
@@ -459,6 +521,7 @@ describe('DecomposedAdapter interruption hardening', () => {
         turnGeneration: number
       ) => Promise<{
         text: string;
+        spokenText: string;
         spokeAudio: boolean;
         llmDurationMs: number;
         interrupted: boolean;
@@ -517,6 +580,77 @@ describe('DecomposedAdapter interruption hardening', () => {
 
     await adapter.disconnect();
   });
+
+  test('emits spoken delta only after speech onset when Deepgram audio starts with silence', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      interruptionGeneration: number;
+      ensureDeepgramTtsConnection: () => Promise<FakeDeepgramOnsetConnection>;
+      streamTextWithDeepgramTts: (
+        textStream: AsyncIterable<string>,
+        assistantId: string,
+        llmStartedAtMs: number,
+        turnGeneration: number
+      ) => Promise<{
+        text: string;
+        spokenText: string;
+        spokeAudio: boolean;
+        llmDurationMs: number;
+        interrupted: boolean;
+      }>;
+    };
+
+    const connection = new FakeDeepgramOnsetConnection();
+    adapterAny.ensureDeepgramTtsConnection = async () => connection;
+
+    const spokenDeltas: Array<{
+      delta: string;
+      playbackMs?: number;
+      speechOnsetMs?: number;
+    }> = [];
+    adapter.on('spokenDelta', (delta, _role, _itemId, meta) => {
+      spokenDeltas.push({
+        delta,
+        playbackMs: meta?.playbackMs,
+        speechOnsetMs: meta?.speechOnsetMs,
+      });
+    });
+
+    await adapter.connect(
+      createInput({
+        providerConfig: {
+          llmProvider: 'openai',
+          ttsProvider: 'deepgram',
+          sttProvider: 'openai',
+          openaiApiKey: 'test-key',
+          deepgramApiKey: 'deepgram-test-key',
+          turn: {
+            spokenStreamEnabled: true,
+            deepgramTtsPunctuationChunkingEnabled: true,
+          },
+        },
+      })
+    );
+
+    const stream = (async function* (): AsyncGenerator<string> {
+      yield 'Hello world.';
+    })();
+
+    const result = await adapterAny.streamTextWithDeepgramTts(
+      stream,
+      'assistant-deepgram-onset-1',
+      Date.now(),
+      adapterAny.interruptionGeneration
+    );
+
+    expect(result.interrupted).toBe(false);
+    expect(spokenDeltas.length).toBeGreaterThan(0);
+    expect(spokenDeltas[0]?.delta).toContain('Hello');
+    expect((spokenDeltas[0]?.speechOnsetMs ?? 0) >= 100).toBe(true);
+    expect((spokenDeltas[0]?.playbackMs ?? 0) >= (spokenDeltas[0]?.speechOnsetMs ?? 0)).toBe(true);
+
+    await adapter.disconnect();
+  });
 });
 
 class FakeDeepgramConnection {
@@ -551,6 +685,47 @@ class FakeDeepgramConnection {
       if (flushIndex === 1) {
         this.emit(LiveTTSEvents.Flushed);
       }
+    });
+  }
+
+  private emit(event: string, payload?: unknown): void {
+    const listeners = this.handlers.get(event);
+    if (!listeners) return;
+    for (const handler of listeners) {
+      handler(payload);
+    }
+  }
+}
+
+class FakeDeepgramOnsetConnection {
+  sentTexts: string[] = [];
+  private handlers = new Map<string, Set<(payload?: unknown) => void>>();
+
+  on(event: string, handler: (payload?: unknown) => void): void {
+    const set = this.handlers.get(event) ?? new Set<(payload?: unknown) => void>();
+    set.add(handler);
+    this.handlers.set(event, set);
+  }
+
+  off(event: string, handler: (payload?: unknown) => void): void {
+    const set = this.handlers.get(event);
+    if (!set) return;
+    set.delete(handler);
+    if (set.size === 0) {
+      this.handlers.delete(event);
+    }
+  }
+
+  sendText(text: string): void {
+    this.sentTexts.push(text);
+  }
+
+  flush(): void {
+    queueMicrotask(() => {
+      // First chunk is silence, second chunk contains voiced samples.
+      this.emit(LiveTTSEvents.Audio, makePcmChunkBytes({ amplitude: 0 }));
+      this.emit(LiveTTSEvents.Audio, makePcmChunkBytes({ amplitude: 3000 }));
+      this.emit(LiveTTSEvents.Flushed);
     });
   }
 

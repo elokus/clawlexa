@@ -9,6 +9,7 @@ import { useVoiceTimeline, useVoiceState, useFocusedSession } from '../../stores
 import { VoiceIndicator } from '../VoiceIndicator';
 import { useAudioControllerRef, useSpokenHighlightConfig } from '../../contexts/audio-context';
 import { buildWordCueTimelineMs, useSpokenHighlight } from '../../hooks/useSpokenHighlight';
+import { wordCuesToCueEndMs } from '../../lib/spoken-cues';
 import type { TranscriptItem, TimelineItem } from '../../types';
 
 interface GlassHUDProps {
@@ -47,15 +48,18 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
     return generatedText.split(/\s+/).filter(Boolean);
   }, [generatedText]);
 
-  const wordCueEndMs = useMemo(
-    () =>
-      buildWordCueTimelineMs(
-        words,
-        spokenHighlight.msPerWord,
-        spokenHighlight.punctuationPauseMs
-      ),
-    [words, spokenHighlight.msPerWord, spokenHighlight.punctuationPauseMs]
-  );
+  const wordCueEndMs = useMemo(() => {
+    const runtimeCues = wordCuesToCueEndMs(
+      latestMessage?.wordCues,
+      words.length
+    );
+    if (runtimeCues) return runtimeCues;
+    return buildWordCueTimelineMs(
+      words,
+      spokenHighlight.msPerWord,
+      spokenHighlight.punctuationPauseMs
+    );
+  }, [words, latestMessage?.wordCues, spokenHighlight.msPerWord, spokenHighlight.punctuationPauseMs]);
 
   // Highlight is driven by the client-side AudioContext playback clock.
   const spokenWordCount = useSpokenHighlight({

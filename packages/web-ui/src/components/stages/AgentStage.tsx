@@ -56,6 +56,14 @@ interface DisplayMessage {
   playbackMs?: number;
   /** Whether the spoken stream is finalized */
   spokenFinalized?: boolean;
+  /** Runtime canonical word cues (preferred over heuristic highlighting) */
+  wordCues?: Array<{
+    word: string;
+    startMs: number;
+    endMs: number;
+    source: 'provider' | 'synthetic';
+    timeBase: 'utterance';
+  }>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -79,6 +87,7 @@ function timelineToMessages(timeline: TimelineItem[]): DisplayMessage[] {
         spokenWords: transcript.spokenWords,
         playbackMs: transcript.playbackMs,
         spokenFinalized: transcript.spokenFinalized,
+        wordCues: transcript.wordCues,
       });
     } else if (item.type === 'tool') {
       const tool = item as ToolItem;
@@ -334,6 +343,7 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
                     spokenFinalized={message.spokenFinalized ?? false}
                     pending={message.pending && idx === message.parts.length - 1}
                     turnKey={message.id}
+                    wordCues={message.wordCues}
                   />
                 );
               }

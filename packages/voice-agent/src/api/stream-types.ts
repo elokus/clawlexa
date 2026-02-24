@@ -19,6 +19,19 @@
  * - 'tool-call' with input property
  * - 'tool-result' with output property
  */
+export interface SpokenWordCue {
+  word: string;
+  startMs: number;
+  endMs: number;
+  source: 'provider' | 'synthetic';
+  timeBase: 'utterance';
+}
+
+export interface SpokenWordCueUpdate {
+  mode: 'append' | 'replace';
+  cues: SpokenWordCue[];
+}
+
 export type AISDKStreamEvent =
   // Text streaming
   | {
@@ -39,6 +52,9 @@ export type AISDKStreamEvent =
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
   | {
       type: 'spoken-progress';
@@ -57,6 +73,9 @@ export type AISDKStreamEvent =
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+      wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
 
   // User transcript (custom extension for voice sessions)

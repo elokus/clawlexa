@@ -24,10 +24,13 @@ import type {
   ContentBlock,
   ErrorBlock,
   OverlayType,
+  SpokenWordCue,
+  SpokenWordCueUpdate,
 } from '../types';
 import type { TimelineItem, TranscriptItem, ToolItem } from '../types/timeline';
 import type { ToastItem } from '../components/overlays/Toast';
 import type { PromptInfo } from '../lib/prompts-api';
+import { applyWordCueUpdate } from '../lib/spoken-cues';
 import * as promptsApi from '../lib/prompts-api';
 import * as sessionsApi from '../lib/sessions-api';
 
@@ -66,7 +69,9 @@ export interface Message {
   spokenWords?: number;
   playbackMs?: number;
   precision?: SpokenPrecision;
+  wordCues?: SpokenWordCue[];
   spokenFinalized?: boolean;
+  pending?: boolean;
 }
 
 /** Session state in the unified model */
@@ -100,6 +105,8 @@ export type AISDKStreamEvent =
       spokenWords?: number;
       playbackMs?: number;
       precision?: SpokenPrecision;
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
   | {
       type: 'spoken-progress';
@@ -118,6 +125,8 @@ export type AISDKStreamEvent =
       spokenWords?: number;
       playbackMs?: number;
       precision?: SpokenPrecision;
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
   | { type: 'user-transcript'; text: string; itemId?: string; order?: number } // Custom extension for voice user messages
   // Placeholders for message ordering (custom extension for voice sessions)
@@ -442,6 +451,7 @@ function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
           spokenWords: message.spokenWords,
           playbackMs: message.playbackMs,
           precision: message.precision,
+          wordCues: message.wordCues,
           spokenFinalized: message.spokenFinalized,
           timestamp: message.createdAt,
           pending: false,
@@ -1242,11 +1252,15 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
         case 'spoken-delta': {
           const spokenDelta = event.textDelta ?? '';
+          const incomingWordCues = event.wordCues;
+          const incomingWordCueUpdate = event.wordCueUpdate;
           const metadata = {
             spokenChars: event.spokenChars,
             spokenWords: event.spokenWords,
             playbackMs: event.playbackMs,
             precision: event.precision,
+            wordCues: incomingWordCues,
+            wordCueUpdate: incomingWordCueUpdate,
           };
 
           let messageIdx = -1;
@@ -1270,6 +1284,10 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               spokenWords: metadata.spokenWords,
               playbackMs: metadata.playbackMs,
               precision: metadata.precision,
+              wordCues: applyWordCueUpdate(
+                metadata.wordCues,
+                metadata.wordCueUpdate
+              ),
               spokenFinalized: false,
             };
             insertMessage(created, findMessageInsertIndexByOrder(event.order));
@@ -1283,6 +1301,10 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             readTextFromMessage(messageIdx);
           const currentText = readTextFromMessage(messageIdx);
           const displayText = resolveDisplayText(nextSpoken, generatedText, currentText);
+          const nextWordCues = applyWordCueUpdate(
+            metadata.wordCues ?? target.wordCues,
+            metadata.wordCueUpdate
+          );
           messages[messageIdx] = {
             ...target,
             order: event.order ?? target.order,
@@ -1291,6 +1313,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             spokenWords: metadata.spokenWords ?? target.spokenWords,
             playbackMs: metadata.playbackMs ?? target.playbackMs,
             precision: metadata.precision ?? target.precision,
+            wordCues: nextWordCues,
             spokenFinalized: false,
           };
           setTextForMessage(messageIdx, displayText);
@@ -1362,13 +1385,15 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               createdAt: Date.now(),
               itemId: event.itemId,
               order: event.order,
-              generatedText: '',
+              generatedText: event.text,
               spokenText: event.text,
               spokenChars: event.spokenChars ?? event.text.length,
               spokenWords: event.spokenWords,
               playbackMs: event.playbackMs,
               precision: event.precision,
+              wordCues: applyWordCueUpdate(event.wordCues, event.wordCueUpdate),
               spokenFinalized: true,
+              pending: false,
             };
             insertMessage(created, findMessageInsertIndexByOrder(event.order));
             break;
@@ -1381,15 +1406,22 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
           const spokenText = event.text;
           const currentText = readTextFromMessage(messageIdx);
           const displayText = resolveDisplayText(spokenText, generatedText, currentText);
+          const nextWordCues = applyWordCueUpdate(
+            event.wordCues ?? target.wordCues,
+            event.wordCueUpdate
+          );
           messages[messageIdx] = {
             ...target,
             order: event.order ?? target.order,
+            generatedText: spokenText,
             spokenText,
             spokenChars: event.spokenChars ?? spokenText.length,
             spokenWords: event.spokenWords ?? target.spokenWords,
             playbackMs: event.playbackMs ?? target.playbackMs,
             precision: event.precision ?? target.precision,
+            wordCues: nextWordCues,
             spokenFinalized: true,
+            pending: false,
           };
           setTextForMessage(messageIdx, displayText);
           break;
@@ -1497,14 +1529,14 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               if (message.spokenFinalized) {
                 continue;
               }
-              const generatedText = message.generatedText ?? '';
-              if (generatedText) {
-                setTextForMessage(idx, generatedText);
-                continue;
-              }
               const spokenText = message.spokenText ?? '';
               if (spokenText) {
                 setTextForMessage(idx, spokenText);
+                continue;
+              }
+              const generatedText = message.generatedText ?? '';
+              if (generatedText) {
+                setTextForMessage(idx, generatedText);
               }
             }
           }

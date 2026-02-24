@@ -82,6 +82,22 @@ export interface SpokenWordTimestamp {
   endMs: number;
 }
 
+export type SpokenWordCueSource = 'provider' | 'synthetic';
+export type SpokenWordCueTimeBase = 'utterance';
+
+export interface SpokenWordCue {
+  word: string;
+  startMs: number;
+  endMs: number;
+  source: SpokenWordCueSource;
+  timeBase: SpokenWordCueTimeBase;
+}
+
+export interface SpokenWordCueUpdate {
+  mode: 'append' | 'replace';
+  cues: SpokenWordCue[];
+}
+
 export interface ProviderCapabilities {
   toolCalling: boolean;
   transcriptDeltas: boolean;
@@ -147,8 +163,12 @@ export interface VoiceSessionEvents {
       spokenChars?: number;
       spokenWords?: number;
       playbackMs?: number;
+      speechOnsetMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
       wordTimestamps?: SpokenWordTimestamp[];
+      wordTimestampsTimeBase?: 'segment' | 'utterance';
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
   ) => void;
   spokenProgress?: (
@@ -170,6 +190,9 @@ export interface VoiceSessionEvents {
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
       wordTimestamps?: SpokenWordTimestamp[];
+      wordTimestampsTimeBase?: 'segment' | 'utterance';
+      wordCues?: SpokenWordCue[];
+      wordCueUpdate?: SpokenWordCueUpdate;
     }
   ) => void;
   userItemCreated: (itemId: string, order?: number) => void;
@@ -245,6 +268,12 @@ export interface SessionInput {
   };
 
   providerConfig?: Record<string, unknown>;
+
+  turn?: {
+    spokenHighlightMsPerWord?: number;
+    spokenHighlightPunctuationPauseMs?: number;
+    preferProviderTimestamps?: boolean;
+  };
 }
 
 export interface ClientTransportStartConfig {

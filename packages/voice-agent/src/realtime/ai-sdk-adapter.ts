@@ -16,7 +16,12 @@
  */
 
 import { wsBroadcast } from '../api/websocket.js';
-import type { AISDKStreamEvent, StreamChunkMessage } from '../api/stream-types.js';
+import type {
+  AISDKStreamEvent,
+  SpokenWordCue,
+  SpokenWordCueUpdate,
+  StreamChunkMessage,
+} from '../api/stream-types.js';
 import { createStreamChunk } from '../api/stream-types.js';
 
 /**
@@ -46,6 +51,9 @@ export interface VoiceEventPayloads {
     spokenWords?: number;
     playbackMs?: number;
     precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+    wordCues?: SpokenWordCue[];
+    wordCueUpdate?: SpokenWordCueUpdate;
   };
   spokenProgress: {
     itemId: string;
@@ -62,6 +70,9 @@ export interface VoiceEventPayloads {
     spokenWords?: number;
     playbackMs?: number;
     precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+    wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+    wordCues?: SpokenWordCue[];
+    wordCueUpdate?: SpokenWordCueUpdate;
   };
   toolStart: { name: string; args: Record<string, unknown>; callId?: string };
   toolEnd: { name: string; result: string; callId?: string };
@@ -121,7 +132,18 @@ function convertToAISDKEvent<T extends VoiceEventType>(
     }
 
     case 'spokenDelta': {
-      const { textDelta, itemId, order, spokenChars, spokenWords, playbackMs, precision } =
+      const {
+        textDelta,
+        itemId,
+        order,
+        spokenChars,
+        spokenWords,
+        playbackMs,
+        precision,
+        wordTimestamps,
+        wordCues,
+        wordCueUpdate,
+      } =
         payload as VoiceEventPayloads['spokenDelta'];
       return {
         type: 'spoken-delta',
@@ -132,11 +154,25 @@ function convertToAISDKEvent<T extends VoiceEventType>(
         spokenWords,
         playbackMs,
         precision,
+        wordTimestamps,
+        wordCues,
+        wordCueUpdate,
       };
     }
 
     case 'spokenFinal': {
-      const { text, itemId, order, spokenChars, spokenWords, playbackMs, precision } =
+      const {
+        text,
+        itemId,
+        order,
+        spokenChars,
+        spokenWords,
+        playbackMs,
+        precision,
+        wordTimestamps,
+        wordCues,
+        wordCueUpdate,
+      } =
         payload as VoiceEventPayloads['spokenFinal'];
       return {
         type: 'spoken-final',
@@ -147,6 +183,9 @@ function convertToAISDKEvent<T extends VoiceEventType>(
         spokenWords,
         playbackMs,
         precision,
+        wordTimestamps,
+        wordCues,
+        wordCueUpdate,
       };
     }
 
@@ -300,6 +339,9 @@ export function createVoiceAdapter(sessionId: string) {
         spokenWords?: number;
         playbackMs?: number;
         precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+        wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+        wordCues?: SpokenWordCue[];
+        wordCueUpdate?: SpokenWordCueUpdate;
       }
     ): void {
       const event = convertToAISDKEvent('spokenDelta', {
@@ -310,6 +352,9 @@ export function createVoiceAdapter(sessionId: string) {
         spokenWords: meta?.spokenWords,
         playbackMs: meta?.playbackMs,
         precision: meta?.precision,
+        wordTimestamps: meta?.wordTimestamps,
+        wordCues: meta?.wordCues,
+        wordCueUpdate: meta?.wordCueUpdate,
       });
       if (!event) return;
       const chunk = createStreamChunk(sessionId, event);
@@ -352,6 +397,9 @@ export function createVoiceAdapter(sessionId: string) {
         spokenWords?: number;
         playbackMs?: number;
         precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+        wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+        wordCues?: SpokenWordCue[];
+        wordCueUpdate?: SpokenWordCueUpdate;
       }
     ): void {
       const event = convertToAISDKEvent('spokenFinal', {
@@ -362,6 +410,9 @@ export function createVoiceAdapter(sessionId: string) {
         spokenWords: meta?.spokenWords,
         playbackMs: meta?.playbackMs,
         precision: meta?.precision,
+        wordTimestamps: meta?.wordTimestamps,
+        wordCues: meta?.wordCues,
+        wordCueUpdate: meta?.wordCueUpdate,
       });
       if (!event) return;
       const chunk = createStreamChunk(sessionId, event);

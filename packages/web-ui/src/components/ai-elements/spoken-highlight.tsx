@@ -3,6 +3,8 @@ import { cn } from '@/lib/utils';
 import { useVoiceState } from '@/stores';
 import { useAudioControllerRef, useSpokenHighlightConfig } from '@/contexts/audio-context';
 import { buildWordCueTimelineMs, useSpokenHighlight } from '@/hooks/useSpokenHighlight';
+import { wordCuesToCueEndMs } from '@/lib/spoken-cues';
+import type { SpokenWordCue } from '@/types';
 
 interface SpokenTextHighlightProps {
   /** Full LLM-generated text — shown in grey immediately */
@@ -13,6 +15,8 @@ interface SpokenTextHighlightProps {
   pending?: boolean;
   /** Unique message/turn key for reset boundaries */
   turnKey?: string | number | null;
+  /** Runtime-supplied canonical cue timeline (preferred over heuristic) */
+  wordCues?: SpokenWordCue[];
 }
 
 /**
@@ -28,6 +32,7 @@ export function SpokenTextHighlight({
   spokenFinalized,
   pending,
   turnKey = null,
+  wordCues,
 }: SpokenTextHighlightProps) {
   const { voiceState } = useVoiceState();
   const audioControllerRef = useAudioControllerRef();
@@ -38,15 +43,16 @@ export function SpokenTextHighlight({
     return generatedText.split(/\s+/).filter(Boolean);
   }, [generatedText]);
 
-  const wordCueEndMs = useMemo(
-    () =>
-      buildWordCueTimelineMs(
-        words,
-        spokenHighlight.msPerWord,
-        spokenHighlight.punctuationPauseMs
-      ),
-    [words, spokenHighlight.msPerWord, spokenHighlight.punctuationPauseMs]
-  );
+  // Prefer runtime-provided cues over heuristic cue timeline.
+  const wordCueEndMs = useMemo(() => {
+    const runtimeCues = wordCuesToCueEndMs(wordCues, words.length);
+    if (runtimeCues) return runtimeCues;
+    return buildWordCueTimelineMs(
+      words,
+      spokenHighlight.msPerWord,
+      spokenHighlight.punctuationPauseMs
+    );
+  }, [words, wordCues, spokenHighlight.msPerWord, spokenHighlight.punctuationPauseMs]);
 
   const highlightedCount = useSpokenHighlight({
     totalWords: words.length,

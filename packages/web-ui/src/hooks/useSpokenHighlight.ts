@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { AudioController } from '../lib/audio';
+import { countCuesForPlayback } from '../lib/spoken-cues';
 
 interface UseSpokenHighlightOptions {
   /** Total number of words in the generated text */
@@ -65,9 +66,7 @@ export function useSpokenHighlight({
     }
 
     const cueTimeline =
-      Array.isArray(wordCueEndMs) && wordCueEndMs.length === totalWords
-        ? wordCueEndMs
-        : undefined;
+      Array.isArray(wordCueEndMs) && wordCueEndMs.length > 0 ? wordCueEndMs : undefined;
     const msPerWord = normalizePositive(fallbackMsPerWord, DEFAULT_MS_PER_WORD);
 
     const tick = () => {
@@ -76,11 +75,13 @@ export function useSpokenHighlight({
       const hasPendingAudio = scheduledMs > 0;
 
       let nextWordCount = cueTimeline
-        ? countWordsForPlayback(cueTimeline, playbackMs)
+        ? countCuesForPlayback(cueTimeline, playbackMs)
         : Math.floor(playbackMs / msPerWord);
 
       if (isFinalized && !hasPendingAudio) {
-        nextWordCount = totalWords;
+        nextWordCount = cueTimeline
+          ? Math.min(totalWords, cueTimeline.length)
+          : totalWords;
       }
 
       nextWordCount = clamp(nextWordCount, 0, totalWords);
@@ -137,27 +138,6 @@ export function buildWordCueTimelineMs(
   }
 
   return cueEndMs;
-}
-
-function countWordsForPlayback(cueEndMs: number[], playbackMs: number): number {
-  if (cueEndMs.length === 0) return 0;
-  const timeMs = Math.max(0, playbackMs);
-  let low = 0;
-  let high = cueEndMs.length - 1;
-  let count = 0;
-
-  while (low <= high) {
-    const middle = (low + high) >> 1;
-    const cue = cueEndMs[middle] ?? 0;
-    if (cue <= timeMs) {
-      count = middle + 1;
-      low = middle + 1;
-    } else {
-      high = middle - 1;
-    }
-  }
-
-  return count;
 }
 
 function hasPausePunctuation(word: string): boolean {
