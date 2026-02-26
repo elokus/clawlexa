@@ -81,6 +81,31 @@ describe('provider-config parsers', () => {
     expect(parsed.turn?.spokenHighlightPunctuationPauseMs).toBe(180);
   });
 
+  test('parses extended decomposed tts provider settings', () => {
+    const parsed = parseDecomposedProviderConfig({
+      ttsProvider: 'google-chirp',
+      ttsModel: 'chirp-3-hd',
+      ttsVoice: 'en-US-Chirp3-HD-Charon',
+      googleChirpEndpoint: 'https://texttospeech.googleapis.com/v1/text:synthesize',
+      cartesiaTtsWsUrl: 'wss://api.cartesia.ai/tts/websocket',
+      fishTtsWsUrl: 'wss://api.fish.audio/v1/tts/live',
+      rimeTtsWsUrl: 'wss://users-ws.rime.ai/ws3',
+      kokoroEndpoint: 'http://localhost:8880/v1/audio/speech',
+      pocketTtsEndpoint: 'http://localhost:8000/tts',
+      cartesiaApiKey: 'cartesia-test',
+      fishAudioApiKey: 'fish-test',
+      rimeApiKey: 'rime-test',
+    });
+
+    expect(parsed.ttsProvider).toBe('google-chirp');
+    expect(parsed.googleChirpEndpoint).toBe(
+      'https://texttospeech.googleapis.com/v1/text:synthesize'
+    );
+    expect(parsed.cartesiaApiKey).toBe('cartesia-test');
+    expect(parsed.fishAudioApiKey).toBe('fish-test');
+    expect(parsed.rimeApiKey).toBe('rime-test');
+  });
+
   test('rejects invalid decomposed Deepgram punctuation chunking type', () => {
     expect(() =>
       parseDecomposedProviderConfig({

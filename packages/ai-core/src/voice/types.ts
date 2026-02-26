@@ -99,17 +99,34 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   anthropicApiKey?: string;
   googleApiKey?: string;
   deepgramApiKey?: string;
+  cartesiaApiKey?: string;
+  fishAudioApiKey?: string;
+  rimeApiKey?: string;
   customSttMode?: 'provider' | 'custom' | 'hybrid';
   sttProvider?: 'openai' | 'deepgram';
   sttModel?: string;
   llmProvider?: 'openai' | 'openrouter' | 'anthropic' | 'google';
   llmModel?: string;
-  ttsProvider?: 'openai' | 'deepgram';
+  ttsProvider?:
+    | 'openai'
+    | 'deepgram'
+    | 'cartesia'
+    | 'fish'
+    | 'rime'
+    | 'google-chirp'
+    | 'kokoro'
+    | 'pocket-tts';
   ttsModel?: string;
   ttsVoice?: string;
   deepgramTtsTransport?: 'websocket';
   deepgramTtsWsUrl?: string;
   deepgramTtsPunctuationChunkingEnabled?: boolean;
+  cartesiaTtsWsUrl?: string;
+  fishTtsWsUrl?: string;
+  rimeTtsWsUrl?: string;
+  googleChirpEndpoint?: string;
+  kokoroEndpoint?: string;
+  pocketTtsEndpoint?: string;
   turn?: {
     silenceMs?: number;
     minSpeechMs?: number;

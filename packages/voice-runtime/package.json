@@ -50,6 +50,7 @@
     "@deepgram/sdk": "^4.11.3",
     "@echogarden/fvad-wasm": "^0.2.0",
     "@jitsi/rnnoise-wasm": "^0.2.1",
+    "@msgpack/msgpack": "^3.1.2",
     "@voiceclaw/ai-core": "workspace:*",
     "@voiceclaw/llm-runtime": "workspace:*",
     "wasm-audio-resampler": "^2.0.0",

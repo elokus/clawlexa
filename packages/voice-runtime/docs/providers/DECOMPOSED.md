@@ -79,16 +79,22 @@ Legacy OpenAI-compatible HTTP fallback (`/chat/completions`) is retained only fo
 
 ### 4. TTS (Text-to-Speech)
 
-Two providers:
+Providers are now registry-based and mapped in `src/adapters/decomposed-tts/`:
 
-| Provider | Transport | Streaming | Details |
-|----------|-----------|-----------|---------|
-| OpenAI | HTTP | Response body streaming | `POST /v1/audio/speech` with `response_format: 'pcm'` |
-| Deepgram | WebSocket | Full duplex streaming | See [DEEPGRAM.md](./DEEPGRAM.md) |
+| Provider | Transport | Streaming | Status |
+|----------|-----------|-----------|--------|
+| OpenAI | HTTP | segment queue | active |
+| Deepgram | WebSocket | full duplex streaming | active |
+| Google Chirp | HTTP (Google TTS synth) | segment queue | active |
+| Kokoro (local) | HTTP sidecar | segment queue | active |
+| Pocket TTS (local) | HTTP sidecar | segment queue | active |
+| Cartesia | WebSocket | segment queue over native WS | active |
+| Fish Audio | WebSocket/msgpack | segment queue over native WS | active |
+| Rime | WebSocket JSON | segment queue over native WS | active |
 
-**OpenAI HTTP TTS**: Text is split into speakable segments at sentence boundaries, and each segment is synthesized via a separate HTTP request. Segments are queued and spoken sequentially.
+**Segment queue providers**: Text is split into speakable segments and synthesized sequentially.
 
-**Deepgram WebSocket TTS**: LLM deltas are sent directly to the Deepgram WebSocket as they arrive. Audio is produced in parallel with LLM generation. This is significantly lower latency for streaming use cases.
+**Deepgram WebSocket TTS**: LLM deltas are sent directly to the Deepgram WebSocket as they arrive. Audio is produced in parallel with LLM generation.
 
 `deepgramTtsPunctuationChunkingEnabled` controls flush behavior for streaming Deepgram TTS:
 - `true` (default): flush on punctuation/thresholds for lower TTFA.
@@ -164,17 +170,26 @@ Two providers:
 | `sttModel` | `'gpt-4o-mini-transcribe'` | STT model name |
 | `llmProvider` | `'openai'` | LLM provider: `'openai'`, `'openrouter'`, `'anthropic'`, or `'google'` |
 | `llmModel` | From `SessionInput.model` | LLM model name |
-| `ttsProvider` | `'openai'` | TTS provider: `'openai'` or `'deepgram'` |
-| `ttsModel` | `'gpt-4o-mini-tts'` (OpenAI) / `'aura-2-thalia-en'` (Deepgram) | TTS model |
+| `ttsProvider` | `'openai'` | TTS provider: `'openai'`, `'deepgram'`, `'cartesia'`, `'fish'`, `'rime'`, `'google-chirp'`, `'kokoro'`, `'pocket-tts'` |
+| `ttsModel` | provider-specific default | TTS model (resolved via provider registry) |
 | `ttsVoice` | From `SessionInput.voice` | TTS voice name |
 | `deepgramTtsTransport` | `'websocket'` | Must be `'websocket'` |
 | `deepgramTtsWsUrl` | `'wss://api.deepgram.com/v1/speak'` | Deepgram TTS WebSocket URL |
 | `deepgramTtsPunctuationChunkingEnabled` | `true` | Deepgram WS streaming flush mode (`true`: punctuation chunking, `false`: size/whitespace chunking) |
+| `cartesiaTtsWsUrl` | `'wss://api.cartesia.ai/tts/websocket'` | Cartesia WebSocket endpoint |
+| `fishTtsWsUrl` | `'wss://api.fish.audio/v1/tts/live'` | Fish WebSocket endpoint |
+| `rimeTtsWsUrl` | `'wss://users-ws.rime.ai/ws2'` | Rime WebSocket JSON endpoint (supports timestamps) |
+| `googleChirpEndpoint` | `'https://texttospeech.googleapis.com/v1/text:synthesize'` | Google TTS synth endpoint |
+| `kokoroEndpoint` | `'http://localhost:8880/v1/audio/speech'` | Kokoro sidecar endpoint |
+| `pocketTtsEndpoint` | `'http://localhost:8000/tts'` | Pocket TTS sidecar endpoint |
 | `openaiApiKey` | (required for OpenAI providers) | OpenAI API key |
 | `openrouterApiKey` | (required for OpenRouter) | OpenRouter API key |
 | `anthropicApiKey` | (required for Anthropic) | Anthropic API key |
 | `googleApiKey` | (required for Google/Gemini) | Google API key |
 | `deepgramApiKey` | (required for Deepgram providers) | Deepgram API key |
+| `cartesiaApiKey` | (required for Cartesia) | Cartesia API key |
+| `fishAudioApiKey` | (required for Fish Audio) | Fish Audio API key |
+| `rimeApiKey` | (required for Rime) | Rime API key |
 | `language` | `'en'` | Language code for STT |
 
 Plus all turn detection options from the table above.

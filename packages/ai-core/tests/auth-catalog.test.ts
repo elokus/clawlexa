@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { fetchRuntimeProviderCatalog } from '../src/voice/auth-catalog.js';
+import {
+  fetchRuntimeProviderCatalog,
+  resolveRuntimeAuthKeySet,
+  runtimeAuthKeySetToProviderMap,
+} from '../src/voice/auth-catalog.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -46,5 +50,24 @@ describe('ai-core voice auth catalog', () => {
       },
     ]);
   });
-});
 
+  it('resolves added tts provider auth keys from env', () => {
+    const keys = resolveRuntimeAuthKeySet({
+      authProfiles: { profiles: {}, defaults: {} },
+      env: {
+        CARTESIA_API_KEY: 'cartesia-key',
+        FISH_AUDIO_API_KEY: 'fish-key',
+        RIME_API_KEY: 'rime-key',
+      },
+    });
+
+    expect(keys.cartesiaApiKey).toBe('cartesia-key');
+    expect(keys.fishAudioApiKey).toBe('fish-key');
+    expect(keys.rimeApiKey).toBe('rime-key');
+
+    const byProvider = runtimeAuthKeySetToProviderMap(keys);
+    expect(byProvider.cartesia).toBe('cartesia-key');
+    expect(byProvider.fish).toBe('fish-key');
+    expect(byProvider.rime).toBe('rime-key');
+  });
+});

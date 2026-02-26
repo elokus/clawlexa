@@ -54,7 +54,16 @@ export const RUNTIME_LLM_PROVIDERS = [
 ] as const;
 export type RuntimeLlmProvider = (typeof RUNTIME_LLM_PROVIDERS)[number];
 
-export const RUNTIME_TTS_PROVIDERS = ['deepgram', 'openai'] as const;
+export const RUNTIME_TTS_PROVIDERS = [
+  'deepgram',
+  'openai',
+  'cartesia',
+  'fish',
+  'rime',
+  'google-chirp',
+  'kokoro',
+  'pocket-tts',
+] as const;
 export type RuntimeTtsProvider = (typeof RUNTIME_TTS_PROVIDERS)[number];
 
 export const RUNTIME_AUTH_PROVIDERS = CORE_RUNTIME_AUTH_PROVIDERS;
@@ -500,13 +509,22 @@ export function resolveRuntimeConfigFromDocuments(input: {
   const decomposedSttAuthProfile = input.voiceConfig.voice.decomposed.stt.authProfile;
   const decomposedTtsAuthProfile = input.voiceConfig.voice.decomposed.tts.authProfile;
   const decomposedLlmProvider = input.voiceConfig.voice.decomposed.llm.provider;
+  const decomposedTtsProvider = input.voiceConfig.voice.decomposed.tts.provider;
+  const decomposedTtsUsesOpenAi = decomposedTtsProvider === 'openai';
+  const decomposedTtsUsesGoogle = decomposedTtsProvider === 'google-chirp';
+  const decomposedTtsUsesDeepgram = decomposedTtsProvider === 'deepgram';
+  const decomposedTtsUsesCartesia = decomposedTtsProvider === 'cartesia';
+  const decomposedTtsUsesFish = decomposedTtsProvider === 'fish';
+  const decomposedTtsUsesRime = decomposedTtsProvider === 'rime';
 
   const openaiApiKey = resolveRuntimeApiKey('openai', {
     authProfileId:
       mode === 'decomposed'
         ? decomposedLlmProvider === 'openai'
           ? decomposedLlmAuthProfile
-          : undefined
+          : decomposedTtsUsesOpenAi
+            ? decomposedTtsAuthProfile
+            : undefined
         : provider === 'openai-realtime'
           ? voiceToVoiceAuthProfile
           : undefined,
@@ -536,7 +554,9 @@ export function resolveRuntimeConfigFromDocuments(input: {
           ? voiceToVoiceAuthProfile
           : mode === 'decomposed' && decomposedLlmProvider === 'google'
             ? decomposedLlmAuthProfile
-            : undefined,
+            : mode === 'decomposed' && decomposedTtsUsesGoogle
+              ? decomposedTtsAuthProfile
+              : undefined,
       authProfiles: input.authProfiles,
       env,
     }) ||
@@ -546,12 +566,40 @@ export function resolveRuntimeConfigFromDocuments(input: {
           ? voiceToVoiceAuthProfile
           : mode === 'decomposed' && decomposedLlmProvider === 'google'
             ? decomposedLlmAuthProfile
-            : undefined,
+            : mode === 'decomposed' && decomposedTtsUsesGoogle
+              ? decomposedTtsAuthProfile
+              : undefined,
       authProfiles: input.authProfiles,
       env,
     });
   const deepgramApiKey = resolveRuntimeApiKey('deepgram', {
-    authProfileId: decomposedSttAuthProfile ?? decomposedTtsAuthProfile,
+    authProfileId: decomposedTtsUsesDeepgram
+      ? decomposedTtsAuthProfile ?? decomposedSttAuthProfile
+      : decomposedSttAuthProfile,
+    authProfiles: input.authProfiles,
+    env,
+  });
+  const cartesiaApiKey = resolveRuntimeApiKey('cartesia', {
+    authProfileId:
+      mode === 'decomposed' && decomposedTtsUsesCartesia
+        ? decomposedTtsAuthProfile
+        : undefined,
+    authProfiles: input.authProfiles,
+    env,
+  });
+  const fishAudioApiKey = resolveRuntimeApiKey('fish', {
+    authProfileId:
+      mode === 'decomposed' && decomposedTtsUsesFish
+        ? decomposedTtsAuthProfile
+        : undefined,
+    authProfiles: input.authProfiles,
+    env,
+  });
+  const rimeApiKey = resolveRuntimeApiKey('rime', {
+    authProfileId:
+      mode === 'decomposed' && decomposedTtsUsesRime
+        ? decomposedTtsAuthProfile
+        : undefined,
     authProfiles: input.authProfiles,
     env,
   });
@@ -586,6 +634,9 @@ export function resolveRuntimeConfigFromDocuments(input: {
       anthropicApiKey,
       googleApiKey,
       deepgramApiKey,
+      cartesiaApiKey,
+      fishAudioApiKey,
+      rimeApiKey,
       ultravoxApiKey,
     },
     turn: {
@@ -679,6 +730,9 @@ function providerConfigForRuntime(input: RuntimeSessionInputBuildInput): unknown
       anthropicApiKey: input.auth.anthropicApiKey,
       googleApiKey: input.auth.googleApiKey,
       deepgramApiKey: input.auth.deepgramApiKey,
+      cartesiaApiKey: input.auth.cartesiaApiKey,
+      fishAudioApiKey: input.auth.fishAudioApiKey,
+      rimeApiKey: input.auth.rimeApiKey,
       sttProvider: input.decomposedSttProvider,
       sttModel: input.decomposedSttModel,
       llmProvider: input.decomposedLlmProvider,
@@ -795,6 +849,9 @@ export function getBuiltInProviderRegistry(): ProviderRegistration[] {
 export async function fetchRuntimeProviderCatalog(input: {
   openaiApiKey: string;
   deepgramApiKey: string;
+  cartesiaApiKey?: string;
+  fishAudioApiKey?: string;
+  rimeApiKey?: string;
   ultravoxApiKey: string;
   anthropicApiKey?: string;
   googleApiKey?: string;
@@ -811,6 +868,9 @@ export async function fetchRuntimeProviderCatalog(input: {
   return fetchCoreRuntimeProviderCatalog({
     openaiApiKey: input.openaiApiKey,
     deepgramApiKey: input.deepgramApiKey,
+    cartesiaApiKey: input.cartesiaApiKey,
+    fishAudioApiKey: input.fishAudioApiKey,
+    rimeApiKey: input.rimeApiKey,
     ultravoxApiKey: input.ultravoxApiKey,
     anthropicApiKey: input.anthropicApiKey,
     googleApiKey: input.googleApiKey,
@@ -1023,6 +1083,36 @@ export function getRuntimeConfigManifest(): RuntimeConfigManifest {
             id: 'openai',
             label: 'openai',
             voiceCatalogKey: 'openai-tts',
+          },
+          {
+            id: 'cartesia',
+            label: 'cartesia',
+            voiceCatalogKey: 'cartesia-tts',
+          },
+          {
+            id: 'fish',
+            label: 'fish',
+            voiceCatalogKey: 'fish-tts',
+          },
+          {
+            id: 'rime',
+            label: 'rime',
+            voiceCatalogKey: 'rime-tts',
+          },
+          {
+            id: 'google-chirp',
+            label: 'google-chirp',
+            voiceCatalogKey: 'google-chirp-tts',
+          },
+          {
+            id: 'kokoro',
+            label: 'kokoro',
+            voiceCatalogKey: 'kokoro-tts',
+          },
+          {
+            id: 'pocket-tts',
+            label: 'pocket-tts',
+            voiceCatalogKey: 'pocket-tts',
           },
         ],
       },

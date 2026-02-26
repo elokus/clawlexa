@@ -7,6 +7,9 @@ export const RUNTIME_AUTH_PROVIDERS = [
   'google',
   'gemini',
   'deepgram',
+  'cartesia',
+  'fish',
+  'rime',
   'ultravox',
 ] as const;
 
@@ -36,6 +39,9 @@ export interface RuntimeAuthKeySet {
   anthropicApiKey: string;
   googleApiKey: string;
   deepgramApiKey: string;
+  cartesiaApiKey: string;
+  fishAudioApiKey: string;
+  rimeApiKey: string;
   ultravoxApiKey: string;
 }
 
@@ -72,6 +78,16 @@ const DEFAULT_DEEPGRAM_TTS_VOICES = [
   'aura-2-luna-en',
   'aura-2-cora-en',
 ];
+const DEFAULT_CARTESIA_TTS_VOICES = ['f9836c6e-a0bd-460e-9d3c-f7299fa60f94'];
+const DEFAULT_FISH_TTS_VOICES = ['fish_default'];
+const DEFAULT_RIME_TTS_VOICES = ['alloy'];
+const DEFAULT_GOOGLE_CHIRP_TTS_VOICES = [
+  'en-US-Chirp3-HD-Charon',
+  'en-US-Chirp3-HD-Leda',
+  'en-US-Chirp3-HD-Puck',
+];
+const DEFAULT_KOKORO_TTS_VOICES = ['af_nicole', 'af_bella'];
+const DEFAULT_POCKET_TTS_VOICES = ['alba', 'marius', 'javert'];
 const DEFAULT_ULTRAVOX_MODELS = ['ultravox-v0.7'];
 const DEFAULT_GEMINI_MODELS = ['gemini-2.5-flash-native-audio-preview'];
 const DEFAULT_GEMINI_VOICES = [
@@ -136,6 +152,11 @@ export function resolveRuntimeApiKey(
     return env.GOOGLE_API_KEY ?? env.GEMINI_API_KEY ?? '';
   }
   if (provider === 'deepgram') return env.DEEPGRAM_API_KEY ?? '';
+  if (provider === 'cartesia') return env.CARTESIA_API_KEY ?? '';
+  if (provider === 'fish') {
+    return env.FISH_AUDIO_API_KEY ?? env.FISH_API_KEY ?? '';
+  }
+  if (provider === 'rime') return env.RIME_API_KEY ?? '';
   if (provider === 'ultravox') return env.ULTRAVOX_API_KEY ?? '';
   return '';
 }
@@ -151,6 +172,9 @@ export function resolveRuntimeAuthKeySet(input: {
     googleApiKey:
       resolveRuntimeApiKey('google', input) || resolveRuntimeApiKey('gemini', input),
     deepgramApiKey: resolveRuntimeApiKey('deepgram', input),
+    cartesiaApiKey: resolveRuntimeApiKey('cartesia', input),
+    fishAudioApiKey: resolveRuntimeApiKey('fish', input),
+    rimeApiKey: resolveRuntimeApiKey('rime', input),
     ultravoxApiKey: resolveRuntimeApiKey('ultravox', input),
   };
 }
@@ -165,6 +189,9 @@ export function runtimeAuthKeySetToProviderMap(
     google: auth.googleApiKey,
     gemini: auth.googleApiKey,
     deepgram: auth.deepgramApiKey,
+    cartesia: auth.cartesiaApiKey,
+    fish: auth.fishAudioApiKey,
+    rime: auth.rimeApiKey,
     ultravox: auth.ultravoxApiKey,
   };
 }
@@ -421,6 +448,9 @@ async function fetchGoogleLlmCatalog(apiKey: string): Promise<{ models: string[]
 export async function fetchRuntimeProviderCatalog(input: {
   openaiApiKey: string;
   deepgramApiKey: string;
+  cartesiaApiKey?: string;
+  fishAudioApiKey?: string;
+  rimeApiKey?: string;
   ultravoxApiKey: string;
   anthropicApiKey?: string;
   googleApiKey?: string;
@@ -491,6 +521,30 @@ export async function fetchRuntimeProviderCatalog(input: {
       'deepgram-tts': {
         voices: mapDeepgramTtsVoices(deepgram.ttsVoices),
       },
+      'cartesia-tts': {
+        voices: mapSchemaVoices(
+          DEFAULT_CARTESIA_TTS_VOICES,
+          providerSchemas.decomposed?.voices
+        ),
+      },
+      'fish-tts': {
+        voices: mapSchemaVoices(DEFAULT_FISH_TTS_VOICES, providerSchemas.decomposed?.voices),
+      },
+      'rime-tts': {
+        voices: mapSchemaVoices(DEFAULT_RIME_TTS_VOICES, providerSchemas.decomposed?.voices),
+      },
+      'google-chirp-tts': {
+        voices: mapSchemaVoices(
+          DEFAULT_GOOGLE_CHIRP_TTS_VOICES,
+          providerSchemas.decomposed?.voices
+        ),
+      },
+      'kokoro-tts': {
+        voices: mapSchemaVoices(DEFAULT_KOKORO_TTS_VOICES, providerSchemas.decomposed?.voices),
+      },
+      'pocket-tts': {
+        voices: mapSchemaVoices(DEFAULT_POCKET_TTS_VOICES, providerSchemas.decomposed?.voices),
+      },
     },
     providerSchemas,
   };
@@ -509,6 +563,9 @@ export async function fetchRuntimeProviderCatalogFromAuthProfiles(input: {
   return fetchRuntimeProviderCatalog({
     openaiApiKey: authKeys.openaiApiKey,
     deepgramApiKey: authKeys.deepgramApiKey,
+    cartesiaApiKey: authKeys.cartesiaApiKey,
+    fishAudioApiKey: authKeys.fishAudioApiKey,
+    rimeApiKey: authKeys.rimeApiKey,
     ultravoxApiKey: authKeys.ultravoxApiKey,
     anthropicApiKey: authKeys.anthropicApiKey,
     googleApiKey: authKeys.googleApiKey,
@@ -578,6 +635,47 @@ export async function testRuntimeProviderCredentials(
         ok: res.ok,
         status: res.status,
         message: res.ok ? 'Deepgram credentials valid' : await res.text(),
+      };
+    }
+
+    if (provider === 'cartesia') {
+      const url = new URL('https://api.cartesia.ai/tts/websocket');
+      url.searchParams.set('api_key', apiKey);
+      url.searchParams.set('cartesia_version', '2025-04-16');
+      const res = await fetch(url, { method: 'GET' });
+      return {
+        ok: res.ok || res.status === 426,
+        status: res.status,
+        message:
+          res.ok || res.status === 426
+            ? 'Cartesia credentials look valid (websocket endpoint reachable)'
+            : await res.text(),
+      };
+    }
+
+    if (provider === 'fish') {
+      const res = await fetch('https://api.fish.audio/model', {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+      return {
+        ok: res.ok,
+        status: res.status,
+        message: res.ok ? 'Fish credentials valid' : await res.text(),
+      };
+    }
+
+    if (provider === 'rime') {
+      const res = await fetch('https://users.rime.ai/v1/voices', {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+      return {
+        ok: res.ok,
+        status: res.status,
+        message: res.ok ? 'Rime credentials valid' : await res.text(),
       };
     }
 

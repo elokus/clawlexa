@@ -29,7 +29,16 @@ const DECOMPOSED_LLM_PROVIDERS = [
   'anthropic',
   'google',
 ] as const;
-const DECOMPOSED_TTS_PROVIDERS = ['openai', 'deepgram'] as const;
+const DECOMPOSED_TTS_PROVIDERS = [
+  'openai',
+  'deepgram',
+  'cartesia',
+  'fish',
+  'rime',
+  'google-chirp',
+  'kokoro',
+  'pocket-tts',
+] as const;
 const DECOMPOSED_TTS_TRANSPORTS = ['websocket'] as const;
 const DECOMPOSED_CUSTOM_STT_MODES = ['provider', 'custom', 'hybrid'] as const;
 const DECOMPOSED_VAD_ENGINES = ['rms', 'rnnoise', 'webrtc-vad'] as const;
@@ -360,6 +369,9 @@ export function parseDecomposedProviderConfig(raw: unknown): DecomposedProviderC
     anthropicApiKey: optionalString(object, 'anthropicApiKey', 'providerConfig'),
     googleApiKey: optionalString(object, 'googleApiKey', 'providerConfig'),
     deepgramApiKey: optionalString(object, 'deepgramApiKey', 'providerConfig'),
+    cartesiaApiKey: optionalString(object, 'cartesiaApiKey', 'providerConfig'),
+    fishAudioApiKey: optionalString(object, 'fishAudioApiKey', 'providerConfig'),
+    rimeApiKey: optionalString(object, 'rimeApiKey', 'providerConfig'),
     customSttMode: optionalEnum(
       object,
       'customSttMode',
@@ -385,6 +397,12 @@ export function parseDecomposedProviderConfig(raw: unknown): DecomposedProviderC
       'deepgramTtsPunctuationChunkingEnabled',
       'providerConfig'
     ),
+    cartesiaTtsWsUrl: optionalString(object, 'cartesiaTtsWsUrl', 'providerConfig'),
+    fishTtsWsUrl: optionalString(object, 'fishTtsWsUrl', 'providerConfig'),
+    rimeTtsWsUrl: optionalString(object, 'rimeTtsWsUrl', 'providerConfig'),
+    googleChirpEndpoint: optionalString(object, 'googleChirpEndpoint', 'providerConfig'),
+    kokoroEndpoint: optionalString(object, 'kokoroEndpoint', 'providerConfig'),
+    pocketTtsEndpoint: optionalString(object, 'pocketTtsEndpoint', 'providerConfig'),
     turn: parseDecomposedTurnConfig(object.turn),
   };
 }

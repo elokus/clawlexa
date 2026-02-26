@@ -10,6 +10,15 @@ import {
 import { createClient, LiveTTSEvents, type SpeakLiveClient } from '@deepgram/sdk';
 import { createLlmRuntime } from '@voiceclaw/llm-runtime';
 import { DecomposedSpokenWordBuffer } from './decomposed-spoken-buffer.js';
+import {
+  defaultTtsModelForProvider,
+  isRealtimeStreamingTtsProvider,
+  synthesizeTtsSegment,
+} from './decomposed-tts/index.js';
+import type {
+  DecomposedTtsProvider,
+  SegmentSynthesisResult,
+} from './decomposed-tts/types.js';
 import type {
   AudioFrame,
   AudioNegotiation,
@@ -92,12 +101,18 @@ interface DecomposedOptions {
   customSttMode: 'provider' | 'custom' | 'hybrid';
   llmProvider: 'openai' | 'openrouter' | 'anthropic' | 'google';
   llmModel: string;
-  ttsProvider: 'openai' | 'deepgram';
+  ttsProvider: DecomposedTtsProvider;
   ttsModel: string;
   ttsVoice: string;
   deepgramTtsTransport: 'websocket';
   deepgramTtsWsUrl: string;
   deepgramTtsPunctuationChunkingEnabled: boolean;
+  cartesiaTtsWsUrl: string;
+  fishTtsWsUrl: string;
+  rimeTtsWsUrl: string;
+  googleChirpEndpoint: string;
+  kokoroEndpoint: string;
+  pocketTtsEndpoint: string;
   silenceMs: number;
   minSpeechMs: number;
   minRms: number;
@@ -125,6 +140,9 @@ interface DecomposedOptions {
   anthropicApiKey?: string;
   googleApiKey?: string;
   deepgramApiKey?: string;
+  cartesiaApiKey?: string;
+  fishAudioApiKey?: string;
+  rimeApiKey?: string;
 }
 
 interface DeepgramListenResponse {
@@ -245,6 +263,13 @@ interface StreamedAssistantTurnResult {
 interface BufferedSpeechFrame {
   data: Uint8Array;
   durationMs: number;
+}
+
+interface SegmentPlaybackResult {
+  playbackMs: number;
+  wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+  wordTimestampsTimeBase?: 'segment' | 'utterance';
+  precision: 'segment' | 'provider-word-timestamps';
 }
 
 const DECOMPOSED_CONFIG_SCHEMA: ProviderConfigSchema = {
@@ -1183,9 +1208,9 @@ export class DecomposedAdapter implements ProviderAdapter {
         textStream = peek.stream;
       }
 
-      if (this.options.ttsProvider === 'deepgram') {
+      if (isRealtimeStreamingTtsProvider(this.options.ttsProvider)) {
         console.log(
-          `[DecomposedAdapter] TTS path: deepgram-streaming` +
+          `[DecomposedAdapter] TTS path: provider-streaming (${this.options.ttsProvider})` +
             ` (punctuationChunking=${this.options.deepgramTtsPunctuationChunkingEnabled})`
         );
         const request = this.deepgramTtsRequestQueue.then(() =>
@@ -1283,7 +1308,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       speakQueue = speakQueue.then(async () => {
         if (!this.isTurnCurrent(turnGeneration)) return;
         spokeAudio = true;
-        const segmentPlaybackMs = await this.speakSegment(normalized, turnGeneration, {
+        const segmentPlayback = await this.speakSegment(normalized, turnGeneration, {
           segmentIndex: currentIndex,
           onFirstAudio: () => {
             if (!speaking) {
@@ -1293,7 +1318,7 @@ export class DecomposedAdapter implements ProviderAdapter {
           },
         });
         // Emit spoken delta AFTER TTS completes so playbackMs is truthful.
-        spokenPlaybackMs += Math.max(0, segmentPlaybackMs);
+        spokenPlaybackMs += Math.max(0, segmentPlayback.playbackMs);
         if (spokenStreamEnabled && this.isTurnCurrent(turnGeneration)) {
           spokenText += normalized;
           spokenChars = spokenText.length;
@@ -1302,7 +1327,9 @@ export class DecomposedAdapter implements ProviderAdapter {
             spokenChars,
             spokenWords,
             playbackMs: spokenPlaybackMs,
-            precision: 'segment',
+            precision: segmentPlayback.precision,
+            wordTimestamps: segmentPlayback.wordTimestamps,
+            wordTimestampsTimeBase: segmentPlayback.wordTimestampsTimeBase,
           });
           this.events.emit('spokenProgress', assistantId, {
             spokenChars,
@@ -2344,7 +2371,8 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (!this.options || !this.isTurnCurrent(turnGeneration)) return;
     this.setState('speaking');
     const spokenText = text.trim();
-    const playbackMs = await this.speakSegment(text, turnGeneration);
+    const segmentPlayback = await this.speakSegment(text, turnGeneration);
+    const playbackMs = segmentPlayback.playbackMs;
 
     if (
       this.options.spokenStreamEnabled &&
@@ -2358,7 +2386,9 @@ export class DecomposedAdapter implements ProviderAdapter {
         spokenChars,
         spokenWords,
         playbackMs,
-        precision: 'segment',
+        precision: segmentPlayback.precision,
+        wordTimestamps: segmentPlayback.wordTimestamps,
+        wordTimestampsTimeBase: segmentPlayback.wordTimestampsTimeBase,
       });
       this.events.emit('spokenProgress', assistantId, {
         spokenChars,
@@ -2370,7 +2400,9 @@ export class DecomposedAdapter implements ProviderAdapter {
         spokenChars,
         spokenWords,
         playbackMs,
-        precision: 'segment',
+        precision: segmentPlayback.precision,
+        wordTimestamps: segmentPlayback.wordTimestamps,
+        wordTimestampsTimeBase: segmentPlayback.wordTimestampsTimeBase,
       });
     }
 
@@ -2386,8 +2418,10 @@ export class DecomposedAdapter implements ProviderAdapter {
       segmentIndex?: number;
       onFirstAudio?: () => void;
     }
-  ): Promise<number> {
-    if (!this.options || !this.isTurnCurrent(turnGeneration)) return 0;
+  ): Promise<SegmentPlaybackResult> {
+    if (!this.options || !this.isTurnCurrent(turnGeneration)) {
+      return { playbackMs: 0, precision: 'segment' };
+    }
     const ttsStartMs = Date.now();
     const ttsController = this.beginTtsRequest();
     const { onFirstAudio, ...latencyDetails } = details ?? {};
@@ -2395,6 +2429,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     let emittedChunks = 0;
     let firstAudioAtMs: number | null = null;
     let emittedPlaybackMs = 0;
+    let synthesisResult: SegmentSynthesisResult | null = null;
 
     const emitChunk = async (chunk: ArrayBuffer): Promise<boolean> => {
       if (!this.isTurnCurrent(turnGeneration)) {
@@ -2421,14 +2456,41 @@ export class DecomposedAdapter implements ProviderAdapter {
       if (this.options.ttsProvider === 'deepgram') {
         await this.speakWithDeepgram(text, emitChunk, turnGeneration);
       } else {
-        await this.speakWithOpenAI(text, emitChunk, ttsController.signal);
+        synthesisResult = await synthesizeTtsSegment({
+          text,
+          context: {
+            provider: this.options.ttsProvider,
+            model: this.options.ttsModel,
+            voice: this.options.ttsVoice,
+            language: this.options.language,
+            openaiApiKey: this.options.openaiApiKey,
+            deepgramApiKey: this.options.deepgramApiKey,
+            googleApiKey: this.options.googleApiKey,
+            cartesiaApiKey: this.options.cartesiaApiKey,
+            fishAudioApiKey: this.options.fishAudioApiKey,
+            rimeApiKey: this.options.rimeApiKey,
+            kokoroEndpoint: this.options.kokoroEndpoint,
+            pocketTtsEndpoint: this.options.pocketTtsEndpoint,
+            googleChirpEndpoint: this.options.googleChirpEndpoint,
+            cartesiaTtsWsUrl: this.options.cartesiaTtsWsUrl,
+            fishTtsWsUrl: this.options.fishTtsWsUrl,
+            rimeTtsWsUrl: this.options.rimeTtsWsUrl,
+          },
+          emitChunk,
+          signal: ttsController.signal,
+        });
       }
     } finally {
       this.clearTtsRequest(ttsController);
     }
 
     if (!this.isTurnCurrent(turnGeneration)) {
-      return emittedPlaybackMs;
+      return {
+        playbackMs: emittedPlaybackMs,
+        precision: synthesisResult?.precision ?? 'segment',
+        wordTimestamps: synthesisResult?.wordTimestamps,
+        wordTimestampsTimeBase: synthesisResult?.wordTimestampsTimeBase,
+      };
     }
     this.emitLatency({
       stage: 'tts',
@@ -2444,39 +2506,12 @@ export class DecomposedAdapter implements ProviderAdapter {
         ...latencyDetails,
       },
     });
-    return emittedPlaybackMs;
-  }
-
-  private async speakWithOpenAI(
-    text: string,
-    emitChunk: (chunk: ArrayBuffer) => Promise<boolean>,
-    signal: AbortSignal
-  ): Promise<void> {
-    if (!this.options?.openaiApiKey) {
-      throw new Error('OpenAI API key is missing for decomposed TTS');
-    }
-
-    const response = await fetch('https://api.openai.com/v1/audio/speech', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.options.openaiApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: this.options.ttsModel,
-        voice: this.options.ttsVoice,
-        input: text,
-        response_format: 'pcm',
-      }),
-      signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OpenAI TTS failed (${response.status}): ${errorText}`);
-    }
-
-    await this.streamTtsPcmResponse(response, emitChunk);
+    return {
+      playbackMs: emittedPlaybackMs,
+      precision: synthesisResult?.precision ?? 'segment',
+      wordTimestamps: synthesisResult?.wordTimestamps,
+      wordTimestampsTimeBase: synthesisResult?.wordTimestampsTimeBase,
+    };
   }
 
   private async speakWithDeepgram(
@@ -2500,75 +2535,6 @@ export class DecomposedAdapter implements ProviderAdapter {
     });
     this.deepgramTtsRequestQueue = request.catch(() => {});
     await request;
-  }
-
-  private async streamTtsPcmResponse(
-    response: Response,
-    emitChunk: (chunk: ArrayBuffer) => Promise<boolean>
-  ): Promise<void> {
-    if (!response.body) {
-      const audio = await response.arrayBuffer();
-      const chunks = chunkArrayBuffer(audio, PCM_BYTES_PER_100MS);
-      for (const chunk of chunks) {
-        const keepGoing = await emitChunk(chunk);
-        if (!keepGoing) {
-          break;
-        }
-      }
-      return;
-    }
-
-    const reader = response.body.getReader();
-    let pending = new Uint8Array(0);
-
-    const appendPending = (value: Uint8Array): void => {
-      if (value.byteLength === 0) return;
-      if (pending.byteLength === 0) {
-        pending = value.slice();
-        return;
-      }
-      const merged = new Uint8Array(pending.byteLength + value.byteLength);
-      merged.set(pending, 0);
-      merged.set(value, pending.byteLength);
-      pending = merged;
-    };
-
-    const flushPending = async (force: boolean): Promise<boolean> => {
-      while (pending.byteLength >= PCM_BYTES_PER_100MS || (force && pending.byteLength > 0)) {
-        const chunkSize =
-          pending.byteLength >= PCM_BYTES_PER_100MS
-            ? PCM_BYTES_PER_100MS
-            : pending.byteLength;
-        const chunk = pending.slice(0, chunkSize);
-        pending = pending.slice(chunkSize);
-        const keepGoing = await emitChunk(chunk.buffer);
-        if (!keepGoing) {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (!value || value.byteLength === 0) {
-          continue;
-        }
-        appendPending(value);
-        const keepGoing = await flushPending(false);
-        if (!keepGoing) {
-          await reader.cancel();
-          break;
-        }
-      }
-      await flushPending(true);
-    } finally {
-      reader.releaseLock();
-    }
   }
 
   private async speakWithDeepgramLiveSegment(
@@ -2860,9 +2826,8 @@ export class DecomposedAdapter implements ProviderAdapter {
     const providerConfig: DecomposedProviderConfig = parseDecomposedProviderConfig(
       input.providerConfig
     );
-    const ttsProvider = providerConfig.ttsProvider ?? 'openai';
-    const ttsModel =
-      providerConfig.ttsModel ?? (ttsProvider === 'deepgram' ? 'aura-2-thalia-en' : 'gpt-4o-mini-tts');
+    const ttsProvider = (providerConfig.ttsProvider ?? 'openai') as DecomposedTtsProvider;
+    const ttsModel = providerConfig.ttsModel ?? defaultTtsModelForProvider(ttsProvider);
 
     return {
       sttProvider: providerConfig.sttProvider ?? 'openai',
@@ -2877,6 +2842,16 @@ export class DecomposedAdapter implements ProviderAdapter {
       deepgramTtsWsUrl: providerConfig.deepgramTtsWsUrl ?? 'wss://api.deepgram.com/v1/speak',
       deepgramTtsPunctuationChunkingEnabled:
         providerConfig.deepgramTtsPunctuationChunkingEnabled ?? true,
+      cartesiaTtsWsUrl:
+        providerConfig.cartesiaTtsWsUrl ?? 'wss://api.cartesia.ai/tts/websocket',
+      fishTtsWsUrl: providerConfig.fishTtsWsUrl ?? 'wss://api.fish.audio/v1/tts/live',
+      rimeTtsWsUrl: providerConfig.rimeTtsWsUrl ?? 'wss://users-ws.rime.ai/ws2',
+      googleChirpEndpoint:
+        providerConfig.googleChirpEndpoint ??
+        'https://texttospeech.googleapis.com/v1/text:synthesize',
+      kokoroEndpoint:
+        providerConfig.kokoroEndpoint ?? 'http://localhost:8880/v1/audio/speech',
+      pocketTtsEndpoint: providerConfig.pocketTtsEndpoint ?? 'http://localhost:8000/tts',
       silenceMs: providerConfig.turn?.silenceMs ?? 700,
       minSpeechMs: providerConfig.turn?.minSpeechMs ?? 350,
       minRms: providerConfig.turn?.minRms ?? 0.015,
@@ -2909,6 +2884,9 @@ export class DecomposedAdapter implements ProviderAdapter {
       anthropicApiKey: providerConfig.anthropicApiKey,
       googleApiKey: providerConfig.googleApiKey,
       deepgramApiKey: providerConfig.deepgramApiKey,
+      cartesiaApiKey: providerConfig.cartesiaApiKey,
+      fishAudioApiKey: providerConfig.fishAudioApiKey,
+      rimeApiKey: providerConfig.rimeApiKey,
     };
   }
 }
