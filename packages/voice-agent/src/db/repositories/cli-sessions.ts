@@ -81,9 +81,10 @@ export interface CreateOrchestratorInput {
 export interface CreateTerminalInput {
   id?: string;
   goal: string;
-  parent_id: string; // Terminals must have a subagent parent
+  parent_id: string; // Parent can be a voice or subagent session
   mac_session_id?: string;
   tool_call_id?: string; // Links to the tool call that created this session
+  name?: string; // Human-readable session name (e.g. "swift-fox")
 }
 
 /** @deprecated Use CreateOrchestratorInput or CreateTerminalInput instead */
@@ -182,8 +183,8 @@ export class CliSessionsRepository {
     this.db
       .query(
         `INSERT INTO cli_sessions
-         (id, type, goal, status, parent_id, mac_session_id, tool_call_id, created_at, updated_at)
-         VALUES (?, 'terminal', ?, 'running', ?, ?, ?, ?, ?)`
+         (id, type, goal, status, parent_id, mac_session_id, tool_call_id, name, created_at, updated_at)
+         VALUES (?, 'terminal', ?, 'running', ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -191,6 +192,7 @@ export class CliSessionsRepository {
         input.parent_id,
         input.mac_session_id ?? null,
         input.tool_call_id ?? null,
+        input.name ?? null,
         now,
         now
       );

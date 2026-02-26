@@ -49,6 +49,20 @@ export interface TerminateSessionResponse {
   message: string;
 }
 
+export type GuiTerminal = 'ghostty' | 'iterm2' | 'terminal';
+export type WindowArrangement =
+  | 'left_half'
+  | 'right_half'
+  | 'fullscreen'
+  | 'top_half'
+  | 'bottom_half'
+  | 'center';
+
+export interface GuiActionResponse {
+  success: boolean;
+  message: string;
+}
+
 export interface HealthResponse {
   status: string;
   uptime: number;
@@ -279,6 +293,91 @@ export async function terminateSession(
     message: getEnvelopeMessage(raw, res.ok ? 'Session beendet.' : 'Fehler beim Beenden der Session.'),
   };
   console.log(`[MacClient] Terminate response:`, normalized);
+  return normalized;
+}
+
+/**
+ * Open a GUI terminal attached to an existing tmux session.
+ */
+export async function openGuiTerminal(
+  sessionId: string,
+  terminal: GuiTerminal = 'ghostty'
+): Promise<GuiActionResponse> {
+  console.log(`[MacClient] Opening ${terminal} GUI for session ${sessionId}`);
+
+  const res = await fetch(`${MAC_DAEMON_URL}/sessions/${sessionId}/open-gui`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ terminal }),
+  });
+
+  const raw = (await res.json()) as unknown;
+  const normalized: GuiActionResponse = {
+    success: getEnvelopeSuccess(raw, res.ok),
+    message: getEnvelopeMessage(
+      raw,
+      res.ok
+        ? `${terminal} window opened.`
+        : `Failed to open ${terminal} window.`
+    ),
+  };
+
+  console.log('[MacClient] Open GUI response:', normalized);
+  return normalized;
+}
+
+/**
+ * Close the GUI terminal window for a tmux session.
+ */
+export async function closeGuiTerminal(
+  sessionId: string
+): Promise<GuiActionResponse> {
+  console.log(`[MacClient] Closing GUI for session ${sessionId}`);
+
+  const res = await fetch(`${MAC_DAEMON_URL}/sessions/${sessionId}/close-gui`, {
+    method: 'POST',
+  });
+
+  const raw = (await res.json()) as unknown;
+  const normalized: GuiActionResponse = {
+    success: getEnvelopeSuccess(raw, res.ok),
+    message: getEnvelopeMessage(
+      raw,
+      res.ok ? 'GUI window closed.' : 'Failed to close GUI window.'
+    ),
+  };
+
+  console.log('[MacClient] Close GUI response:', normalized);
+  return normalized;
+}
+
+/**
+ * Arrange/resize a GUI terminal window for a tmux session.
+ */
+export async function arrangeWindow(
+  sessionId: string,
+  arrangement: WindowArrangement
+): Promise<GuiActionResponse> {
+  console.log(
+    `[MacClient] Arranging GUI for ${sessionId} -> ${arrangement}`
+  );
+
+  const res = await fetch(`${MAC_DAEMON_URL}/sessions/${sessionId}/arrange`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ arrangement }),
+  });
+
+  const raw = (await res.json()) as unknown;
+  const normalized: GuiActionResponse = {
+    success: getEnvelopeSuccess(raw, res.ok),
+    message: getEnvelopeMessage(
+      raw,
+      res.ok ? `Window arranged as ${arrangement}.` : 'Failed to arrange window.'
+    ),
+  };
+
+  console.log('[MacClient] Arrange window response:', normalized);
   return normalized;
 }
 

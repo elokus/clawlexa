@@ -98,6 +98,7 @@ const voiceConfigSchema: z.ZodType<VoiceConfigDocument> = z.object({
       wordAlignmentEnabled: z.boolean(),
       spokenHighlightMsPerWord: z.number().positive(),
       spokenHighlightPunctuationPauseMs: z.number().int().nonnegative(),
+      preferProviderTimestamps: z.boolean().default(true),
       customSttMode: z.enum(['provider', 'custom', 'hybrid']),
       llmCompletion: z.object({
         enabled: z.boolean(),

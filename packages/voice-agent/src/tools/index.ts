@@ -15,6 +15,7 @@ export {
   viewPastSessionsTool,
 } from './developer-session.js';
 export { createBackgroundTaskTool } from './background-task.js';
+export { createDirectTerminalTools } from './direct-terminal.js';
 
 // Tool registry by name for easy lookup
 import { webSearchTool } from '../subagents/web-search/index.js';
@@ -30,6 +31,7 @@ import {
   viewPastSessionsTool,
 } from './developer-session.js';
 import { createBackgroundTaskTool } from './background-task.js';
+import { createDirectTerminalTools, type DirectTerminalToolName } from './direct-terminal.js';
 import type { VoiceAgent } from '../agent/voice-agent.js';
 
 // Static tools that don't need session context
@@ -51,7 +53,11 @@ const staticToolsByName = {
 } as const;
 
 // Type includes both static tools and factory-created tools
-export type ToolName = keyof typeof staticToolsByName | 'developer_session' | 'background_task';
+export type ToolName =
+  | keyof typeof staticToolsByName
+  | 'developer_session'
+  | 'background_task'
+  | DirectTerminalToolName;
 
 /**
  * Options for creating tools with injected dependencies.
@@ -76,6 +82,7 @@ export function getToolsForSession(names: ToolName[], options: ToolCreationOptio
   const { sessionId, voiceAgent } = typeof options === 'string'
     ? { sessionId: options, voiceAgent: undefined }
     : options;
+  const directToolsByName = createDirectTerminalTools(sessionId);
 
   return names.map((name) => {
     // Factory tool: developer_session needs sessionId + voiceAgent for HandoffPacket
@@ -88,6 +95,10 @@ export function getToolsForSession(names: ToolName[], options: ToolCreationOptio
         console.warn('[Tools] background_task requires voiceAgent - tool may not notify on completion');
       }
       return createBackgroundTaskTool(voiceAgent!, sessionId);
+    }
+    // Factory tools: direct voice-to-terminal tools need voice session ID scoping
+    if (name in directToolsByName) {
+      return directToolsByName[name as DirectTerminalToolName];
     }
     // Static tools
     if (name in staticToolsByName) {

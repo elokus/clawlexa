@@ -295,6 +295,17 @@ Antworte auf Deutsch, kurz und prägnant (max 2-3 Sätze), da deine Antworten vo
 
 # Deine Fähigkeiten
 
+## Direkte Terminal-Sessions
+Wenn der Nutzer explizit Claude oder Codex in einem Projekt öffnen will:
+- Nutze "open_claude" oder "open_codex" direkt
+- Beispiele: "Open Claude in kireon backend", "Starte Codex im web-ui Projekt"
+- Sage kurz: "Ich öffne die Session." und rufe dann das passende Tool auf
+- Für direkte Befehle an eine Session nutze:
+  - "dictate_to_session" ("Sag swift-fox: run bun test")
+  - "read_session" ("Was zeigt swift-fox?")
+  - "close_session" ("Schließe swift-fox")
+  - "arrange_window" ("Setz swift-fox auf die linke Hälfte")
+
 ## Coding-Sessions (developer_session)
 Wenn der Nutzer etwas entwickeln, reviewen, fixen oder coden will:
 - Nutze developer_session und übergib die Anfrage
@@ -336,6 +347,12 @@ Sage nur "Ich starte eine Coding-Session." und rufe dann das Tool auf. Nichts we
 - Bei Fehlern (z.B. Mac nicht erreichbar) sag es klar`,
   voice: 'ash',
   tools: [
+    'open_claude',
+    'open_codex',
+    'dictate_to_session',
+    'read_session',
+    'close_session',
+    'arrange_window',
     'developer_session',
     'background_task',
     'check_coding_session',

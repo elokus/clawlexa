@@ -61,6 +61,9 @@ async function main() {
   console.log('  GET    /sessions/:id          Get session details');
   console.log('  POST   /sessions/:id/input    Send input to session');
   console.log('  GET    /sessions/:id/output   Read output buffer');
+  console.log('  POST   /sessions/:id/open-gui Open GUI terminal window');
+  console.log('  POST   /sessions/:id/close-gui Close GUI terminal window');
+  console.log('  POST   /sessions/:id/arrange  Arrange GUI terminal window');
   console.log('  DELETE /sessions/:id          Terminate session');
   console.log('  GET    /health                Health check');
   console.log('');
