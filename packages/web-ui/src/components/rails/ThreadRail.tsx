@@ -170,10 +170,10 @@ export function ThreadRail() {
   const totalItems = (showVoiceCard ? 1 : 0) + childSessions.length;
 
   return (
-    <div className="flex flex-col h-full p-4 overflow-hidden">
+    <div className="flex flex-col h-full p-3 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2.5 mb-4 shrink-0">
-        <span className="text-xs font-semibold text-muted-foreground tracking-wide uppercase">Thread</span>
+      <div className="flex items-center gap-2.5 mb-3 shrink-0">
+        <span className="text-[11px] font-semibold text-muted-foreground tracking-wide uppercase">Thread</span>
         {totalItems > 0 && (
           <span className="text-[10px] font-mono font-semibold text-blue-600 dark:text-blue-400 px-1.5 py-0.5 bg-blue-500/10 rounded">
             {totalItems}

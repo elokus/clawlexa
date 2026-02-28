@@ -12,6 +12,7 @@ import {
   ConversationScrollButton,
   ConversationEmptyState,
 } from '@/components/ai-elements/conversation';
+import { VoiceOrb } from '../VoiceOrb';
 import {
   Message,
   MessageContent,
@@ -408,6 +409,7 @@ export function AgentStage({ stage }: AgentStageProps) {
   // Determine if this is a voice session or subagent/orchestrator
   const isVoiceSession = stage.type === 'chat' || stage.id === 'root';
   const sessionId = isVoiceSession ? null : stage.id;
+  const { voiceState } = useVoiceState();
 
   // Get data based on session type
   const timeline = useVoiceTimeline();
@@ -467,19 +469,31 @@ export function AgentStage({ stage }: AgentStageProps) {
           )}
         >
           {messages.length === 0 ? (
-            <ConversationEmptyState
-              title={isVoiceSession ? 'Awaiting Input' : 'Waiting for activity'}
-              description={
-                isVoiceSession
-                  ? 'Say "Jarvis" or "Computer" to start a conversation'
-                  : `${title} is initializing...`
-              }
-              icon={
-                <div className="w-16 h-16 flex items-center justify-center text-4xl text-muted-foreground/30 animate-pulse">
-                  {icon}
+            isVoiceSession ? (
+              <div className="h-full flex flex-col items-center justify-center gap-6">
+                <VoiceOrb state={voiceState} />
+                <div className="text-center">
+                  <div className="text-sm font-medium text-foreground/60 mb-1">
+                    {voiceState === 'idle' ? 'Awaiting Input' :
+                     voiceState === 'listening' ? 'Listening...' :
+                     voiceState === 'thinking' ? 'Processing...' : 'Speaking...'}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Say "Jarvis" or "Computer" to start
+                  </div>
                 </div>
-              }
-            />
+              </div>
+            ) : (
+              <ConversationEmptyState
+                title="Waiting for activity"
+                description={`${title} is initializing...`}
+                icon={
+                  <div className="w-16 h-16 flex items-center justify-center text-4xl text-muted-foreground/30 animate-pulse">
+                    {icon}
+                  </div>
+                }
+              />
+            )
           ) : (
             messages.map((msg, idx) => (
               <MessageBlock

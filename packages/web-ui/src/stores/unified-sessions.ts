@@ -221,6 +221,7 @@ interface UnifiedSessionsStore {
   // View State (Sessions / Prompts / Settings)
   // ─────────────────────────────────────────────────────────────────────────
   activeView: 'sessions' | 'prompts' | 'settings';
+  historyPanelOpen: boolean;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Toast Notifications
@@ -316,6 +317,7 @@ interface UnifiedSessionsStore {
   // View & Prompts Actions
   // ─────────────────────────────────────────────────────────────────────────
   setActiveView: (view: 'sessions' | 'prompts' | 'settings') => void;
+  toggleHistoryPanel: () => void;
   loadPrompts: () => Promise<void>;
   selectPrompt: (id: string) => Promise<void>;
   selectVersion: (version: string) => Promise<void>;
@@ -571,6 +573,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
   // View
   activeView: 'sessions',
+  historyPanelOpen: false,
 
   // Toasts
   toasts: [],
@@ -1705,6 +1708,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
   // ─────────────────────────────────────────────────────────────────────────
 
   setActiveView: (view) => set({ activeView: view }),
+  toggleHistoryPanel: () => set((s) => ({ historyPanelOpen: !s.historyPanelOpen })),
 
   loadPrompts: async () => {
     set({ promptsLoading: true, promptsError: null });
@@ -1851,6 +1855,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
       activeOverlay: null,
       toasts: [],
       activeView: 'sessions',
+      historyPanelOpen: false,
       prompts: [],
       selectedPromptId: null,
       selectedVersion: null,

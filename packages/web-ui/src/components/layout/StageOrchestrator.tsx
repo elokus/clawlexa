@@ -1,11 +1,12 @@
-import { AnimatePresence } from 'framer-motion';
+import { useMemo } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   useFocusedSession,
   useUnifiedSessionsStore,
   useSubagentActivities,
   useActiveView,
 } from '../../stores';
-import { BackgroundRail } from '../rails/BackgroundRail';
+import { HistoryPanel } from '../rails/HistoryPanel';
 import { ThreadRail } from '../rails/ThreadRail';
 import { AgentStage } from '../stages/AgentStage';
 import { TerminalStage } from '../stages/TerminalStage';
@@ -18,8 +19,6 @@ import { SettingsView } from '../settings/SettingsView';
 import { useToasts } from '../../stores';
 import { navigateToSession, useRouter } from '../../hooks/useRouter';
 import type { SessionTreeNode, StageItem } from '../../types';
-
-const CONTEXT_RAIL_WIDTH = 320;
 
 const ROOT_STAGE: StageItem = {
   id: 'root',
@@ -106,6 +105,7 @@ export function StageOrchestrator() {
   const activeView = useActiveView();
   const toasts = useToasts();
   const dismissToast = useUnifiedSessionsStore((s) => s.dismissToast);
+  const historyPanelOpen = useUnifiedSessionsStore((s) => s.historyPanelOpen);
 
   const subagentActivities = useSubagentActivities();
   const pendingAgentName = !focusedSession && subagentActivities.length > 0
@@ -120,55 +120,51 @@ export function StageOrchestrator() {
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-background">
-      <div
-        className={`grid h-full w-full overflow-hidden relative z-[1] ${isSettingsView ? 'grid-cols-[1fr]' : isPromptsView ? 'grid-cols-[auto_1fr]' : ''
-          }`}
-        style={!isPromptsView && !isSettingsView ? {
-          gridTemplateColumns: `auto 1fr ${CONTEXT_RAIL_WIDTH}px`,
-        } : undefined}
-      >
-        {!isSettingsView && (
-          <div className="flex flex-col h-full bg-sidebar overflow-hidden relative z-[2]">
-            <BackgroundRail />
+      {isSettingsView ? (
+        <div className="h-full overflow-hidden">
+          <SettingsView initialPage={params.settingsPage} />
+        </div>
+      ) : isPromptsView ? (
+        <div className="h-full overflow-hidden">
+          <PromptsView />
+        </div>
+      ) : (
+        <div className="relative h-full w-full overflow-hidden">
+          {/* Main content - full width */}
+          <div className="h-full w-full overflow-hidden">
+            <AnimatePresence mode="wait">
+              <ActiveStage key={stageKey} session={focusedSession} />
+            </AnimatePresence>
+
+            <GlassHUD />
+
+            <ToastOverlay
+              toasts={toasts}
+              dismissToast={dismissToast}
+              focusSession={navigateToSession}
+            />
           </div>
-        )}
 
-        {isSettingsView ? (
-          <div className="flex flex-col h-full relative overflow-hidden z-10">
-            <div className="flex-1 min-h-0 relative">
-              <SettingsView initialPage={params.settingsPage} />
-            </div>
+          {/* Floating history panel */}
+          <AnimatePresence>
+            {historyPanelOpen && (
+              <motion.div
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+              >
+                <HistoryPanel />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Floating thread rail */}
+          <div className="thread-rail-float">
+            <ThreadRail />
           </div>
-        ) : isPromptsView ? (
-          <div className="flex flex-col h-full relative overflow-hidden z-10">
-            <div className="flex-1 min-h-0 relative">
-              <PromptsView />
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-col h-full relative overflow-hidden z-10">
-              <div className="flex-1 min-h-0 relative">
-                <AnimatePresence mode="wait">
-                  <ActiveStage key={stageKey} session={focusedSession} />
-                </AnimatePresence>
-
-                <GlassHUD />
-
-                <ToastOverlay
-                  toasts={toasts}
-                  dismissToast={dismissToast}
-                  focusSession={navigateToSession}
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col h-full bg-sidebar overflow-hidden relative z-[2]">
-              <ThreadRail />
-            </div>
-          </>
-        )}
-      </div>
+        </div>
+      )}
 
       <EventsOverlay />
       <ToolsOverlay />

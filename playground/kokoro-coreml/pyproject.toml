@@ -1,0 +1,15 @@
+[project]
+name = "kokoro-coreml-playground"
+version = "0.1.0"
+description = "Kokoro TTS benchmark: ONNX-CPU vs CoreML/ANE"
+requires-python = ">=3.12"
+dependencies = [
+    "kokoro-onnx",
+    "onnxruntime>=1.17",
+    "fastapi",
+    "uvicorn",
+    "websockets",
+    "sounddevice",
+    "soundfile",
+    "numpy",
+]
