@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import ServerConfig, parse_server_config
 from .routes.health import router as health_router
+from .routes.models import router as models_router
 from .routes.stt import router as stt_router
 from .routes.tts import router as tts_router
 from .stt import get_stt_backend
@@ -73,6 +74,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(models_router)
     app.include_router(stt_router)
     app.include_router(tts_router)
 

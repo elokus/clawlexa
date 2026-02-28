@@ -1,8 +1,3 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Model Picker - Searchable combobox for OpenRouter model selection
-// Features: provider grouping, fuzzy search on id, context length + pricing display
-// ═══════════════════════════════════════════════════════════════════════════
-
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchModels, type OpenRouterModel } from '../../lib/models-api';
 
@@ -23,7 +18,6 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch models on first open
   const loadModels = useCallback(async () => {
     if (models.length > 0 || loading) return;
     setLoading(true);
@@ -38,7 +32,6 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
     }
   }, [models.length, loading]);
 
-  // Filter models by search
   const filtered = useMemo(() => {
     if (!search.trim()) return models;
     const terms = search.toLowerCase().split(/\s+/);
@@ -48,7 +41,6 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
     });
   }, [models, search]);
 
-  // Group filtered models by provider
   const grouped = useMemo(() => {
     const groups = new Map<string, OpenRouterModel[]>();
     for (const m of filtered) {
@@ -60,10 +52,8 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
     return groups;
   }, [filtered]);
 
-  // Flat list for keyboard navigation
   const flatList = useMemo(() => filtered, [filtered]);
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -75,7 +65,6 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  // Scroll highlighted item into view
   useEffect(() => {
     if (!open || !listRef.current) return;
     const item = listRef.current.querySelector(`[data-index="${highlightIndex}"]`);
@@ -126,220 +115,27 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
     return `${len}`;
   };
 
-  // Extract provider from current value for display
   const displayValue = value || 'Select model...';
 
   return (
-    <div className="model-picker" ref={containerRef}>
-      <style>{`
-        .model-picker {
-          position: relative;
-          width: 100%;
-        }
-
-        .model-picker-trigger {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          width: 100%;
-          padding: 8px 12px;
-          background: rgba(10, 10, 15, 0.8);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 6px;
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-normal);
-          cursor: pointer;
-          transition: border-color 0.15s ease;
-          text-align: left;
-        }
-
-        .model-picker-trigger:hover:not(:disabled) {
-          border-color: var(--color-cyan-dim);
-        }
-
-        .model-picker-trigger:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .model-picker-trigger-text {
-          flex: 1;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .model-picker-trigger-arrow {
-          color: var(--color-text-ghost);
-          font-size: 10px;
-          flex-shrink: 0;
-        }
-
-        .model-picker-dropdown {
-          position: absolute;
-          top: calc(100% + 4px);
-          left: 0;
-          right: 0;
-          z-index: 100;
-          background: rgba(8, 8, 14, 0.98);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 8px;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-          overflow: hidden;
-          max-height: 400px;
-          display: flex;
-          flex-direction: column;
-        }
-
-        .model-picker-search {
-          padding: 10px 12px;
-          border-bottom: 1px solid var(--color-glass-border);
-          flex-shrink: 0;
-        }
-
-        .model-picker-search input {
-          width: 100%;
-          padding: 6px 10px;
-          background: rgba(15, 15, 24, 0.8);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 4px;
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-normal);
-          outline: none;
-        }
-
-        .model-picker-search input:focus {
-          border-color: var(--color-cyan);
-        }
-
-        .model-picker-search input::placeholder {
-          color: var(--color-text-ghost);
-        }
-
-        .model-picker-list {
-          overflow-y: auto;
-          flex: 1;
-          max-height: 340px;
-        }
-
-        .model-picker-list::-webkit-scrollbar {
-          width: 6px;
-        }
-
-        .model-picker-list::-webkit-scrollbar-track {
-          background: transparent;
-        }
-
-        .model-picker-list::-webkit-scrollbar-thumb {
-          background: rgba(56, 189, 248, 0.2);
-          border-radius: 3px;
-        }
-
-        .model-picker-group-header {
-          padding: 6px 12px;
-          font-family: var(--font-mono);
-          font-size: 10px;
-          font-weight: 600;
-          color: var(--color-text-ghost);
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          background: rgba(15, 15, 24, 0.4);
-          position: sticky;
-          top: 0;
-          z-index: 1;
-        }
-
-        .model-picker-item {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 12px;
-          cursor: pointer;
-          transition: background 0.1s ease;
-        }
-
-        .model-picker-item:hover,
-        .model-picker-item[data-highlighted="true"] {
-          background: rgba(56, 189, 248, 0.08);
-        }
-
-        .model-picker-item[data-selected="true"] {
-          background: rgba(56, 189, 248, 0.12);
-        }
-
-        .model-picker-item-id {
-          flex: 1;
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-normal);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .model-picker-item-meta {
-          display: flex;
-          gap: 8px;
-          flex-shrink: 0;
-        }
-
-        .model-picker-item-badge {
-          padding: 2px 6px;
-          border-radius: 3px;
-          font-family: var(--font-mono);
-          font-size: 10px;
-          white-space: nowrap;
-        }
-
-        .model-picker-item-ctx {
-          background: rgba(139, 92, 246, 0.12);
-          color: rgba(139, 92, 246, 0.8);
-        }
-
-        .model-picker-item-price {
-          background: rgba(52, 211, 153, 0.12);
-          color: rgba(52, 211, 153, 0.8);
-        }
-
-        .model-picker-empty {
-          padding: 24px 12px;
-          text-align: center;
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-ghost);
-        }
-
-        .model-picker-count {
-          padding: 6px 12px;
-          border-top: 1px solid var(--color-glass-border);
-          font-family: var(--font-mono);
-          font-size: 10px;
-          color: var(--color-text-ghost);
-          text-align: right;
-          flex-shrink: 0;
-        }
-      `}</style>
-
-      {/* Trigger button */}
+    <div className="relative w-full" ref={containerRef}>
       <button
-        className="model-picker-trigger"
+        className="flex items-center gap-2 w-full px-3 py-2 bg-background border border-border rounded-md font-mono text-xs text-foreground cursor-pointer text-left hover:border-muted-foreground/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         onClick={handleOpen}
         disabled={disabled}
         type="button"
       >
-        <span className="model-picker-trigger-text">{displayValue}</span>
-        <span className="model-picker-trigger-arrow">▼</span>
+        <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{displayValue}</span>
+        <span className="text-muted-foreground text-[10px] shrink-0">▼</span>
       </button>
 
-      {/* Dropdown */}
       {open && (
-        <div className="model-picker-dropdown">
-          <div className="model-picker-search">
+        <div className="absolute top-[calc(100%+4px)] left-0 right-0 z-[100] bg-card border border-border rounded-lg shadow-xl overflow-hidden max-h-[400px] flex flex-col">
+          <div className="p-2.5 border-b border-border shrink-0">
             <input
               ref={inputRef}
               type="text"
+              className="w-full px-2.5 py-1.5 bg-background border border-border rounded font-mono text-xs text-foreground focus:outline-none focus:border-ring placeholder:text-muted-foreground"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -350,40 +146,46 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
             />
           </div>
 
-          <div className="model-picker-list" ref={listRef}>
+          <div className="overflow-y-auto flex-1 max-h-[340px]" ref={listRef}>
             {loading && (
-              <div className="model-picker-empty">Loading models...</div>
+              <div className="py-6 text-center font-mono text-xs text-muted-foreground">Loading models...</div>
             )}
             {error && (
-              <div className="model-picker-empty" style={{ color: 'var(--color-rose)' }}>
-                {error}
-              </div>
+              <div className="py-6 text-center font-mono text-xs text-red-500">{error}</div>
             )}
             {!loading && !error && flatList.length === 0 && (
-              <div className="model-picker-empty">No models found</div>
+              <div className="py-6 text-center font-mono text-xs text-muted-foreground">No models found</div>
             )}
             {!loading && !error && Array.from(grouped.entries()).map(([provider, providerModels]) => (
               <div key={provider}>
-                <div className="model-picker-group-header">{provider}</div>
+                <div className="px-3 py-1.5 font-mono text-[10px] font-semibold text-muted-foreground uppercase tracking-wide bg-muted/50 sticky top-0 z-[1]">
+                  {provider}
+                </div>
                 {providerModels.map((model) => {
                   const idx = flatList.indexOf(model);
                   return (
                     <div
                       key={model.id}
-                      className="model-picker-item"
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors ${
+                        idx === highlightIndex
+                          ? 'bg-accent'
+                          : model.id === value
+                          ? 'bg-accent/50'
+                          : 'hover:bg-accent/50'
+                      }`}
                       data-index={idx}
                       data-highlighted={idx === highlightIndex}
                       data-selected={model.id === value}
                       onClick={() => handleSelect(model.id)}
                     >
-                      <span className="model-picker-item-id">
+                      <span className="flex-1 font-mono text-xs text-foreground overflow-hidden text-ellipsis whitespace-nowrap">
                         {model.id.split('/').slice(1).join('/')}
                       </span>
-                      <div className="model-picker-item-meta">
-                        <span className="model-picker-item-badge model-picker-item-ctx">
+                      <div className="flex gap-2 shrink-0">
+                        <span className="px-1.5 py-0.5 rounded font-mono text-[10px] bg-purple-500/10 text-purple-500 whitespace-nowrap">
                           {formatContext(model.context_length)}
                         </span>
-                        <span className="model-picker-item-badge model-picker-item-price">
+                        <span className="px-1.5 py-0.5 rounded font-mono text-[10px] bg-green-500/10 text-green-500 whitespace-nowrap">
                           {formatPrice(model.pricing.prompt)}
                         </span>
                       </div>
@@ -395,7 +197,7 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
           </div>
 
           {!loading && flatList.length > 0 && (
-            <div className="model-picker-count">
+            <div className="px-3 py-1.5 border-t border-border font-mono text-[10px] text-muted-foreground text-right shrink-0">
               {flatList.length} model{flatList.length !== 1 ? 's' : ''}
             </div>
           )}

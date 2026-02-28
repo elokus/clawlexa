@@ -9,7 +9,13 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-export type SettingsPage = 'agents' | 'voice-pipeline' | 'audio' | 'credentials' | 'system';
+export type SettingsPage =
+  | 'agents'
+  | 'voice-pipeline'
+  | 'audio'
+  | 'credentials'
+  | 'models'
+  | 'system';
 
 export interface RouteParams {
   sessionId?: string;
@@ -24,7 +30,14 @@ export interface RouterState {
 /**
  * Parse the current URL path and extract route parameters.
  */
-const SETTINGS_PAGES: Set<string> = new Set(['agents', 'voice-pipeline', 'audio', 'credentials', 'system']);
+const SETTINGS_PAGES: Set<string> = new Set([
+  'agents',
+  'voice-pipeline',
+  'audio',
+  'credentials',
+  'models',
+  'system',
+]);
 
 function parseRoute(pathname: string): RouterState {
   const params: RouteParams = {};

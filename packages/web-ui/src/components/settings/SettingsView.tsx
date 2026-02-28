@@ -11,6 +11,7 @@ import { SettingsVoicePipeline } from './SettingsVoicePipeline';
 import { SettingsAudio } from './SettingsAudio';
 import { SettingsCredentials } from './SettingsCredentials';
 import { SettingsSystem } from './SettingsSystem';
+import { SettingsModels } from './SettingsModels';
 import type { SettingsPage } from '../../hooks/useRouter';
 
 const SIDEBAR_WIDTH = 240;
@@ -32,6 +33,10 @@ const PAGE_META: Record<SettingsPage, { title: string; description: string }> = 
     title: 'Credentials',
     description: 'Manage API keys and authentication profiles for voice providers.',
   },
+  models: {
+    title: 'Model Control',
+    description: 'Download, load, and benchmark local STT/TTS models with live playground metrics.',
+  },
   system: {
     title: 'System',
     description: 'Advanced settings, word timestamps, and debug information.',
@@ -48,6 +53,8 @@ function PageContent({ page }: { page: SettingsPage }) {
       return <SettingsAudio />;
     case 'credentials':
       return <SettingsCredentials />;
+    case 'models':
+      return <SettingsModels />;
     case 'system':
       return <SettingsSystem />;
   }

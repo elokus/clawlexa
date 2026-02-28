@@ -35,6 +35,11 @@ uv run local-inference \
 ## Endpoints
 
 - `GET /health`
+- `GET /v1/models/catalog`
+- `GET /v1/models/state`
+- `POST /v1/models/download`
+- `POST /v1/models/load`
+- `POST /v1/playground/tts/benchmark`
 - `POST /v1/audio/transcriptions`
 - `WS /v1/audio/stream`
 - `POST /v1/audio/speech`

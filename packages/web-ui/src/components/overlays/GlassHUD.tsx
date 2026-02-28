@@ -1,19 +1,10 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Glass HUD - Teleprompter-style overlay for spoken transcript
-// Shows current sentence with word-by-word highlighting
-// ═══════════════════════════════════════════════════════════════════════════
-
 import { useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceTimeline, useVoiceState, useFocusedSession } from '../../stores';
 import { VoiceIndicator } from '../VoiceIndicator';
-import { useAudioControllerRef } from '../../contexts/audio-context';
-import { useSpokenHighlight } from '../../hooks/useSpokenHighlight';
-import { wordCuesToCueEndMs } from '../../lib/spoken-cues';
 import type { TranscriptItem, TimelineItem } from '../../types';
 
 interface GlassHUDProps {
-  /** Show even when not on terminal stage */
   forceShow?: boolean;
 }
 
@@ -22,14 +13,10 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
   const timeline = useVoiceTimeline();
   const focusedSession = useFocusedSession();
 
-  // Only show HUD when:
-  // 1. Agent is speaking or thinking
-  // 2. We're on a terminal stage (or forceShow is true)
   const isAgentActive = state === 'speaking' || state === 'thinking';
   const isTerminalStage = focusedSession?.type === 'terminal';
   const shouldShow = isAgentActive && (isTerminalStage || forceShow);
 
-  // Get the latest assistant message (what's being spoken) from timeline
   const latestMessage = useMemo(() => {
     const assistantTranscripts = timeline.filter(
       (item): item is TranscriptItem =>
@@ -38,181 +25,67 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
     return assistantTranscripts[assistantTranscripts.length - 1] || null;
   }, [timeline]);
 
-  const audioControllerRef = useAudioControllerRef();
   const generatedText = latestMessage?.generatedContent ?? latestMessage?.content ?? '';
+  const spokenText = latestMessage?.spokenContent ?? '';
 
-  // Split generated text into words for highlighting effect
   const words = useMemo(() => {
     if (!generatedText) return [];
     return generatedText.split(/\s+/).filter(Boolean);
   }, [generatedText]);
 
-  // Use runtime-provided cues (backend always generates synthetic cues when
-  // the TTS provider does not supply word timestamps).
-  const wordCueEndMs = useMemo(
-    () => wordCuesToCueEndMs(latestMessage?.wordCues, words.length),
-    [words, latestMessage?.wordCues]
-  );
+  const spokenWordCount = useMemo(() => {
+    if (!latestMessage) return 0;
+    if (typeof latestMessage.spokenWords === 'number') {
+      return Math.max(0, Math.min(latestMessage.spokenWords, words.length));
+    }
+    if (!spokenText.trim()) return 0;
+    return Math.max(0, Math.min(spokenText.trim().split(/\s+/).length, words.length));
+  }, [latestMessage, spokenText, words.length]);
 
-  // Highlight is driven by the client-side AudioContext playback clock.
-  const spokenWordCount = useSpokenHighlight({
-    totalWords: words.length,
-    isFinalized: latestMessage?.spokenFinalized ?? false,
-    isSpeaking: state === 'speaking',
-    audioController: audioControllerRef.current,
-    turnKey: latestMessage?.id ?? null,
-    wordCueEndMs,
-  });
+  const stateDotColor = state === 'speaking'
+    ? 'bg-green-500'
+    : 'bg-purple-500';
 
   return (
     <AnimatePresence>
       {shouldShow && (
         <motion.div
-          className="glass-hud"
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-48px)] max-w-[600px] px-5 py-4 bg-card/95 backdrop-blur-xl rounded-2xl shadow-xl z-50"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 20 }}
           transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
         >
-          <style>{`
-            .glass-hud {
-              position: absolute;
-              bottom: 24px;
-              left: 50%;
-              transform: translateX(-50%);
-              width: calc(100% - 48px);
-              max-width: 600px;
-              padding: 16px 20px;
-              background: rgba(5, 5, 10, 0.85);
-              backdrop-filter: blur(24px);
-              border: 1px solid rgba(56, 189, 248, 0.15);
-              border-radius: 16px;
-              box-shadow:
-                0 8px 32px rgba(0, 0, 0, 0.4),
-                0 0 0 1px rgba(56, 189, 248, 0.05),
-                inset 0 1px 0 rgba(255, 255, 255, 0.03);
-              z-index: 50;
-            }
-
-            .hud-header {
-              display: flex;
-              align-items: center;
-              justify-content: space-between;
-              margin-bottom: 12px;
-            }
-
-            .hud-profile {
-              display: flex;
-              align-items: center;
-              gap: 8px;
-            }
-
-            .hud-profile-name {
-              font-family: var(--font-display);
-              font-size: 10px;
-              letter-spacing: 0.15em;
-              color: var(--color-cyan);
-              text-transform: uppercase;
-            }
-
-            .hud-state {
-              display: flex;
-              align-items: center;
-              gap: 6px;
-              font-family: var(--font-mono);
-              font-size: 9px;
-              color: var(--color-text-ghost);
-              text-transform: uppercase;
-              letter-spacing: 0.1em;
-            }
-
-            .hud-state-dot {
-              width: 6px;
-              height: 6px;
-              border-radius: 50%;
-              background: var(--color-emerald);
-              animation: hud-pulse 1.5s ease-in-out infinite;
-            }
-
-            .hud-state-dot.speaking {
-              background: var(--color-cyan);
-            }
-
-            .hud-state-dot.thinking {
-              background: var(--color-amber);
-            }
-
-            @keyframes hud-pulse {
-              0%, 100% { opacity: 1; }
-              50% { opacity: 0.4; }
-            }
-
-            .hud-transcript {
-              font-family: var(--font-ui);
-              font-size: 15px;
-              line-height: 1.7;
-              color: var(--color-text-dim);
-            }
-
-            .hud-word {
-              display: inline;
-              transition: color 0.15s ease;
-            }
-
-            .hud-word.spoken {
-              color: var(--color-text-bright);
-            }
-
-            .hud-word.current {
-              color: var(--color-cyan);
-              text-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
-            }
-
-            .hud-word.pending {
-              color: var(--color-text-ghost);
-            }
-
-            .hud-empty {
-              font-family: var(--font-mono);
-              font-size: 12px;
-              color: var(--color-text-ghost);
-              font-style: italic;
-            }
-
-            .hud-indicator {
-              position: absolute;
-              right: 16px;
-              top: 50%;
-              transform: translateY(-50%);
-            }
-          `}</style>
-
-          <div className="hud-header">
-            <div className="hud-profile">
-              <span className="hud-profile-name">{profile || 'Agent'}</span>
-            </div>
-            <div className="hud-state">
-              <span className={`hud-state-dot ${state}`} />
+          {/* Header */}
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wider">
+              {profile || 'Agent'}
+            </span>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+              <span className={`w-1.5 h-1.5 rounded-full ${stateDotColor} animate-pulse`} />
               {state === 'speaking' ? 'Speaking' : 'Thinking'}
             </div>
           </div>
 
-          <div className="hud-transcript">
+          {/* Transcript */}
+          <div className="text-[15px] leading-[1.7] text-muted-foreground">
             {words.length === 0 ? (
-              <span className="hud-empty">Preparing response...</span>
+              <span className="text-sm text-muted-foreground/50 italic">Preparing response...</span>
             ) : (
               words.map((word, index) => {
-                let className = 'hud-word';
-                if (index < spokenWordCount) {
-                  className += ' spoken';
-                } else if (index === spokenWordCount) {
-                  className += ' current';
-                } else {
-                  className += ' pending';
-                }
-
+                const isSpoken = index < spokenWordCount;
+                const isCurrent = index === spokenWordCount;
                 return (
-                  <span key={`${index}-${word}`} className={className}>
+                  <span
+                    key={`${index}-${word}`}
+                    className={`inline transition-colors duration-150 ${
+                      isSpoken
+                        ? 'text-foreground'
+                        : isCurrent
+                        ? 'text-blue-500 dark:text-blue-400'
+                        : 'text-muted-foreground/40'
+                    }`}
+                  >
                     {word}{' '}
                   </span>
                 );
@@ -220,7 +93,8 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
             )}
           </div>
 
-          <div className="hud-indicator">
+          {/* Voice indicator */}
+          <div className="absolute right-4 top-1/2 -translate-y-1/2">
             <VoiceIndicator state={state} size="sm" />
           </div>
         </motion.div>

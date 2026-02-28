@@ -481,16 +481,7 @@ export function VoiceRuntimePanel({
 
   if (!config) {
     return (
-      <div
-        style={{
-          padding: '10px 14px',
-          borderTop: '1px solid var(--color-border)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12,
-          color: 'var(--color-text-dim)',
-          background: 'rgba(8, 10, 16, 0.94)',
-        }}
-      >
+      <div className="px-3.5 py-2.5 border-t border-border font-mono text-xs text-muted-foreground bg-card">
         {loading ? 'Loading voice runtime configuration...' : error || 'Voice runtime configuration unavailable.'}
       </div>
     );
@@ -498,93 +489,16 @@ export function VoiceRuntimePanel({
 
   return (
     <>
-      <style>{`
-        .voice-runtime-strip {
-          border-top: 1px solid var(--color-border);
-          background: rgba(7, 10, 16, 0.94);
-          padding: 10px 14px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 14px;
-        }
-
-        .voice-runtime-strip-main {
-          min-width: 0;
-          display: grid;
-          gap: 4px;
-        }
-
-        .voice-runtime-strip-title {
-          font-family: var(--font-display);
-          font-size: 11px;
-          color: var(--color-text-normal);
-          letter-spacing: 0.11em;
-          text-transform: uppercase;
-        }
-
-        .voice-runtime-strip-summary {
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-dim);
-          line-height: 1.45;
-          white-space: nowrap;
-          text-overflow: ellipsis;
-          overflow: hidden;
-        }
-
-        .voice-runtime-open-btn {
-          min-width: unset;
-          min-height: unset;
-          border: 1px solid rgba(56, 189, 248, 0.36);
-          background: rgba(56, 189, 248, 0.1);
-          color: var(--color-cyan);
-          font-family: var(--font-mono);
-          font-size: 12px;
-          letter-spacing: 0.02em;
-          border-radius: 8px;
-          padding: 8px 12px;
-          flex-shrink: 0;
-          transition: border-color 0.2s ease, background 0.2s ease;
-        }
-
-        .voice-runtime-open-btn:hover {
-          border-color: rgba(56, 189, 248, 0.72);
-          background: rgba(56, 189, 248, 0.18);
-        }
-
-        .voice-runtime-info {
-          margin: 0;
-          font-family: var(--font-ui);
-          font-size: 12px;
-          color: var(--color-text-ghost);
-          line-height: 1.5;
-        }
-
-        @media (max-width: 920px) {
-          .voice-runtime-strip {
-            align-items: stretch;
-            flex-direction: column;
-            gap: 10px;
-          }
-
-          .voice-runtime-open-btn {
-            width: 100%;
-          }
-
-          .voice-runtime-strip-summary {
-            white-space: normal;
-            overflow: visible;
-          }
-        }
-      `}</style>
-
-      <div className="voice-runtime-strip">
-        <div className="voice-runtime-strip-main">
-          <div className="voice-runtime-strip-title">Voice Runtime</div>
-          <div className="voice-runtime-strip-summary">{runtimeSummary}</div>
+      <div className="border-t border-border bg-card px-3.5 py-2.5 flex items-center justify-between gap-3.5 max-sm:flex-col max-sm:items-stretch max-sm:gap-2.5">
+        <div className="min-w-0 grid gap-1">
+          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Voice Runtime</div>
+          <div className="font-mono text-xs text-muted-foreground leading-snug truncate max-sm:whitespace-normal max-sm:overflow-visible">{runtimeSummary}</div>
         </div>
-        <button type="button" className="voice-runtime-open-btn" onClick={() => setOpen(true)}>
+        <button
+          type="button"
+          className="shrink-0 px-3 py-2 border border-primary/40 bg-primary/10 text-primary font-mono text-xs rounded-lg hover:border-primary/70 hover:bg-primary/20 transition-colors max-sm:w-full"
+          onClick={() => setOpen(true)}
+        >
           Configure Runtime
         </button>
       </div>
@@ -689,8 +603,6 @@ export function VoiceRuntimePanel({
           const voiceOptions = selectedProvider?.voiceCatalogKey
             ? asVoiceList(catalog, selectedProvider.voiceCatalogKey)
             : [];
-          const supportsVoiceCatalog = Boolean(selectedProvider?.voiceCatalogKey);
-          const hasVoiceOptions = voiceOptions.length > 0;
 
           return (
             <ConfigSection
@@ -721,77 +633,34 @@ export function VoiceRuntimePanel({
                     onChange={(next) => updatePath(stage.authPath, next)}
                     profileNames={authProfileNames}
                   />
-                  {supportsVoiceCatalog && hasVoiceOptions ? (
-                    <VoiceSelector
-                      label="Voice / Model"
-                      voices={voiceOptions}
-                      value={asString(getPathValue(config, stage.voicePath), asString(getPathValue(config, stage.modelPath)))}
-                      onChange={(voiceId) => {
-                        const voicePath = stage.voicePath as string;
-                        updateMany([
-                          { path: stage.modelPath, value: voiceId },
-                          { path: voicePath, value: voiceId },
-                        ]);
-                      }}
-                      languageFilter={config.voice.language}
-                    />
-                  ) : (
-                    <>
-                      {modelOptions.length > 0 ? (
-                        <ConfigField label="Model">
-                          <select
-                            value={asString(getPathValue(config, stage.modelPath))}
-                            onChange={(event) => updatePath(stage.modelPath, event.target.value)}
-                          >
-                            {modelOptions.map((model) => (
-                              <option key={model} value={model}>
-                                {model}
-                              </option>
-                            ))}
-                          </select>
-                        </ConfigField>
-                      ) : (
-                        <ConfigField label="Model">
-                          <input
-                            value={asString(getPathValue(config, stage.modelPath))}
-                            onChange={(event) => updatePath(stage.modelPath, event.target.value)}
-                          />
-                        </ConfigField>
-                      )}
-                      <ConfigField label="Voice">
-                        <input
-                          value={asString(getPathValue(config, stage.voicePath), '')}
-                          onChange={(event) =>
-                            updatePath(stage.voicePath as string, event.target.value)
-                          }
-                        />
-                      </ConfigField>
-                    </>
-                  )}
+                  <VoiceSelector
+                    label="Voice / Model"
+                    voices={voiceOptions}
+                    value={asString(getPathValue(config, stage.voicePath), asString(getPathValue(config, stage.modelPath)))}
+                    onChange={(voiceId) => {
+                      const voicePath = stage.voicePath as string;
+                      updateMany([
+                        { path: stage.modelPath, value: voiceId },
+                        { path: voicePath, value: voiceId },
+                      ]);
+                    }}
+                    languageFilter={config.voice.language}
+                  />
                 </>
               ) : (
                 <>
-                  {modelOptions.length > 0 ? (
-                    <ConfigField label="Model">
-                      <select
-                        value={asString(getPathValue(config, stage.modelPath))}
-                        onChange={(event) => updatePath(stage.modelPath, event.target.value)}
-                      >
-                        {modelOptions.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </select>
-                    </ConfigField>
-                  ) : (
-                    <ConfigField label="Model">
-                      <input
-                        value={asString(getPathValue(config, stage.modelPath))}
-                        onChange={(event) => updatePath(stage.modelPath, event.target.value)}
-                      />
-                    </ConfigField>
-                  )}
+                  <ConfigField label="Model">
+                    <select
+                      value={asString(getPathValue(config, stage.modelPath))}
+                      onChange={(event) => updatePath(stage.modelPath, event.target.value)}
+                    >
+                      {modelOptions.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </ConfigField>
                   <AuthProfileSelect
                     value={asString(getPathValue(config, stage.authPath), '') || undefined}
                     onChange={(next) => updatePath(stage.authPath, next)}
@@ -941,62 +810,6 @@ export function VoiceRuntimePanel({
           </ConfigSection>
         )}
 
-        <ConfigSection
-          title="Synthetic Word Timestamps"
-          description="Controls timing for synthetic word timestamps generated by the runtime when the TTS provider does not supply word-level timing."
-          columns={2}
-        >
-          <ConfigField label="Prefer provider timestamps" fullWidth>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={config.voice.turn.preferProviderTimestamps ?? true}
-                onChange={(event) => {
-                  updateTurn({
-                    preferProviderTimestamps: event.target.checked,
-                  });
-                }}
-                className="accent-cyan-400"
-              />
-              <span className="text-xs text-[var(--color-text-dim)]">
-                Use word timestamps from the TTS provider when available. When off, always uses synthetic timestamps.
-              </span>
-            </label>
-          </ConfigField>
-
-          <ConfigField label="Speed (ms/word)">
-            <input
-              type="number"
-              value={config.voice.turn.spokenHighlightMsPerWord}
-              onChange={(event) => {
-                updateTurn({
-                  spokenHighlightMsPerWord: parseNumeric(
-                    event.target.value,
-                    config.voice.turn.spokenHighlightMsPerWord,
-                    1
-                  ),
-                });
-              }}
-            />
-          </ConfigField>
-
-          <ConfigField label="Punctuation Pause (ms)">
-            <input
-              type="number"
-              value={config.voice.turn.spokenHighlightPunctuationPauseMs}
-              onChange={(event) => {
-                updateTurn({
-                  spokenHighlightPunctuationPauseMs: parseNumeric(
-                    event.target.value,
-                    config.voice.turn.spokenHighlightPunctuationPauseMs,
-                    0
-                  ),
-                });
-              }}
-            />
-          </ConfigField>
-        </ConfigSection>
-
         {activeSchema && (
           <ProviderSettingsSection
             schema={activeSchema}
@@ -1011,15 +824,15 @@ export function VoiceRuntimePanel({
           description="Shows the effective runtime per wake-word profile and any static overrides."
           columns={1}
         >
-          <p className="cfg-key-value">
+          <p className="font-mono text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
             Jarvis: {effectiveSummary.jarvis || 'loading...'}
             {'\n'}
             Marvin: {effectiveSummary.marvin || 'loading...'}
           </p>
-          <p className="cfg-key-value">
+          <p className="font-mono text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
             {overridesText ? `Profile overrides: ${overridesText}` : 'Profile overrides: none'}
           </p>
-          <p className="voice-runtime-info">
+          <p className="text-xs text-muted-foreground leading-relaxed">
             Runtime config UI is rendered from runtime manifest/catalog metadata. Provider protocol logic stays in voice-runtime.
           </p>
         </ConfigSection>

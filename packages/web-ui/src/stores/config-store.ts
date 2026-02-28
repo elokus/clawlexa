@@ -172,6 +172,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
     'voice-pipeline': false,
     audio: false,
     credentials: false,
+    models: false,
     system: false,
   },
 

@@ -161,6 +161,59 @@ function maskKey(value: string): string {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
+function resolveLocalInferenceEndpoint(): string {
+  const envEndpoint = process.env.LOCAL_INFERENCE_ENDPOINT?.trim();
+  if (envEndpoint) return envEndpoint;
+
+  try {
+    const config = loadVoiceConfig();
+    const providerSettings = config.voice.providerSettings;
+    const decomposedSettings = providerSettings?.decomposed;
+    const configuredEndpoint = decomposedSettings?.localEndpoint;
+    if (typeof configuredEndpoint === 'string' && configuredEndpoint.trim().length > 0) {
+      return configuredEndpoint.trim();
+    }
+  } catch {
+    // Non-fatal: fall back to default local-inference endpoint.
+  }
+
+  return 'http://localhost:1060';
+}
+
+async function proxyLocalInferenceJson(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  upstreamPath: string
+): Promise<void> {
+  try {
+    const endpoint = new URL(upstreamPath, resolveLocalInferenceEndpoint());
+    const method = req.method ?? 'GET';
+    const hasBody = method !== 'GET' && method !== 'HEAD';
+    const payload = hasBody
+      ? await readJsonBody<Record<string, unknown>>(req)
+      : undefined;
+
+    const upstream = await fetch(endpoint, {
+      method,
+      headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
+      body: hasBody ? JSON.stringify(payload ?? {}) : undefined,
+    });
+    const text = await upstream.text();
+    res.writeHead(upstream.status, {
+      'Content-Type': upstream.headers.get('content-type') ?? 'application/json',
+    });
+    res.end(text);
+  } catch (error) {
+    console.error(`[API] Local inference proxy error (${upstreamPath}):`, error);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: `Failed to reach local inference endpoint (${resolveLocalInferenceEndpoint()})`,
+      })
+    );
+  }
+}
+
 /**
  * Handle incoming webhook and API requests.
  */
@@ -606,6 +659,86 @@ async function handleWebhook(
       console.error('[API] Error fetching models:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to fetch models' }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Local Inference Control Plane Proxy
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (req.method === 'GET' && req.url === '/api/local-inference/health') {
+    await proxyLocalInferenceJson(req, res, '/health');
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/local-inference/models/catalog') {
+    await proxyLocalInferenceJson(req, res, '/v1/models/catalog');
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/local-inference/models/state') {
+    await proxyLocalInferenceJson(req, res, '/v1/models/state');
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/local-inference/models/suggestions') {
+    await proxyLocalInferenceJson(req, res, '/v1/models/suggestions');
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/local-inference/models/download') {
+    await proxyLocalInferenceJson(req, res, '/v1/models/download');
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/local-inference/models/load') {
+    await proxyLocalInferenceJson(req, res, '/v1/models/load');
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/local-inference/playground/tts/benchmark') {
+    await proxyLocalInferenceJson(req, res, '/v1/playground/tts/benchmark');
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/local-inference/playground/tts/speech') {
+    try {
+      const payload = await readJsonBody<Record<string, unknown>>(req);
+      const endpoint = new URL('/v1/audio/speech', resolveLocalInferenceEndpoint());
+      const upstream = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!upstream.ok) {
+        const errorText = await upstream.text();
+        res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: errorText || `Local inference speech failed (${upstream.status})`,
+          })
+        );
+        return;
+      }
+
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(200, {
+        'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+        'Content-Length': String(buffer.byteLength),
+        ...(upstream.headers.get('x-audio-sample-rate')
+          ? { 'x-audio-sample-rate': upstream.headers.get('x-audio-sample-rate')! }
+          : {}),
+        ...(upstream.headers.get('x-audio-format')
+          ? { 'x-audio-format': upstream.headers.get('x-audio-format')! }
+          : {}),
+      });
+      res.end(buffer);
+    } catch (error) {
+      console.error('[API] Local inference speech proxy error:', error);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to synthesize local TTS sample' }));
     }
     return;
   }

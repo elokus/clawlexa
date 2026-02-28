@@ -1,12 +1,3 @@
-/**
- * ControlBar - Compact bottom bar with profile selector, mic button, and voice indicator.
- *
- * Redesigned for conversation-first layout:
- * - Horizontal layout fits at bottom of screen
- * - Profile pills on left, mic button center, status on right
- * - Integrated voice indicator shows state
- */
-
 import type { ProfileId, AudioMode } from '../hooks/useAudioSession';
 import type { AgentState } from '../types';
 import { VoiceIndicator } from './VoiceIndicator';
@@ -45,509 +36,159 @@ export function ControlBar({
   onToggleService,
   onSetAudioMode,
 }: ControlBarProps) {
-  const profiles: { id: ProfileId; name: string; short: string }[] = [
-    { id: 'jarvis', name: 'JARVIS', short: 'JAR' },
-    { id: 'marvin', name: 'MARVIN', short: 'MAR' },
+  const profiles: { id: ProfileId; name: string }[] = [
+    { id: 'jarvis', name: 'Jarvis' },
+    { id: 'marvin', name: 'Marvin' },
   ];
 
   const canTakeControl = agentState !== 'thinking' && agentState !== 'speaking';
 
   const stateLabels: Record<AgentState, string> = {
-    idle: 'READY',
-    listening: 'LISTENING',
-    thinking: 'PROCESSING',
-    speaking: 'SPEAKING',
+    idle: 'Ready',
+    listening: 'Listening',
+    thinking: 'Processing',
+    speaking: 'Speaking',
   };
 
   return (
-    <>
-      <style>{`
-        .control-bar-bottom {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          padding: 12px 16px;
-          background: rgba(10, 10, 18, 0.95);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          border-top: 1px solid var(--color-border);
-        }
+    <div className="flex items-center gap-4 px-4 py-2.5">
+      {/* Left — Power + Mode */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
+            serviceActive
+              ? 'bg-green-500/15 text-green-500'
+              : 'text-muted-foreground hover:text-foreground'
+          } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
+          onClick={onToggleService}
+          disabled={disabled || isRecording}
+          title={serviceActive ? 'Service ON — click to stop' : 'Service OFF — click to start'}
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M12 2v10" />
+            <path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+          </svg>
+        </button>
 
-        /* Left section - Profile pills */
-        .cb-left {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        .profile-pill {
-          padding: 6px 12px;
-          background: transparent;
-          border: 1px solid var(--color-border);
-          border-radius: 20px;
-          font-family: var(--font-display);
-          font-size: 10px;
-          letter-spacing: 0.1em;
-          color: var(--color-text-dim);
-          cursor: pointer;
-          transition: all 0.2s ease;
-          -webkit-tap-highlight-color: transparent;
-        }
-
-        .profile-pill:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-        }
-
-        .profile-pill.active {
-          background: linear-gradient(135deg, var(--color-cyan-dim), transparent);
-          border-color: var(--color-cyan);
-          color: var(--color-cyan);
-          box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
-        }
-
-        .profile-pill:not(.active):not(:disabled):hover {
-          border-color: var(--color-text-ghost);
-          color: var(--color-text-normal);
-        }
-
-        .cb-divider {
-          width: 1px;
-          height: 20px;
-          background: var(--color-border);
-          margin: 0 4px;
-        }
-
-        /* Center section - Mic button + indicator */
-        .cb-center {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          position: relative;
-        }
-
-        .mic-btn-compact {
-          width: 52px;
-          height: 52px;
-          border-radius: 50%;
-          border: 2px solid var(--color-border);
-          background: linear-gradient(145deg, var(--color-surface), var(--color-abyss));
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          transition: all 0.2s var(--ease-out);
-          -webkit-tap-highlight-color: transparent;
-          position: relative;
-        }
-
-        .mic-btn-compact:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-        }
-
-        .mic-btn-compact:not(:disabled):hover {
-          transform: scale(1.05);
-          border-color: var(--color-cyan);
-        }
-
-        .mic-btn-compact:not(:disabled):active {
-          transform: scale(0.95);
-        }
-
-        .mic-btn-compact.recording {
-          border-color: var(--color-rose);
-          background: linear-gradient(145deg, rgba(251, 113, 133, 0.15), var(--color-abyss));
-          box-shadow: 0 0 20px rgba(251, 113, 133, 0.3);
-        }
-
-        .mic-btn-compact.initializing {
-          border-color: var(--color-amber);
-        }
-
-        .mic-btn-compact svg {
-          width: 22px;
-          height: 22px;
-          color: var(--color-text-dim);
-          transition: all 0.2s ease;
-        }
-
-        .mic-btn-compact.recording svg {
-          color: var(--color-rose);
-        }
-
-        .mic-btn-compact.initializing svg {
-          color: var(--color-amber);
-          animation: pulse-spin 1s ease-in-out infinite;
-        }
-
-        @keyframes pulse-spin {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-
-        /* Recording ring animation */
-        .recording-ring-compact {
-          position: absolute;
-          inset: -6px;
-          border-radius: 50%;
-          border: 2px solid var(--color-rose);
-          opacity: 0;
-          animation: ring-expand-compact 1.2s ease-out infinite;
-        }
-
-        @keyframes ring-expand-compact {
-          0% { transform: scale(0.9); opacity: 0.6; }
-          100% { transform: scale(1.3); opacity: 0; }
-        }
-
-        /* Take control button (for replicas) */
-        .take-control-compact {
-          width: 52px;
-          height: 52px;
-          border-radius: 50%;
-          border: 2px dashed rgba(251, 191, 36, 0.4);
-          background: linear-gradient(145deg, rgba(251, 191, 36, 0.08), transparent);
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 2px;
-          cursor: pointer;
-          transition: all 0.2s var(--ease-out);
-        }
-
-        .take-control-compact:not(:disabled):hover {
-          border-color: rgba(251, 191, 36, 0.7);
-          background: linear-gradient(145deg, rgba(251, 191, 36, 0.15), transparent);
-        }
-
-        .take-control-compact:disabled {
-          opacity: 0.3;
-          cursor: not-allowed;
-        }
-
-        .take-control-compact svg {
-          width: 18px;
-          height: 18px;
-          color: rgb(251, 191, 36);
-        }
-
-        .take-control-compact span {
-          font-family: var(--font-mono);
-          font-size: 7px;
-          color: rgb(251, 191, 36);
-          letter-spacing: 0.05em;
-        }
-
-        /* Right section - Status */
-        .cb-right {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          gap: 2px;
-          min-width: 80px;
-        }
-
-        .status-badge {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          padding: 4px 8px;
-          border-radius: 4px;
-          font-family: var(--font-mono);
-          font-size: 9px;
-          letter-spacing: 0.08em;
-        }
-
-        .status-badge.master {
-          background: rgba(34, 197, 94, 0.12);
-          border: 1px solid rgba(34, 197, 94, 0.3);
-          color: rgb(34, 197, 94);
-        }
-
-        .status-badge.replica {
-          background: rgba(251, 191, 36, 0.12);
-          border: 1px solid rgba(251, 191, 36, 0.3);
-          color: rgb(251, 191, 36);
-        }
-
-        .status-dot {
-          width: 5px;
-          height: 5px;
-          border-radius: 50%;
-          background: currentColor;
-        }
-
-        .status-badge.master .status-dot {
-          animation: dot-pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes dot-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
-
-        .state-label {
-          font-family: var(--font-mono);
-          font-size: 9px;
-          color: var(--color-text-ghost);
-          letter-spacing: 0.05em;
-        }
-
-        .state-label.error {
-          color: var(--color-rose);
-        }
-
-        /* Power button */
-        .power-btn {
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          border: 2px solid var(--color-border);
-          background: linear-gradient(145deg, var(--color-surface), var(--color-abyss));
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          transition: all 0.2s var(--ease-out);
-          -webkit-tap-highlight-color: transparent;
-        }
-
-        .power-btn:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-        }
-
-        .power-btn:not(:disabled):hover {
-          transform: scale(1.05);
-        }
-
-        .power-btn.off {
-          border-color: var(--color-rose);
-          background: linear-gradient(145deg, rgba(244, 63, 94, 0.1), var(--color-abyss));
-        }
-
-        .power-btn.off svg {
-          color: var(--color-rose);
-        }
-
-        .power-btn.on {
-          border-color: var(--color-emerald);
-          background: linear-gradient(145deg, rgba(52, 211, 153, 0.1), var(--color-abyss));
-          box-shadow: 0 0 12px rgba(52, 211, 153, 0.2);
-        }
-
-        .power-btn.on svg {
-          color: var(--color-emerald);
-        }
-
-        .power-btn svg {
-          width: 18px;
-          height: 18px;
-          color: var(--color-text-dim);
-          transition: all 0.2s ease;
-        }
-
-        /* Mode toggle */
-        .mode-toggle {
-          display: flex;
-          align-items: center;
-          gap: 2px;
-          background: var(--color-abyss);
-          border: 1px solid var(--color-border);
-          border-radius: 20px;
-          padding: 2px;
-        }
-
-        .mode-btn {
-          padding: 4px 10px;
-          background: transparent;
-          border: none;
-          border-radius: 16px;
-          font-family: var(--font-mono);
-          font-size: 9px;
-          letter-spacing: 0.05em;
-          color: var(--color-text-ghost);
-          cursor: pointer;
-          transition: all 0.2s ease;
-          -webkit-tap-highlight-color: transparent;
-        }
-
-        .mode-btn:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-        }
-
-        .mode-btn.active {
-          background: linear-gradient(135deg, var(--color-cyan-dim), transparent);
-          color: var(--color-cyan);
-        }
-
-        .mode-btn:not(.active):not(:disabled):hover {
-          color: var(--color-text-normal);
-        }
-
-        /* Mobile adjustments */
-        @media (max-width: 480px) {
-          .control-bar-bottom {
-            padding: 10px 12px;
-            gap: 8px;
-          }
-
-          .profile-pill {
-            padding: 5px 10px;
-            font-size: 9px;
-          }
-
-          .mic-btn-compact {
-            width: 48px;
-            height: 48px;
-          }
-
-          .mic-btn-compact svg {
-            width: 20px;
-            height: 20px;
-          }
-
-          .cb-right {
-            min-width: 64px;
-          }
-
-          .power-btn {
-            width: 32px;
-            height: 32px;
-          }
-
-          .power-btn svg {
-            width: 16px;
-            height: 16px;
-          }
-
-          .mode-btn {
-            padding: 3px 8px;
-            font-size: 8px;
-          }
-        }
-      `}</style>
-
-      <div className="control-bar-bottom">
-        {/* Left - Power button + Mode toggle + Profile selector */}
-        <div className="cb-left">
-          {/* Power button */}
+        <div className="flex items-center bg-muted/60 rounded-md p-0.5">
           <button
             type="button"
-            className={`power-btn ${serviceActive ? 'on' : 'off'}`}
-            onClick={onToggleService}
+            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+              audioMode === 'web'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground'
+            } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
+            onClick={() => onSetAudioMode?.('web')}
             disabled={disabled || isRecording}
-            aria-label={serviceActive ? 'Stop service' : 'Start service'}
-            title={serviceActive ? 'Service ON - Click to stop' : 'Service OFF - Click to start'}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M12 2v10" />
-              <path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
-            </svg>
+            Web
           </button>
-
-          <div className="cb-divider" />
-
-          {/* Mode toggle */}
-          <div className="mode-toggle">
-            <button
-              type="button"
-              className={`mode-btn ${audioMode === 'web' ? 'active' : ''}`}
-              onClick={() => onSetAudioMode?.('web')}
-              disabled={disabled || isRecording}
-            >
-              WEB
-            </button>
-            <button
-              type="button"
-              className={`mode-btn ${audioMode === 'local' ? 'active' : ''}`}
-              onClick={() => onSetAudioMode?.('local')}
-              disabled={disabled || isRecording}
-            >
-              DEVICE
-            </button>
-          </div>
-
-          <div className="cb-divider" />
-
-          {profiles.map((profile) => (
-            <button
-              key={profile.id}
-              type="button"
-              className={`profile-pill ${activeProfile === profile.id ? 'active' : ''}`}
-              onClick={() => onProfileChange(profile.id)}
-              disabled={isRecording || disabled || !serviceActive}
-            >
-              {profile.name}
-            </button>
-          ))}
-          <div className="cb-divider" />
-          <RecordButton />
+          <button
+            type="button"
+            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+              audioMode === 'local'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground'
+            } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
+            onClick={() => onSetAudioMode?.('local')}
+            disabled={disabled || isRecording}
+          >
+            Device
+          </button>
         </div>
 
-        {/* Center - Mic button + Voice indicator */}
-        <div className="cb-center">
-          <VoiceIndicator state={agentState} size="md" />
+        {profiles.map((profile) => (
+          <button
+            key={profile.id}
+            type="button"
+            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              activeProfile === profile.id
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:text-foreground'
+            } ${isRecording || disabled || !serviceActive ? 'opacity-30 cursor-not-allowed' : ''}`}
+            onClick={() => onProfileChange(profile.id)}
+            disabled={isRecording || disabled || !serviceActive}
+          >
+            {profile.name}
+          </button>
+        ))}
+      </div>
 
-          {isMaster ? (
-            <div style={{ position: 'relative' }}>
-              {isRecording && <div className="recording-ring-compact" />}
-              <button
-                type="button"
-                className={`mic-btn-compact ${isRecording ? 'recording' : ''} ${isInitializing ? 'initializing' : ''}`}
-                onClick={onToggleRecording}
-                disabled={disabled || isInitializing || (!serviceActive && !isRecording)}
-                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-                title={!serviceActive && !isRecording ? 'Start service first' : undefined}
-              >
-                {isRecording ? (
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="6" y="6" width="12" height="12" rx="2" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                    <line x1="12" y1="19" x2="12" y2="23" />
-                    <line x1="8" y1="23" x2="16" y2="23" />
-                  </svg>
-                )}
-              </button>
-            </div>
-          ) : (
+      {/* Center — Mic button (hero element) */}
+      <div className="flex-1 flex items-center justify-center gap-3">
+        <VoiceIndicator state={agentState} size="md" />
+
+        {isMaster ? (
+          <div className="relative">
+            {isRecording && (
+              <div className="absolute -inset-2 rounded-full border-2 border-red-500/50 animate-ping pointer-events-none" />
+            )}
             <button
               type="button"
-              className="take-control-compact"
-              onClick={onRequestMaster}
-              disabled={!canTakeControl || disabled}
-              aria-label="Take control"
+              className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+                isRecording
+                  ? 'bg-red-500 text-white shadow-lg shadow-red-500/25'
+                  : isInitializing
+                  ? 'bg-orange-500/20 text-orange-500 animate-pulse'
+                  : serviceActive
+                  ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-95'
+                  : 'bg-muted text-muted-foreground'
+              } ${disabled || isInitializing || (!serviceActive && !isRecording) ? 'opacity-40 cursor-not-allowed' : ''}`}
+              onClick={onToggleRecording}
+              disabled={disabled || isInitializing || (!serviceActive && !isRecording)}
+              aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+              title={!serviceActive && !isRecording ? 'Start service first' : undefined}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8" />
-                <path d="M10 19v-6.8a1.5 1.5 0 0 1 3 0v1.3" />
-                <path d="M13 17v-2.5a1.5 1.5 0 0 1 3 0V17" />
-                <path d="M16 17v-1.5a1.5 1.5 0 0 1 3 0V19a4 4 0 0 1-4 4h-2.5" />
-              </svg>
-              <span>CTRL</span>
+              {isRecording ? (
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
+              )}
             </button>
-          )}
-        </div>
-
-        {/* Right - Status */}
-        <div className="cb-right">
-          <div className={`status-badge ${isMaster ? 'master' : 'replica'}`}>
-            <span className="status-dot" />
-            <span>{isMaster ? 'MASTER' : 'REPLICA'}</span>
           </div>
-          <span className={`state-label ${error ? 'error' : ''}`}>
+        ) : (
+          <button
+            type="button"
+            className={`w-14 h-14 rounded-full border-2 border-dashed border-orange-500/40 bg-orange-500/5 flex flex-col items-center justify-center gap-0.5 transition-colors ${
+              !canTakeControl || disabled ? 'opacity-30 cursor-not-allowed' : 'hover:border-orange-500/70 hover:bg-orange-500/10'
+            }`}
+            onClick={onRequestMaster}
+            disabled={!canTakeControl || disabled}
+            aria-label="Take control"
+          >
+            <svg className="w-5 h-5 text-orange-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8" />
+              <path d="M10 19v-6.8a1.5 1.5 0 0 1 3 0v1.3" />
+              <path d="M13 17v-2.5a1.5 1.5 0 0 1 3 0V17" />
+              <path d="M16 17v-1.5a1.5 1.5 0 0 1 3 0V19a4 4 0 0 1-4 4h-2.5" />
+            </svg>
+            <span className="text-[7px] font-mono text-orange-500">CTRL</span>
+          </button>
+        )}
+      </div>
+
+      {/* Right — Status + Capture */}
+      <div className="flex items-center gap-3">
+        <RecordButton />
+        <div className="flex flex-col items-end gap-0.5">
+          <span className={`text-[10px] font-mono ${
+            isMaster ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'
+          }`}>
+            {isMaster ? 'Master' : 'Replica'}
+          </span>
+          <span className={`text-[10px] ${error ? 'text-red-500' : 'text-muted-foreground'}`}>
             {error || stateLabels[agentState]}
           </span>
         </div>
       </div>
-    </>
+    </div>
   );
 }

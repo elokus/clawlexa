@@ -151,9 +151,9 @@ function TextPart({ text, pending }: { text: string; pending?: boolean }) {
 function TypingIndicator() {
   return (
     <span className="inline-flex items-center gap-1 ml-1">
-      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '300ms' }} />
     </span>
   );
 }
@@ -172,18 +172,18 @@ function ReasoningPart({
   return (
     <details
       className={cn(
-        'rounded-lg border border-violet-500/20 bg-violet-500/5 overflow-hidden',
+        'rounded-lg border border-purple-500/20 bg-purple-500/5 overflow-hidden',
         pending && 'animate-pulse'
       )}
       open={isOpen}
       onToggle={(e) => setIsOpen(e.currentTarget.open)}
     >
-      <summary className="px-3 py-2 cursor-pointer text-xs font-mono text-violet-400 flex items-center gap-2">
+      <summary className="px-3 py-2 cursor-pointer text-xs font-mono text-purple-500 dark:text-purple-400 flex items-center gap-2">
         <span className="text-[10px]">{isOpen ? '▼' : '▶'}</span>
         <span>{pending ? 'Thinking...' : 'Reasoning'}</span>
-        {pending && <Loader size={12} className="text-violet-400" />}
+        {pending && <Loader size={12} className="text-purple-400" />}
       </summary>
-      <div className="px-3 py-2 text-xs font-mono text-muted-foreground whitespace-pre-wrap border-t border-violet-500/10">
+      <div className="px-3 py-2 text-xs font-mono text-muted-foreground whitespace-pre-wrap border-t border-purple-500/10">
         {text}
       </div>
     </details>
@@ -217,22 +217,22 @@ function ToolPart({
   );
 
   const toolConfig: Record<string, { label: string; icon: string; color: string }> = {
-    view_todos: { label: 'Checking tasks', icon: '◈', color: 'text-violet-400' },
-    add_todo: { label: 'Adding task', icon: '◈', color: 'text-violet-400' },
-    delete_todo: { label: 'Removing task', icon: '◈', color: 'text-violet-400' },
-    set_timer: { label: 'Setting timer', icon: '⧖', color: 'text-amber-400' },
-    list_timers: { label: 'Checking timers', icon: '⧖', color: 'text-amber-400' },
-    cancel_timer: { label: 'Canceling timer', icon: '⧖', color: 'text-amber-400' },
-    web_search: { label: 'Searching web', icon: '⌘', color: 'text-cyan-400' },
-    control_light: { label: 'Adjusting lights', icon: '◉', color: 'text-emerald-400' },
-    deep_thinking: { label: 'Deep analysis', icon: '◇', color: 'text-violet-400' },
-    developer_session: { label: 'Dev Session', icon: '▣', color: 'text-cyan-400' },
-    start_headless_session: { label: 'Headless Session', icon: '▣', color: 'text-cyan-400' },
-    start_interactive_session: { label: 'Interactive Session', icon: '▣', color: 'text-cyan-400' },
-    check_coding_session: { label: 'Session Status', icon: '◆', color: 'text-cyan-400' },
-    send_session_feedback: { label: 'Sending Feedback', icon: '◆', color: 'text-cyan-400' },
-    stop_coding_session: { label: 'Stopping Session', icon: '◆', color: 'text-rose-400' },
-    view_past_sessions: { label: 'Past Sessions', icon: '◆', color: 'text-violet-400' },
+    view_todos: { label: 'Checking tasks', icon: '◈', color: 'text-purple-500 dark:text-purple-400' },
+    add_todo: { label: 'Adding task', icon: '◈', color: 'text-purple-500 dark:text-purple-400' },
+    delete_todo: { label: 'Removing task', icon: '◈', color: 'text-purple-500 dark:text-purple-400' },
+    set_timer: { label: 'Setting timer', icon: '⧖', color: 'text-orange-500 dark:text-orange-400' },
+    list_timers: { label: 'Checking timers', icon: '⧖', color: 'text-orange-500 dark:text-orange-400' },
+    cancel_timer: { label: 'Canceling timer', icon: '⧖', color: 'text-orange-500 dark:text-orange-400' },
+    web_search: { label: 'Searching web', icon: '⌘', color: 'text-blue-500 dark:text-blue-400' },
+    control_light: { label: 'Adjusting lights', icon: '◉', color: 'text-green-500 dark:text-green-400' },
+    deep_thinking: { label: 'Deep analysis', icon: '◇', color: 'text-purple-500 dark:text-purple-400' },
+    developer_session: { label: 'Dev Session', icon: '▣', color: 'text-blue-500 dark:text-blue-400' },
+    start_headless_session: { label: 'Headless Session', icon: '▣', color: 'text-blue-500 dark:text-blue-400' },
+    start_interactive_session: { label: 'Interactive Session', icon: '▣', color: 'text-blue-500 dark:text-blue-400' },
+    check_coding_session: { label: 'Session Status', icon: '◆', color: 'text-blue-500 dark:text-blue-400' },
+    send_session_feedback: { label: 'Sending Feedback', icon: '◆', color: 'text-blue-500 dark:text-blue-400' },
+    stop_coding_session: { label: 'Stopping Session', icon: '◆', color: 'text-red-500 dark:text-red-400' },
+    view_past_sessions: { label: 'Past Sessions', icon: '◆', color: 'text-purple-500 dark:text-purple-400' },
   };
 
   const config = toolConfig[toolName] || { label: toolName, icon: '◆', color: 'text-muted-foreground' };
@@ -240,8 +240,8 @@ function ToolPart({
   return (
     <details
       className={cn(
-        'rounded-lg border border-cyan-500/20 bg-cyan-500/5 overflow-hidden',
-        pending && 'border-cyan-500/40'
+        'rounded-lg border border-blue-500/20 bg-blue-500/5 overflow-hidden',
+        pending && 'border-blue-500/40'
       )}
       open={isOpen}
       onToggle={(e) => setIsOpen(e.currentTarget.open)}
@@ -250,19 +250,19 @@ function ToolPart({
         <span className={cn('text-sm', config.color)}>{config.icon}</span>
         <span className={cn('flex-1', config.color)}>{config.label}</span>
         {pending ? (
-          <Loader size={12} className="text-cyan-400" />
+          <Loader size={12} className="text-blue-400" />
         ) : (
-          <span className="text-emerald-400 text-[10px]">✓</span>
+          <span className="text-green-500 text-[10px]">✓</span>
         )}
         {result !== undefined && !isOpen && (
-          <span className="text-[10px] text-emerald-400/60 ml-auto truncate max-w-[200px] font-normal">
+          <span className="text-[10px] text-green-500/60 ml-auto truncate max-w-[200px] font-normal">
             {typeof result === 'string' ? result.split('\n')[0]!.slice(0, 60) : 'Done'}
           </span>
         )}
         {linkedSession && onNavigateToSession && (
           <button
             type="button"
-            className="px-2 py-0.5 text-[10px] rounded border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
+            className="px-2 py-0.5 text-[10px] rounded border border-blue-500/30 bg-blue-500/10 text-blue-500 dark:text-blue-400 hover:bg-blue-500/20"
             onClick={(e) => {
               e.stopPropagation();
               onNavigateToSession(linkedSession.id);
@@ -272,17 +272,17 @@ function ToolPart({
           </button>
         )}
       </summary>
-      <div className="border-t border-cyan-500/10">
+      <div className="border-t border-blue-500/10">
         <div className="px-3 py-2">
           <div className="text-[10px] uppercase text-muted-foreground mb-1">Arguments</div>
-          <pre className="text-xs font-mono text-muted-foreground bg-black/20 rounded p-2 overflow-auto max-h-32">
+          <pre className="text-xs font-mono text-muted-foreground bg-muted/50 rounded p-2 overflow-auto max-h-32">
             {JSON.stringify(args, null, 2)}
           </pre>
         </div>
         {result !== undefined && (
-          <div className="px-3 py-2 border-t border-cyan-500/10">
+          <div className="px-3 py-2 border-t border-blue-500/10">
             <div className="text-[10px] uppercase text-muted-foreground mb-1">Result</div>
-            <pre className="text-xs font-mono text-emerald-400/80 bg-emerald-500/5 rounded p-2 overflow-auto max-h-32">
+            <pre className="text-xs font-mono text-green-600 dark:text-green-400/80 bg-green-500/5 rounded p-2 overflow-auto max-h-32">
               {typeof result === 'string' ? result : JSON.stringify(result, null, 2)}
             </pre>
           </div>
@@ -316,14 +316,14 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
     <Message from={message.role} className={cn(isLatest && 'is-latest')}>
       <div className={cn(
         'flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider mb-1',
-        isUser ? 'justify-end text-cyan-400/60' : 'text-emerald-400/60'
+        isUser ? 'justify-end text-blue-500/60 dark:text-blue-400/60' : 'text-green-500/60 dark:text-green-400/60'
       )}>
         <span>{isUser ? 'You' : 'Agent'}</span>
         <span className="text-muted-foreground">{timestamp}</span>
       </div>
       <MessageContent className={cn(
         isUser && 'bg-secondary/50',
-        !isUser && 'border-l-2 border-cyan-500/30 pl-3'
+        !isUser && 'border-l-2 border-blue-500/30 pl-3'
       )}>
         {message.parts.map((part, idx) => {
           const key = `${message.id}-part-${idx}`;
@@ -418,47 +418,34 @@ interface HUDHeaderProps {
 
 function HUDHeader({ title, subtitle, status, icon = '◎', onBack }: HUDHeaderProps) {
   return (
-    <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/20 backdrop-blur-sm">
+    <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/40">
       <div className="flex items-center gap-3">
-        <div
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-lg"
-          style={{ background: `${status.color}15`, border: `1px solid ${status.color}30`, color: status.color }}
-        >
-          {icon}
-        </div>
+        <span className="text-base text-muted-foreground">{icon}</span>
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs font-display tracking-[0.15em] uppercase text-foreground/90">
-            {title}
-          </span>
+          <span className="text-sm font-semibold text-foreground">{title}</span>
           {subtitle && (
-            <span className="text-[10px] font-mono text-muted-foreground">
-              {subtitle}
-            </span>
+            <span className="text-[11px] font-mono text-muted-foreground">{subtitle}</span>
           )}
         </div>
       </div>
       <div className="flex items-center gap-3">
         <div
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md text-[10px] font-display tracking-wider uppercase"
-          style={{
-            background: `${status.color}12`,
-            border: `1px solid ${status.color}35`,
-            color: status.color,
-          }}
+          className="flex items-center gap-1.5 text-[10px] font-medium tracking-wide uppercase"
+          style={{ color: status.color }}
         >
           <span
-            className={cn('w-2 h-2 rounded-full', status.pulse && 'animate-pulse')}
-            style={{ background: status.color, boxShadow: `0 0 8px ${status.color}` }}
+            className={cn('w-1.5 h-1.5 rounded-full', status.pulse && 'animate-pulse')}
+            style={{ background: status.color }}
           />
           {status.label}
         </div>
         {onBack && (
           <button
             type="button"
-            className="px-3 py-1.5 rounded-md text-[11px] font-mono border border-white/10 text-muted-foreground hover:border-violet-500/30 hover:text-violet-400 hover:bg-violet-500/5 transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
             onClick={onBack}
           >
-            BACK
+            Back
           </button>
         )}
       </div>
@@ -519,10 +506,10 @@ export function AgentStage({ stage }: AgentStageProps) {
   const status = useMemo(() => {
     if (isVoiceSession) {
       const stateLabels: Record<string, { label: string; color: string; pulse: boolean }> = {
-        idle: { label: 'STANDBY', color: 'var(--color-text-ghost)', pulse: false },
-        listening: { label: 'LISTENING', color: 'var(--color-cyan)', pulse: true },
-        thinking: { label: 'PROCESSING', color: 'var(--color-violet)', pulse: true },
-        speaking: { label: 'SPEAKING', color: 'var(--color-emerald)', pulse: true },
+        idle: { label: 'Standby', color: 'var(--muted-foreground)', pulse: false },
+        listening: { label: 'Listening', color: '#0A84FF', pulse: true },
+        thinking: { label: 'Processing', color: '#BF5AF2', pulse: true },
+        speaking: { label: 'Speaking', color: '#30D158', pulse: true },
       };
       return stateLabels[voiceState] || stateLabels.idle;
     }
@@ -530,8 +517,8 @@ export function AgentStage({ stage }: AgentStageProps) {
     // Subagent/orchestrator status - check session status
     const isActive = session?.status === 'running';
     return isActive
-      ? { label: 'PROCESSING', color: 'var(--color-violet)', pulse: true }
-      : { label: 'COMPLETE', color: 'var(--color-emerald)', pulse: false };
+      ? { label: 'Processing', color: '#BF5AF2', pulse: true }
+      : { label: 'Complete', color: '#30D158', pulse: false };
   }, [isVoiceSession, voiceState, session?.status]);
 
   // Determine title and subtitle
@@ -541,15 +528,12 @@ export function AgentStage({ stage }: AgentStageProps) {
 
   return (
     <motion.div
-      className={cn(
-        'flex flex-col h-full overflow-hidden rounded-2xl',
-        !isVoiceSession && 'obsidian-glass'
-      )}
+      className="flex flex-col h-full overflow-hidden bg-background"
       layoutId={`stage-${stage.id}`}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
-      transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
     >
       <HUDHeader
         title={title}
@@ -567,7 +551,7 @@ export function AgentStage({ stage }: AgentStageProps) {
         >
           {messages.length === 0 ? (
             <ConversationEmptyState
-              title={isVoiceSession ? 'AWAITING INPUT' : 'Waiting for activity'}
+              title={isVoiceSession ? 'Awaiting Input' : 'Waiting for activity'}
               description={
                 isVoiceSession
                   ? 'Say "Jarvis" or "Computer" to start a conversation'
@@ -595,7 +579,7 @@ export function AgentStage({ stage }: AgentStageProps) {
       </Conversation>
 
       {/* Text input for all sessions (voice + subagent) */}
-      <div className="border-t border-white/5 bg-black/20 px-4 py-3">
+      <div className="border-t border-border/40 px-4 py-3">
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
@@ -606,9 +590,9 @@ export function AgentStage({ stage }: AgentStageProps) {
             rows={1}
             disabled={isSubmitting}
             className={cn(
-              'flex-1 resize-none bg-surface/50 border border-white/10 rounded-lg px-3 py-2',
-              'text-sm font-mono text-foreground placeholder:text-muted-foreground/50',
-              'focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/30',
+              'flex-1 resize-none bg-muted/40 border border-border/50 rounded-lg px-3 py-2',
+              'text-sm text-foreground placeholder:text-muted-foreground/50',
+              'focus:outline-none focus:ring-2 focus:ring-ring/50 focus:border-ring',
               'disabled:opacity-50 disabled:cursor-not-allowed',
               'max-h-32 overflow-y-auto'
             )}
@@ -619,11 +603,10 @@ export function AgentStage({ stage }: AgentStageProps) {
             onClick={handleSubmit}
             disabled={!inputValue.trim() || isSubmitting}
             className={cn(
-              'px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider',
-              'border transition-all duration-200',
+              'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
               inputValue.trim() && !isSubmitting
-                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20'
-                : 'bg-surface/30 border-white/5 text-muted-foreground cursor-not-allowed'
+                ? 'bg-primary text-primary-foreground hover:opacity-90'
+                : 'bg-muted text-muted-foreground cursor-not-allowed'
             )}
           >
             Send
