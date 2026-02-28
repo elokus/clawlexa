@@ -39,10 +39,22 @@ export function useSpokenHighlight({
   const rafRef = useRef<number>(0);
   const previousTurnKeyRef = useRef<string | number | null>(turnKey);
 
+  // Cumulative playback offset — bridges AudioController position resets
+  // between TTS segments.  AudioController resets playbackPositionMs to 0
+  // when all scheduled audio drains, but word cues use utterance-relative
+  // timestamps that accumulate across segments.  This offset keeps the
+  // two aligned so highlighting progresses continuously.
+  const playbackOffsetRef = useRef(0);
+  const prevRawPlaybackRef = useRef(0);
+  const prevRawScheduledRef = useRef(0);
+
   useEffect(() => {
     if (turnKey !== previousTurnKeyRef.current) {
       previousTurnKeyRef.current = turnKey;
       highlightedRef.current = 0;
+      playbackOffsetRef.current = 0;
+      prevRawPlaybackRef.current = 0;
+      prevRawScheduledRef.current = 0;
       setHighlightedCount(0);
     }
   }, [turnKey]);
@@ -70,9 +82,25 @@ export function useSpokenHighlight({
     const msPerWord = normalizePositive(fallbackMsPerWord, DEFAULT_MS_PER_WORD);
 
     const tick = () => {
-      const playbackMs = audioController.getPlaybackPositionMs();
-      const scheduledMs = audioController.getScheduledDurationMs();
-      const hasPendingAudio = scheduledMs > 0;
+      const rawPlaybackMs = audioController.getPlaybackPositionMs();
+      const rawScheduledMs = audioController.getScheduledDurationMs();
+      const hasPendingAudio = rawScheduledMs > 0;
+
+      // Detect AudioController position reset: the raw position dropped while
+      // there was previously scheduled audio.  This happens between TTS
+      // segments when all scheduled audio finishes before the next segment
+      // arrives.  Accumulate the previous segment's total duration so that
+      // the cumulative position keeps advancing.
+      if (
+        rawPlaybackMs < prevRawPlaybackRef.current &&
+        prevRawScheduledRef.current > 0
+      ) {
+        playbackOffsetRef.current += prevRawScheduledRef.current;
+      }
+      prevRawPlaybackRef.current = rawPlaybackMs;
+      prevRawScheduledRef.current = rawScheduledMs;
+
+      const playbackMs = playbackOffsetRef.current + rawPlaybackMs;
 
       let nextWordCount = cueTimeline
         ? countCuesForPlayback(cueTimeline, playbackMs)
