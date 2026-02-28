@@ -291,9 +291,9 @@ export function SettingsModels() {
         }
 
         .models-card {
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          border: 1px solid var(--border);
           border-radius: 10px;
-          background: rgba(5, 5, 12, 0.4);
+          background: var(--card);
           padding: 14px 14px 12px;
           display: flex;
           flex-direction: column;
@@ -301,8 +301,8 @@ export function SettingsModels() {
         }
 
         .models-card.loaded {
-          border-color: rgba(52, 211, 153, 0.35);
-          background: rgba(16, 35, 30, 0.3);
+          border-color: var(--color-green-muted);
+          background: color-mix(in oklch, var(--color-green) 6%, var(--card));
         }
 
         .models-card-header {
@@ -313,10 +313,10 @@ export function SettingsModels() {
         }
 
         .models-card-title {
-          font-family: var(--font-ui);
+          font-family: var(--font-sans);
           font-size: 13px;
           font-weight: 600;
-          color: var(--color-text-bright);
+          color: var(--foreground);
         }
 
         .models-badge {
@@ -330,18 +330,18 @@ export function SettingsModels() {
         }
 
         .models-badge.loaded {
-          color: var(--color-emerald);
-          border-color: rgba(52, 211, 153, 0.35);
+          color: var(--color-green);
+          border-color: var(--color-green-muted);
         }
 
         .models-badge.installed {
-          color: var(--color-cyan);
-          border-color: rgba(56, 189, 248, 0.3);
+          color: var(--color-blue);
+          border-color: var(--color-blue-muted);
         }
 
         .models-badge.missing {
-          color: var(--color-text-ghost);
-          border-color: rgba(255, 255, 255, 0.18);
+          color: var(--muted-foreground);
+          border-color: var(--border);
         }
 
         .models-card-meta {
@@ -350,14 +350,14 @@ export function SettingsModels() {
           flex-wrap: wrap;
           font-family: var(--font-mono);
           font-size: 10px;
-          color: var(--color-text-ghost);
+          color: var(--muted-foreground);
           text-transform: uppercase;
         }
 
         .models-card-id {
           font-family: var(--font-mono);
           font-size: 11px;
-          color: var(--color-text-dim);
+          color: var(--muted-foreground);
           word-break: break-all;
         }
 
@@ -365,7 +365,7 @@ export function SettingsModels() {
         .models-card-notes {
           font-family: var(--font-mono);
           font-size: 10px;
-          color: var(--color-text-ghost);
+          color: var(--muted-foreground);
           line-height: 1.5;
         }
 
@@ -376,12 +376,12 @@ export function SettingsModels() {
         }
 
         .models-btn {
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          background: rgba(0, 0, 0, 0.2);
-          color: var(--color-text-normal);
+          border: 1px solid var(--border);
+          background: var(--secondary);
+          color: var(--foreground);
           border-radius: 6px;
           padding: 6px 10px;
-          font-family: var(--font-mono);
+          font-family: var(--font-sans);
           font-size: 11px;
           cursor: pointer;
           transition: all 0.15s ease;
@@ -393,25 +393,25 @@ export function SettingsModels() {
         }
 
         .models-btn-primary {
-          border-color: rgba(56, 189, 248, 0.35);
-          color: var(--color-cyan);
+          border-color: var(--color-blue-muted);
+          color: var(--color-blue);
         }
 
         .models-btn-primary:hover:not(:disabled) {
-          background: rgba(56, 189, 248, 0.12);
+          background: color-mix(in oklch, var(--color-blue) 10%, var(--secondary));
         }
 
         .models-btn-secondary {
-          border-color: rgba(52, 211, 153, 0.35);
-          color: var(--color-emerald);
+          border-color: var(--color-green-muted);
+          color: var(--color-green);
         }
 
         .models-btn-secondary:hover:not(:disabled) {
-          background: rgba(52, 211, 153, 0.12);
+          background: color-mix(in oklch, var(--color-green) 10%, var(--secondary));
         }
 
         .models-btn-ghost:hover:not(:disabled) {
-          background: rgba(255, 255, 255, 0.07);
+          background: var(--accent);
         }
 
         .models-playground-actions {
@@ -428,10 +428,10 @@ export function SettingsModels() {
         }
 
         .models-metric {
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          border: 1px solid var(--border);
           border-radius: 8px;
           padding: 10px;
-          background: rgba(5, 5, 12, 0.35);
+          background: var(--secondary);
         }
 
         .models-metric-label {
@@ -439,45 +439,45 @@ export function SettingsModels() {
           font-size: 10px;
           text-transform: uppercase;
           letter-spacing: 0.08em;
-          color: var(--color-text-ghost);
+          color: var(--muted-foreground);
           margin-bottom: 4px;
         }
 
         .models-metric-value {
-          font-family: var(--font-ui);
+          font-family: var(--font-sans);
           font-size: 14px;
           font-weight: 600;
-          color: var(--color-text-bright);
+          color: var(--foreground);
         }
 
         .models-guidance {
           margin-top: 10px;
-          border: 1px solid rgba(56, 189, 248, 0.2);
+          border: 1px solid var(--color-blue-muted);
           border-radius: 8px;
           padding: 10px 12px;
-          background: rgba(56, 189, 248, 0.06);
+          background: color-mix(in oklch, var(--color-blue) 5%, var(--card));
         }
 
         .models-guidance-summary {
-          font-family: var(--font-mono);
+          font-family: var(--font-sans);
           font-size: 11px;
-          color: var(--color-text-normal);
+          color: var(--foreground);
           margin-bottom: 6px;
         }
 
         .models-guidance-list {
           margin: 0;
           padding-left: 16px;
-          color: var(--color-text-dim);
-          font-family: var(--font-mono);
+          color: var(--muted-foreground);
+          font-family: var(--font-sans);
           font-size: 11px;
           line-height: 1.6;
         }
 
         .models-error {
           margin-top: 10px;
-          color: var(--color-rose);
-          font-family: var(--font-mono);
+          color: var(--color-red);
+          font-family: var(--font-sans);
           font-size: 12px;
         }
       `}</style>

@@ -137,9 +137,9 @@ export function ConfigSection({
   children,
 }: ConfigSectionProps) {
   return (
-    <section className="border border-border rounded-xl p-3.5 bg-muted/30 grid gap-2.5">
-      <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">{title}</h3>
-      {description ? <p className="text-xs text-muted-foreground leading-relaxed">{description}</p> : null}
+    <section className="border border-border rounded-[10px] p-5 bg-card grid gap-3">
+      <h3 className="text-[13px] font-semibold text-foreground">{title}</h3>
+      {description ? <p className="text-[12px] text-muted-foreground leading-relaxed">{description}</p> : null}
       <div className="grid gap-3 items-stretch max-sm:!grid-cols-1" style={{ gridTemplateColumns: sectionGrid(columns) }}>
         {children}
       </div>
@@ -150,8 +150,8 @@ export function ConfigSection({
 export function ConfigField({ label, hint, fullWidth = false, children }: ConfigFieldProps) {
   return (
     <label className={`flex flex-col gap-1.5 min-w-0 ${fullWidth ? 'col-span-full' : ''}`}>
-      <span className="text-[11px] font-mono text-foreground/80">{label}</span>
-      {hint ? <span className="text-[11px] text-muted-foreground leading-snug">{hint}</span> : null}
+      <span className="text-[12px] font-medium text-foreground">{label}</span>
+      {hint ? <span className="text-[11px] text-muted-foreground leading-relaxed">{hint}</span> : null}
       <div className="cfg-control mt-auto">{children}</div>
     </label>
   );

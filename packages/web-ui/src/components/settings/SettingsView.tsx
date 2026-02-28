@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Settings View - Main settings layout with sidebar + content area
+// Settings View - macOS System Settings inspired layout
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect } from 'react';
@@ -14,32 +14,30 @@ import { SettingsSystem } from './SettingsSystem';
 import { SettingsModels } from './SettingsModels';
 import type { SettingsPage } from '../../hooks/useRouter';
 
-const SIDEBAR_WIDTH = 240;
-
 const PAGE_META: Record<SettingsPage, { title: string; description: string }> = {
   agents: {
     title: 'Agents',
-    description: 'Configure voice agent profiles, prompts, tools, and wake words.',
+    description: 'Voice profiles, prompts, wake words, and tool configuration.',
   },
   'voice-pipeline': {
     title: 'Voice Pipeline',
-    description: 'Select voice mode, providers, models, and pipeline configuration.',
+    description: 'Runtime mode, provider selection, and model configuration.',
   },
   audio: {
     title: 'Audio & VAD',
-    description: 'Turn detection strategy, voice activity detection, and audio settings.',
+    description: 'Turn detection, voice activity, and audio input settings.',
   },
   credentials: {
     title: 'Credentials',
-    description: 'Manage API keys and authentication profiles for voice providers.',
+    description: 'API keys and auth profiles for voice providers.',
   },
   models: {
     title: 'Model Control',
-    description: 'Download, load, and benchmark local STT/TTS models with live playground metrics.',
+    description: 'Local STT/TTS model management and benchmarking.',
   },
   system: {
     title: 'System',
-    description: 'Advanced settings, word timestamps, and debug information.',
+    description: 'Advanced settings and debug information.',
   },
 };
 
@@ -70,14 +68,12 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
   const loadAll = useConfigStore((s) => s.loadAll);
   const configLoading = useConfigStore((s) => s.configLoading);
 
-  // Sync initial page from URL
   useEffect(() => {
     if (initialPage && initialPage !== activePage) {
       setActivePage(initialPage);
     }
   }, [initialPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load all config data on mount
   useEffect(() => {
     void loadAll();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -89,10 +85,10 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
       <style>{`
         .settings-view {
           display: grid;
-          grid-template-columns: ${SIDEBAR_WIDTH}px 1fr;
+          grid-template-columns: 220px 1fr;
           height: 100%;
           overflow: hidden;
-          background: var(--color-abyss);
+          background: var(--background);
         }
 
         .settings-main {
@@ -100,27 +96,27 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
           flex-direction: column;
           height: 100%;
           overflow: hidden;
+          background: var(--background);
         }
 
         .settings-header {
-          padding: 24px 32px 16px;
-          border-bottom: 1px solid var(--color-glass-border);
+          padding: 28px 36px 20px;
           flex-shrink: 0;
         }
 
         .settings-header-title {
-          font-family: var(--font-display);
-          font-size: 18px;
-          font-weight: 600;
-          letter-spacing: 0.08em;
-          color: var(--color-text-bright);
-          margin: 0 0 6px;
+          font-family: var(--font-sans);
+          font-size: 22px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          color: var(--foreground);
+          margin: 0 0 4px;
         }
 
         .settings-header-desc {
-          font-family: var(--font-ui);
+          font-family: var(--font-sans);
           font-size: 13px;
-          color: var(--color-text-normal);
+          color: var(--muted-foreground);
           margin: 0;
           line-height: 1.5;
         }
@@ -128,7 +124,7 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
         .settings-content {
           flex: 1;
           overflow-y: auto;
-          padding: 24px 32px 32px;
+          padding: 0 36px 40px;
         }
 
         .settings-content::-webkit-scrollbar {
@@ -140,12 +136,12 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
         }
 
         .settings-content::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.08);
+          background: var(--border);
           border-radius: 3px;
         }
 
         .settings-content::-webkit-scrollbar-thumb:hover {
-          background: rgba(255, 255, 255, 0.15);
+          background: var(--muted-foreground);
         }
 
         .settings-loading {
@@ -153,19 +149,19 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
           align-items: center;
           justify-content: center;
           height: 200px;
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--color-text-dim);
+          font-family: var(--font-sans);
+          font-size: 13px;
+          color: var(--muted-foreground);
         }
 
-        /* ─── Shared settings section card ─── */
+        /* ─── Settings Section Card ─── */
 
         .settings-section {
-          background: rgba(10, 10, 18, 0.5);
-          border: 1px solid var(--color-glass-border);
-          border-radius: 12px;
-          padding: 20px 24px;
-          margin-bottom: 16px;
+          background: var(--card);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 20px 22px;
+          margin-bottom: 14px;
         }
 
         .settings-section-header {
@@ -173,27 +169,25 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
         }
 
         .settings-section-title {
-          font-family: var(--font-display);
+          font-family: var(--font-sans);
           font-size: 13px;
-          font-weight: 500;
-          letter-spacing: 0.1em;
-          text-transform: uppercase;
-          color: var(--color-text-bright);
-          margin: 0 0 4px;
+          font-weight: 600;
+          color: var(--foreground);
+          margin: 0 0 3px;
         }
 
         .settings-section-desc {
-          font-family: var(--font-ui);
+          font-family: var(--font-sans);
           font-size: 12px;
-          color: var(--color-text-dim);
+          color: var(--muted-foreground);
           margin: 0;
           line-height: 1.5;
         }
 
         .settings-section-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-          gap: 16px;
+          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          gap: 14px;
         }
 
         .settings-section-grid.cols-1 {
@@ -221,12 +215,12 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
           }
         }
 
-        /* ─── Shared field styling ─── */
+        /* ─── Field Styling ─── */
 
         .settings-field {
           display: flex;
           flex-direction: column;
-          gap: 6px;
+          gap: 5px;
           min-width: 0;
         }
 
@@ -235,17 +229,16 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
         }
 
         .settings-field-label {
-          font-family: var(--font-mono);
+          font-family: var(--font-sans);
           font-size: 12px;
           font-weight: 500;
-          color: var(--color-text-normal);
-          letter-spacing: 0.02em;
+          color: var(--foreground);
         }
 
         .settings-field-hint {
-          font-family: var(--font-mono);
+          font-family: var(--font-sans);
           font-size: 11px;
-          color: var(--color-text-dim);
+          color: var(--muted-foreground);
           line-height: 1.4;
         }
 
@@ -256,26 +249,33 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
         .settings-field input[type="range"],
         .settings-field textarea {
           width: 100%;
-          padding: 9px 12px;
-          background: rgba(5, 5, 12, 0.6);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          padding: 8px 10px;
+          background: var(--input);
+          border: 1px solid var(--border);
           border-radius: 6px;
-          color: var(--color-text-bright);
-          font-family: var(--font-mono);
+          color: var(--foreground);
+          font-family: var(--font-sans);
           font-size: 13px;
           outline: none;
-          transition: border-color 0.15s ease;
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
           box-sizing: border-box;
         }
 
         .settings-field select:focus,
         .settings-field input:focus,
         .settings-field textarea:focus {
-          border-color: rgba(56, 189, 248, 0.3);
+          border-color: var(--color-blue);
+          box-shadow: 0 0 0 2px color-mix(in oklch, var(--color-blue) 20%, transparent);
         }
 
         .settings-field select {
           cursor: pointer;
+          -webkit-appearance: none;
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 8px center;
+          padding-right: 28px;
         }
 
         .settings-field textarea {
@@ -284,25 +284,25 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
           line-height: 1.5;
         }
 
-        /* ─── Advanced toggle ─── */
+        /* ─── Advanced Toggle ─── */
 
         .settings-advanced-toggle {
           display: flex;
           align-items: center;
           gap: 6px;
           padding: 8px 0;
-          margin: 8px 0;
+          margin: 4px 0;
           background: none;
           border: none;
           cursor: pointer;
-          font-family: var(--font-mono);
-          font-size: 11px;
-          color: var(--color-text-ghost);
+          font-family: var(--font-sans);
+          font-size: 12px;
+          color: var(--muted-foreground);
           transition: color 0.15s ease;
         }
 
         .settings-advanced-toggle:hover {
-          color: var(--color-text-dim);
+          color: var(--foreground);
         }
 
         .settings-advanced-toggle svg {
@@ -315,7 +315,7 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
           transform: rotate(180deg);
         }
 
-        /* ─── Placeholder page ─── */
+        /* ─── Placeholder ─── */
 
         .settings-placeholder {
           display: flex;
@@ -324,30 +324,18 @@ export function SettingsView({ initialPage }: SettingsViewProps) {
           justify-content: center;
           height: 300px;
           gap: 12px;
-          color: var(--color-text-ghost);
-        }
-
-        .settings-placeholder-icon {
-          font-size: 36px;
-          opacity: 0.4;
-        }
-
-        .settings-placeholder-text {
-          font-family: var(--font-mono);
-          font-size: 13px;
+          color: var(--muted-foreground);
         }
 
         @media (max-width: 900px) {
           .settings-view {
-            grid-template-columns: 200px 1fr;
+            grid-template-columns: 190px 1fr;
           }
-
           .settings-content {
-            padding: 16px 20px 24px;
+            padding: 0 20px 24px;
           }
-
           .settings-header {
-            padding: 16px 20px 12px;
+            padding: 20px 20px 14px;
           }
         }
 

@@ -30,6 +30,9 @@ uv run local-inference \
   --tts-model mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16 \
   --qwen-language German \
   --qwen-seed 42
+
+# Optional: use a dedicated model cache directory
+LOCAL_INFERENCE_MODEL_CACHE_DIR=/path/to/models-cache uv run local-inference
 ```
 
 ## Endpoints
@@ -63,3 +66,9 @@ curl -X POST http://localhost:1060/v1/audio/speech \
   -d '{"model":"mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16","input":"Hallo Welt","language":"German","seed":42,"response_format":"pcm"}' \
   -o test-qwen.pcm
 ```
+
+## Model Cache Behavior
+
+- Models are cached in Hugging Face cache format.
+- `local-inference` checks cached snapshots first and prefers loading from local snapshot paths.
+- Set `LOCAL_INFERENCE_MODEL_CACHE_DIR` to force a dedicated cache location.

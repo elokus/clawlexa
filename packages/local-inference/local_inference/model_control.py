@@ -134,7 +134,11 @@ def entry_to_payload(entry: ModelCatalogEntry) -> dict[str, object]:
     return payload
 
 
-def _huggingface_hub_cache_root() -> Path:
+def huggingface_hub_cache_root() -> Path:
+    explicit_local = os.getenv("LOCAL_INFERENCE_MODEL_CACHE_DIR")
+    if explicit_local:
+        return Path(explicit_local).expanduser()
+
     explicit = os.getenv("HUGGINGFACE_HUB_CACHE")
     if explicit:
         return Path(explicit).expanduser()
@@ -146,11 +150,20 @@ def _huggingface_hub_cache_root() -> Path:
     return Path.home() / ".cache" / "huggingface" / "hub"
 
 
-def _scan_cache_for_repo(repo_id: str) -> bool:
+def ensure_hf_cache_env() -> Path:
+    cache_root = huggingface_hub_cache_root()
+    local_explicit = os.getenv("LOCAL_INFERENCE_MODEL_CACHE_DIR")
+    if local_explicit and not os.getenv("HUGGINGFACE_HUB_CACHE"):
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(cache_root)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    return cache_root
+
+
+def _scan_cache_for_repo(repo_id: str, *, cache_dir: Path | None = None) -> bool:
     try:
         from huggingface_hub import scan_cache_dir
 
-        cache = scan_cache_dir()
+        cache = scan_cache_dir(cache_dir=cache_dir)
     except Exception:
         return False
 
@@ -164,6 +177,55 @@ def _scan_cache_for_repo(repo_id: str) -> bool:
     return False
 
 
+def resolve_cached_snapshot_path(
+    model_id: str,
+    *,
+    revision: str | None = None,
+    cache_dir: Path | None = None,
+) -> Path | None:
+    try:
+        from huggingface_hub import scan_cache_dir
+
+        cache = scan_cache_dir(cache_dir=cache_dir)
+    except Exception:
+        cache = None
+
+    if cache is not None:
+        for repo in cache.repos:
+            if repo.repo_id != model_id or getattr(repo, "repo_type", "model") != "model":
+                continue
+
+            revisions = list(getattr(repo, "revisions", ()) or ())
+            if not revisions:
+                continue
+
+            if revision:
+                for item in revisions:
+                    refs = set(getattr(item, "refs", ()) or ())
+                    commit_hash = getattr(item, "commit_hash", None)
+                    if revision == commit_hash or revision in refs:
+                        snapshot_path = Path(getattr(item, "snapshot_path"))
+                        if snapshot_path.exists():
+                            return snapshot_path
+
+            latest = max(
+                revisions,
+                key=lambda value: float(getattr(value, "last_modified", 0.0) or 0.0),
+            )
+            snapshot_path = Path(getattr(latest, "snapshot_path"))
+            if snapshot_path.exists():
+                return snapshot_path
+
+    cache_root = cache_dir or huggingface_hub_cache_root()
+    repo_dir = cache_root / f"models--{model_id.replace('/', '--')}"
+    snapshots_dir = repo_dir / "snapshots"
+    if snapshots_dir.is_dir():
+        for candidate in sorted(snapshots_dir.iterdir(), reverse=True):
+            if candidate.is_dir():
+                return candidate
+    return None
+
+
 def is_model_installed(model_id: str) -> bool:
     if not model_id:
         return False
@@ -172,19 +234,35 @@ def is_model_installed(model_id: str) -> bool:
     if local_path.exists():
         return True
 
-    if _scan_cache_for_repo(model_id):
+    cache_root = huggingface_hub_cache_root()
+    if resolve_cached_snapshot_path(model_id, cache_dir=cache_root) is not None:
         return True
 
-    cache_root = _huggingface_hub_cache_root()
-    repo_dir = cache_root / f"models--{model_id.replace('/', '--')}"
-    if not repo_dir.exists():
-        return False
+    if _scan_cache_for_repo(model_id, cache_dir=cache_root):
+        return True
 
-    snapshots_dir = repo_dir / "snapshots"
-    if snapshots_dir.is_dir():
-        return any(snapshots_dir.iterdir())
+    return False
 
-    return True
+
+def resolve_model_source_path(
+    model_id: str,
+    *,
+    revision: str | None = None,
+) -> Path | str:
+    local_path = Path(model_id).expanduser()
+    if local_path.exists():
+        return local_path
+
+    cache_root = huggingface_hub_cache_root()
+    cached_snapshot = resolve_cached_snapshot_path(
+        model_id,
+        revision=revision,
+        cache_dir=cache_root,
+    )
+    if cached_snapshot is not None:
+        return cached_snapshot
+
+    return model_id
 
 
 def directory_size_bytes(path: Path) -> int:
@@ -213,10 +291,12 @@ def download_snapshot(
             "Model downloads require huggingface_hub. Install local-inference[mlx] first."
         ) from error
 
+    cache_root = ensure_hf_cache_env()
     snapshot_path = snapshot_download(
         repo_id=model_id,
         revision=revision,
         resume_download=True,
         force_download=force_download,
+        cache_dir=cache_root,
     )
     return Path(snapshot_path)

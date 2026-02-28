@@ -404,59 +404,6 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// HUD Header Component
-// ═══════════════════════════════════════════════════════════════════════════
-
-interface HUDHeaderProps {
-  title: string;
-  subtitle?: string;
-  status: { label: string; color: string; pulse: boolean };
-  icon?: string;
-  onBack?: () => void;
-}
-
-function HUDHeader({ title, subtitle, status, icon = '◎', onBack }: HUDHeaderProps) {
-  return (
-    <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/40">
-      <div className="flex items-center gap-3">
-        <span className="text-base text-muted-foreground">{icon}</span>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-semibold text-foreground">{title}</span>
-          {subtitle && (
-            <span className="text-[11px] font-mono text-muted-foreground">{subtitle}</span>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <div
-          className="flex items-center gap-1.5 text-[10px] font-medium tracking-wide uppercase"
-          style={{ color: status.color }}
-        >
-          <span
-            className={cn('w-1.5 h-1.5 rounded-full', status.pulse && 'animate-pulse')}
-            style={{ background: status.color }}
-          />
-          {status.label}
-        </div>
-        {onBack && (
-          <button
-            type="button"
-            className="px-3 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-            onClick={onBack}
-          >
-            Back
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Main Component
-// ═══════════════════════════════════════════════════════════════════════════
-
 export function AgentStage({ stage }: AgentStageProps) {
   // Determine if this is a voice session or subagent/orchestrator
   const isVoiceSession = stage.type === 'chat' || stage.id === 'root';
@@ -464,9 +411,7 @@ export function AgentStage({ stage }: AgentStageProps) {
 
   // Get data based on session type
   const timeline = useVoiceTimeline();
-  const { voiceState, voiceProfile } = useVoiceState();
   const session = useUnifiedSessionsStore((s) => sessionId ? s.sessions.get(sessionId) : undefined);
-  const clearFocusedSession = useUnifiedSessionsStore((s) => s.clearFocusedSession);
   const focusSession = useUnifiedSessionsStore((s) => s.focusSession);
   const focusedChildren = useFocusedSessionChildren();
 
@@ -502,28 +447,8 @@ export function AgentStage({ stage }: AgentStageProps) {
     return sessionToMessages(session);
   }, [isVoiceSession, timeline, session]);
 
-  // Determine status
-  const status = useMemo(() => {
-    if (isVoiceSession) {
-      const stateLabels: Record<string, { label: string; color: string; pulse: boolean }> = {
-        idle: { label: 'Standby', color: 'var(--muted-foreground)', pulse: false },
-        listening: { label: 'Listening', color: '#0A84FF', pulse: true },
-        thinking: { label: 'Processing', color: '#BF5AF2', pulse: true },
-        speaking: { label: 'Speaking', color: '#30D158', pulse: true },
-      };
-      return stateLabels[voiceState] || stateLabels.idle;
-    }
-
-    // Subagent/orchestrator status - check session status
-    const isActive = session?.status === 'running';
-    return isActive
-      ? { label: 'Processing', color: '#BF5AF2', pulse: true }
-      : { label: 'Complete', color: '#30D158', pulse: false };
-  }, [isVoiceSession, voiceState, session?.status]);
-
   // Determine title and subtitle
   const title = isVoiceSession ? 'Realtime Agent' : (stage.data?.agentName || stage.title);
-  const subtitle = isVoiceSession ? (voiceProfile || 'Voice Interface') : 'Subagent Activity';
   const icon = isVoiceSession ? '◎' : '◇';
 
   return (
@@ -535,14 +460,6 @@ export function AgentStage({ stage }: AgentStageProps) {
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
     >
-      <HUDHeader
-        title={title}
-        subtitle={subtitle}
-        status={status}
-        icon={icon}
-        onBack={!isVoiceSession ? clearFocusedSession : undefined}
-      />
-
       <Conversation className="flex-1 min-h-0">
         <ConversationContent
           className={cn(

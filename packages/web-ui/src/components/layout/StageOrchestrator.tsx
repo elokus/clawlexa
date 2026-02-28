@@ -121,9 +121,8 @@ export function StageOrchestrator() {
   return (
     <div className="relative h-full w-full overflow-hidden bg-background">
       <div
-        className={`grid h-full w-full overflow-hidden relative z-[1] ${
-          isSettingsView ? 'grid-cols-[1fr]' : isPromptsView ? 'grid-cols-[auto_1fr]' : ''
-        }`}
+        className={`grid h-full w-full overflow-hidden relative z-[1] ${isSettingsView ? 'grid-cols-[1fr]' : isPromptsView ? 'grid-cols-[auto_1fr]' : ''
+          }`}
         style={!isPromptsView && !isSettingsView ? {
           gridTemplateColumns: `auto 1fr ${CONTEXT_RAIL_WIDTH}px`,
         } : undefined}
@@ -141,7 +140,7 @@ export function StageOrchestrator() {
             </div>
           </div>
         ) : isPromptsView ? (
-          <div className="flex flex-col h-full relative p-4 overflow-hidden z-10">
+          <div className="flex flex-col h-full relative overflow-hidden z-10">
             <div className="flex-1 min-h-0 relative">
               <PromptsView />
             </div>

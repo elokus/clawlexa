@@ -49,7 +49,7 @@ export function SettingsSystem() {
               onChange={(e) => updateTurn({ preferProviderTimestamps: e.target.checked })}
               style={{ accentColor: 'var(--color-cyan)' }}
             />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-normal)' }}>
+            <span style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--foreground)' }}>
               When off, always uses synthetic timestamps.
             </span>
           </label>
@@ -91,15 +91,15 @@ export function SettingsSystem() {
         columns={1}
       >
         <div style={{
-          fontFamily: 'var(--font-mono)',
+          fontFamily: 'var(--font-sans)',
           fontSize: 12,
-          color: 'var(--color-text-normal)',
+          color: 'var(--foreground)',
           lineHeight: 1.8,
           whiteSpace: 'pre-wrap',
         }}>
           {Object.entries(effectiveConfigs).map(([profile, eff]) => (
             <div key={profile} style={{ marginBottom: 6 }}>
-              <span style={{ color: 'var(--color-text-bright)', fontWeight: 600, textTransform: 'capitalize' }}>
+              <span style={{ color: 'var(--foreground)', fontWeight: 600, textTransform: 'capitalize' }}>
                 {profile}:
               </span>{' '}
               {eff.mode} | {eff.provider} | voice={eff.voice} | model={eff.model}
@@ -116,9 +116,9 @@ export function SettingsSystem() {
         columns={1}
       >
         <div style={{
-          fontFamily: 'var(--font-mono)',
+          fontFamily: 'var(--font-sans)',
           fontSize: 12,
-          color: 'var(--color-text-dim)',
+          color: 'var(--muted-foreground)',
           lineHeight: 1.8,
         }}>
           <div>Voice config: .voiceclaw/voice.config.json</div>

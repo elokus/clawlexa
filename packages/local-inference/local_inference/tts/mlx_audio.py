@@ -12,6 +12,7 @@ from .registry import (
     detect_model_family,
     resolve_model_id,
 )
+from ..model_control import resolve_model_source_path
 
 
 def _extract_audio_chunk(result: Any) -> np.ndarray | None:
@@ -65,7 +66,8 @@ class MlxAudioBackend(TtsBackend):
         from mlx_audio.tts.utils import load_model
 
         resolved_model_id = self.normalize_model_id(model_id)
-        self._model = load_model(resolved_model_id)
+        model_source = resolve_model_source_path(resolved_model_id)
+        self._model = load_model(model_source)
         self._loaded_model = resolved_model_id
         self._sample_rate = int(getattr(self._model, "sample_rate", 24_000))
 

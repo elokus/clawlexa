@@ -69,7 +69,7 @@ export function App() {
   const setActiveView = useUnifiedSessionsStore((s) => s.setActiveView);
 
   useEffect(() => {
-    if (routePath === '/settings') {
+    if (routePath.startsWith('/settings')) {
       setActiveView('settings');
     } else {
       const currentView = useUnifiedSessionsStore.getState().activeView;
@@ -104,21 +104,33 @@ export function App() {
   return (
     <AudioControllerContext.Provider value={audioSession.audioControllerRef}>
       <div className="flex flex-col h-dvh w-screen overflow-hidden relative bg-background">
-        <header className="flex items-center justify-between px-4 h-11 bg-sidebar/80 backdrop-blur-md shrink-0 z-50 border-b border-border/40">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-foreground/80">VoiceClaw</span>
+        <header className="flex items-center justify-between px-5 h-[52px] bg-sidebar/60 backdrop-blur-xl shrink-0 z-50 border-b border-border/50">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-[#FF5F57]" />
+              <div className="w-3 h-3 rounded-full bg-[#FEBC2E]" />
+              <div className="w-3 h-3 rounded-full bg-[#28C840]" />
+            </div>
+            <div className="w-px h-4 bg-border/60 mx-1" />
+            <span className="text-[14px] font-semibold tracking-tight text-foreground/90">VoiceClaw</span>
             {voiceProfile && (
-              <span className="text-[11px] text-muted-foreground font-medium">/ {voiceProfile}</span>
+              <span className="text-[12px] text-muted-foreground/70 font-medium">{voiceProfile}</span>
             )}
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <span className={`w-1.5 h-1.5 rounded-full ${
-              connected ? 'bg-green-500' : 'bg-red-500 animate-pulse'
-            }`} />
-            <span className="text-[10px] text-muted-foreground">
-              {connected ? 'Online' : 'Offline'}
-            </span>
+          <div className="flex items-center gap-2">
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md ${
+              connected ? 'bg-green-500/8' : 'bg-red-500/10'
+            }`}>
+              <span className={`w-[6px] h-[6px] rounded-full ${
+                connected ? 'bg-green-500' : 'bg-red-500 animate-pulse'
+              }`} />
+              <span className={`text-[11px] font-medium ${
+                connected ? 'text-green-600 dark:text-green-400' : 'text-red-500'
+              }`}>
+                {connected ? 'Connected' : 'Offline'}
+              </span>
+            </div>
             <SettingsButton />
             <ThemeToggle />
           </div>

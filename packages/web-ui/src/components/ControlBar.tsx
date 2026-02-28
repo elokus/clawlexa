@@ -1,3 +1,4 @@
+import { usePromptsState } from '../stores';
 import type { ProfileId, AudioMode } from '../hooks/useAudioSession';
 import type { AgentState } from '../types';
 import { VoiceIndicator } from './VoiceIndicator';
@@ -36,10 +37,8 @@ export function ControlBar({
   onToggleService,
   onSetAudioMode,
 }: ControlBarProps) {
-  const profiles: { id: ProfileId; name: string }[] = [
-    { id: 'jarvis', name: 'Jarvis' },
-    { id: 'marvin', name: 'Marvin' },
-  ];
+  const { prompts } = usePromptsState();
+  const voiceProfiles = prompts.filter((p) => p.type === 'voice');
 
   const canTakeControl = agentState !== 'thinking' && agentState !== 'speaking';
 
@@ -52,15 +51,14 @@ export function ControlBar({
 
   return (
     <div className="flex items-center gap-4 px-4 py-2.5">
-      {/* Left — Power + Mode */}
+      {/* Left — Power + Mode + Profile */}
       <div className="flex items-center gap-2">
         <button
           type="button"
-          className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
-            serviceActive
-              ? 'bg-green-500/15 text-green-500'
-              : 'text-muted-foreground hover:text-foreground'
-          } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
+          className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${serviceActive
+            ? 'bg-green-500/15 text-green-500'
+            : 'text-muted-foreground hover:text-foreground'
+            } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
           onClick={onToggleService}
           disabled={disabled || isRecording}
           title={serviceActive ? 'Service ON — click to stop' : 'Service OFF — click to start'}
@@ -74,11 +72,10 @@ export function ControlBar({
         <div className="flex items-center bg-muted/60 rounded-md p-0.5">
           <button
             type="button"
-            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-              audioMode === 'web'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground'
-            } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
+            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${audioMode === 'web'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground'
+              } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
             onClick={() => onSetAudioMode?.('web')}
             disabled={disabled || isRecording}
           >
@@ -86,11 +83,10 @@ export function ControlBar({
           </button>
           <button
             type="button"
-            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-              audioMode === 'local'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground'
-            } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
+            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${audioMode === 'local'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground'
+              } ${disabled || isRecording ? 'opacity-30 cursor-not-allowed' : ''}`}
             onClick={() => onSetAudioMode?.('local')}
             disabled={disabled || isRecording}
           >
@@ -98,21 +94,23 @@ export function ControlBar({
           </button>
         </div>
 
-        {profiles.map((profile) => (
-          <button
-            key={profile.id}
-            type="button"
-            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-              activeProfile === profile.id
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:text-foreground'
-            } ${isRecording || disabled || !serviceActive ? 'opacity-30 cursor-not-allowed' : ''}`}
-            onClick={() => onProfileChange(profile.id)}
-            disabled={isRecording || disabled || !serviceActive}
-          >
-            {profile.name}
-          </button>
-        ))}
+        <select
+          value={activeProfile}
+          onChange={(e) => onProfileChange(e.target.value as ProfileId)}
+          disabled={isRecording || disabled || !serviceActive}
+          className={`px-2.5 py-1 text-[11px] font-medium rounded-md bg-muted/30 border border-border/50 text-foreground outline-none transition-colors focus:border-border hover:bg-muted/50 ${isRecording || disabled || !serviceActive ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
+            }`}
+        >
+          {voiceProfiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+          {/* Fallback in case the active profile doesn't exist in prompts yet */}
+          {activeProfile && !voiceProfiles.some(p => p.id === activeProfile) && (
+            <option value={activeProfile} className="capitalize">{activeProfile}</option>
+          )}
+        </select>
       </div>
 
       {/* Center — Mic button (hero element) */}
@@ -126,15 +124,14 @@ export function ControlBar({
             )}
             <button
               type="button"
-              className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
-                isRecording
-                  ? 'bg-red-500 text-white shadow-lg shadow-red-500/25'
-                  : isInitializing
+              className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${isRecording
+                ? 'bg-red-500 text-white shadow-lg shadow-red-500/25'
+                : isInitializing
                   ? 'bg-orange-500/20 text-orange-500 animate-pulse'
                   : serviceActive
-                  ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-95'
-                  : 'bg-muted text-muted-foreground'
-              } ${disabled || isInitializing || (!serviceActive && !isRecording) ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-95'
+                    : 'bg-muted text-muted-foreground'
+                } ${disabled || isInitializing || (!serviceActive && !isRecording) ? 'opacity-40 cursor-not-allowed' : ''}`}
               onClick={onToggleRecording}
               disabled={disabled || isInitializing || (!serviceActive && !isRecording)}
               aria-label={isRecording ? 'Stop recording' : 'Start recording'}
@@ -157,9 +154,8 @@ export function ControlBar({
         ) : (
           <button
             type="button"
-            className={`w-14 h-14 rounded-full border-2 border-dashed border-orange-500/40 bg-orange-500/5 flex flex-col items-center justify-center gap-0.5 transition-colors ${
-              !canTakeControl || disabled ? 'opacity-30 cursor-not-allowed' : 'hover:border-orange-500/70 hover:bg-orange-500/10'
-            }`}
+            className={`w-14 h-14 rounded-full border-2 border-dashed border-orange-500/40 bg-orange-500/5 flex flex-col items-center justify-center gap-0.5 transition-colors ${!canTakeControl || disabled ? 'opacity-30 cursor-not-allowed' : 'hover:border-orange-500/70 hover:bg-orange-500/10'
+              }`}
             onClick={onRequestMaster}
             disabled={!canTakeControl || disabled}
             aria-label="Take control"
@@ -179,9 +175,8 @@ export function ControlBar({
       <div className="flex items-center gap-3">
         <RecordButton />
         <div className="flex flex-col items-end gap-0.5">
-          <span className={`text-[10px] font-mono ${
-            isMaster ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'
-          }`}>
+          <span className={`text-[10px] font-mono ${isMaster ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'
+            }`}>
             {isMaster ? 'Master' : 'Replica'}
           </span>
           <span className={`text-[10px] ${error ? 'text-red-500' : 'text-muted-foreground'}`}>

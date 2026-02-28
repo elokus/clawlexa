@@ -12,7 +12,7 @@ export function PromptsView() {
   }, [loadPrompts]);
 
   return (
-    <div className="grid grid-cols-[280px_1fr] h-full overflow-hidden bg-card rounded-xl border border-border max-[900px]:grid-cols-[220px_1fr] max-[700px]:grid-cols-1">
+    <div className="grid grid-cols-[280px_1fr] h-full overflow-hidden max-[900px]:grid-cols-[220px_1fr] max-[700px]:grid-cols-1">
       {/* Sidebar */}
       <div className="h-full overflow-hidden border-r border-border bg-muted/30 max-[700px]:hidden">
         <PromptsSidebar />

@@ -57,7 +57,7 @@ function AuthProfileSelect({
   profileNames: string[];
 }) {
   return (
-    <SettingsField label="Auth Profile Override" hint="Optional. Leave blank to use provider default.">
+    <SettingsField label="Credentials" hint="Select which API key profile to use. Leave blank for provider default.">
       <select
         value={value || ''}
         onChange={(e) => onChange(e.target.value || undefined)}
@@ -300,9 +300,9 @@ export function SettingsVoicePipeline() {
           stage.providers[0];
         const modelOptions = selectedProvider?.modelCatalogKey
           ? withCurrent(
-              asModelList(catalog, selectedProvider.modelCatalogKey),
-              asString(getPathValue(config, stage.modelPath))
-            )
+            asModelList(catalog, selectedProvider.modelCatalogKey),
+            asString(getPathValue(config, stage.modelPath))
+          )
           : [];
         const voiceOptions = selectedProvider?.voiceCatalogKey
           ? asVoiceList(catalog, selectedProvider.voiceCatalogKey)
@@ -424,7 +424,7 @@ export function SettingsVoicePipeline() {
           description="Runtime config is rendered from backend manifest and catalog metadata."
           columns={1}
         >
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text-ghost)', lineHeight: 1.6 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted-foreground)', lineHeight: 1.6 }}>
             {isDecomposed
               ? `Pipeline: ${(manifest?.decomposedStages ?? []).map((s) => s.id.toUpperCase()).join(' -> ')}`
               : `Provider: ${selectedRealtimeProvider?.id ?? 'unknown'}`

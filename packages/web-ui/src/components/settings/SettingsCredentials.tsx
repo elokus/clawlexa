@@ -60,8 +60,8 @@ export function SettingsCredentials() {
     <>
       <style>{`
         .credential-card {
-          background: rgba(5, 5, 12, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.06);
+          background: var(--card);
+          border: 1px solid var(--border);
           border-radius: 10px;
           padding: 20px 24px;
           margin-bottom: 12px;
@@ -75,20 +75,20 @@ export function SettingsCredentials() {
         }
 
         .credential-name {
-          font-family: var(--font-mono);
+          font-family: var(--font-sans);
           font-size: 14px;
           font-weight: 500;
-          color: var(--color-text-bright);
+          color: var(--foreground);
         }
 
         .credential-provider-badge {
           font-family: var(--font-mono);
           font-size: 11px;
           padding: 3px 10px;
-          background: rgba(56, 189, 248, 0.08);
-          border: 1px solid rgba(56, 189, 248, 0.15);
+          background: color-mix(in oklch, var(--color-blue) 8%, transparent);
+          border: 1px solid var(--color-blue-muted);
           border-radius: 4px;
-          color: var(--color-cyan);
+          color: var(--color-blue);
         }
 
         .credential-fields {
@@ -100,11 +100,11 @@ export function SettingsCredentials() {
 
         .credential-test-btn {
           padding: 9px 18px;
-          background: rgba(52, 211, 153, 0.08);
-          border: 1px solid rgba(52, 211, 153, 0.2);
+          background: color-mix(in oklch, var(--color-green) 8%, transparent);
+          border: 1px solid var(--color-green-muted);
           border-radius: 6px;
-          color: var(--color-emerald);
-          font-family: var(--font-mono);
+          color: var(--color-green);
+          font-family: var(--font-sans);
           font-size: 12px;
           cursor: pointer;
           transition: all 0.15s ease;
@@ -112,8 +112,7 @@ export function SettingsCredentials() {
         }
 
         .credential-test-btn:hover:not(:disabled) {
-          background: rgba(52, 211, 153, 0.15);
-          border-color: rgba(52, 211, 153, 0.35);
+          background: color-mix(in oklch, var(--color-green) 14%, transparent);
         }
 
         .credential-test-btn:disabled {
@@ -123,20 +122,20 @@ export function SettingsCredentials() {
 
         .credential-test-result {
           margin-top: 10px;
-          font-family: var(--font-mono);
+          font-family: var(--font-sans);
           font-size: 12px;
           padding: 8px 12px;
           border-radius: 6px;
         }
 
         .credential-test-result.success {
-          color: var(--color-emerald);
-          background: rgba(52, 211, 153, 0.06);
+          color: var(--color-green);
+          background: color-mix(in oklch, var(--color-green) 6%, transparent);
         }
 
         .credential-test-result.error {
-          color: var(--color-rose);
-          background: rgba(251, 113, 133, 0.06);
+          color: var(--color-red);
+          background: color-mix(in oklch, var(--color-red) 6%, transparent);
         }
 
         @media (max-width: 800px) {

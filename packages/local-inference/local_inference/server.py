@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import ServerConfig, parse_server_config
+from .model_control import ensure_hf_cache_env
 from .routes.health import router as health_router
 from .routes.models import router as models_router
 from .routes.stt import router as stt_router
@@ -22,6 +23,7 @@ logger = logging.getLogger("local_inference")
 
 def create_app(config: ServerConfig | None = None) -> FastAPI:
     resolved_config = config or ServerConfig()
+    ensure_hf_cache_env()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
