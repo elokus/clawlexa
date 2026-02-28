@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ProviderVoiceEntry } from '../../lib/voice-config-api';
-import { ConfigField } from '../ui/config-dialog';
+import { SettingsField } from '../settings/SettingsSection';
 
 interface VoiceSelectorProps {
   label: string;
@@ -149,14 +149,14 @@ export function VoiceSelector({
 
   if (!showFilters) {
     return (
-      <ConfigField label={label} hint={hint}>
+      <SettingsField label={label} hint={hint}>
         {voiceSelect}
-      </ConfigField>
+      </SettingsField>
     );
   }
 
   return (
-    <ConfigField label={label} hint={hint} fullWidth>
+    <SettingsField label={label} hint={hint} fullWidth>
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(100px, auto) minmax(120px, 1fr) minmax(0, 2fr)' }}>
         <select
           value={selectedLanguage}
@@ -182,6 +182,6 @@ export function VoiceSelector({
         />
         {voiceSelect}
       </div>
-    </ConfigField>
+    </SettingsField>
   );
 }

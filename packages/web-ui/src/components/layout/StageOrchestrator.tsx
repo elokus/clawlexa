@@ -23,8 +23,9 @@ import { EventsOverlay } from '../overlays/EventsOverlay';
 import { ToolsOverlay } from '../overlays/ToolsOverlay';
 import { ToastOverlay } from '../overlays/Toast';
 import { PromptsView } from '../prompts/PromptsView';
+import { SettingsView } from '../settings/SettingsView';
 import { useToasts } from '../../stores';
-import { navigateToSession } from '../../hooks/useRouter';
+import { navigateToSession, useRouter } from '../../hooks/useRouter';
 import type { SessionTreeNode, StageItem } from '../../types';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -145,6 +146,9 @@ export function StageOrchestrator() {
   const stageKey = focusedSession?.id ?? (pendingAgentName ? `pending-${pendingAgentName}` : 'root');
 
   const isPromptsView = activeView === 'prompts';
+  const isSettingsView = activeView === 'settings';
+  const isFullWidthView = isPromptsView || isSettingsView;
+  const { params } = useRouter();
 
   return (
     <div className="stage-orchestrator-wrapper stage-perspective">
@@ -173,8 +177,12 @@ export function StageOrchestrator() {
           z-index: 1;
         }
 
-        .stage-orchestrator.prompts-view {
+        .stage-orchestrator.full-width-view {
           grid-template-columns: auto 1fr;
+        }
+
+        .stage-orchestrator.settings-view {
+          grid-template-columns: 1fr;
         }
 
         /* Left Dock - Slim icon bar */
@@ -239,7 +247,7 @@ export function StageOrchestrator() {
           .stage-orchestrator {
             grid-template-columns: auto 1fr 280px;
           }
-          .stage-orchestrator.prompts-view {
+          .stage-orchestrator.full-width-view {
             grid-template-columns: auto 1fr;
           }
         }
@@ -248,7 +256,7 @@ export function StageOrchestrator() {
           .stage-orchestrator {
             grid-template-columns: auto 1fr 60px;
           }
-          .stage-orchestrator.prompts-view {
+          .stage-orchestrator.full-width-view {
             grid-template-columns: auto 1fr;
           }
         }
@@ -268,14 +276,23 @@ export function StageOrchestrator() {
       {/* Ambient Grid Background */}
       <div className="ambient-grid" />
 
-      {/* Main layout - 3-column for sessions, 2-column for prompts */}
-      <div className={`stage-orchestrator ${isPromptsView ? 'prompts-view' : ''}`}>
-        {/* Left Dock - Slim icon bar */}
-        <div className="orchestrator-dock">
-          <BackgroundRail />
-        </div>
+      {/* Main layout - 3-column for sessions, 2-column for prompts/settings */}
+      <div className={`stage-orchestrator ${isSettingsView ? 'settings-view' : isFullWidthView ? 'full-width-view' : ''}`}>
+        {/* Left Dock - Slim icon bar (hidden in settings) */}
+        {!isSettingsView && (
+          <div className="orchestrator-dock">
+            <BackgroundRail />
+          </div>
+        )}
 
-        {isPromptsView ? (
+        {isSettingsView ? (
+          /* Settings View - Full width, no dock */
+          <div className="orchestrator-stage" style={{ padding: 0 }}>
+            <div className="stage-container">
+              <SettingsView initialPage={params.settingsPage} />
+            </div>
+          </div>
+        ) : isPromptsView ? (
           /* Prompts View - Full width */
           <div className="orchestrator-stage">
             <div className="stage-container">

@@ -1,5 +1,5 @@
 import type { ConfigFieldDescriptor, ProviderConfigSchema } from '../../lib/voice-config-api';
-import { ConfigField, ConfigSection } from '../ui/config-dialog';
+import { SettingsSection, SettingsField } from '../settings/SettingsSection';
 
 interface ProviderSettingsSectionProps {
   schema: ProviderConfigSchema;
@@ -38,7 +38,7 @@ function FieldRenderer({
   switch (field.type) {
     case 'select':
       return (
-        <ConfigField label={field.label} hint={field.description}>
+        <SettingsField label={field.label} hint={field.description}>
           <select
             value={String(value)}
             onChange={(e) => onChange(field.key, e.target.value)}
@@ -49,12 +49,12 @@ function FieldRenderer({
               </option>
             ))}
           </select>
-        </ConfigField>
+        </SettingsField>
       );
 
     case 'boolean':
       return (
-        <ConfigField label={field.label} hint={field.description}>
+        <SettingsField label={field.label} hint={field.description}>
           <select
             value={value === true || value === 'true' ? 'true' : 'false'}
             onChange={(e) => onChange(field.key, e.target.value === 'true')}
@@ -62,12 +62,12 @@ function FieldRenderer({
             <option value="false">disabled</option>
             <option value="true">enabled</option>
           </select>
-        </ConfigField>
+        </SettingsField>
       );
 
     case 'number':
       return (
-        <ConfigField label={field.label} hint={field.description}>
+        <SettingsField label={field.label} hint={field.description}>
           <input
             type="number"
             value={value === '' ? '' : Number(value)}
@@ -79,12 +79,12 @@ function FieldRenderer({
               onChange(field.key, Number.isFinite(num) ? num : field.defaultValue ?? 0);
             }}
           />
-        </ConfigField>
+        </SettingsField>
       );
 
     case 'range':
       return (
-        <ConfigField label={`${field.label}: ${value}`} hint={field.description}>
+        <SettingsField label={`${field.label}: ${value}`} hint={field.description}>
           <input
             type="range"
             value={Number(value)}
@@ -94,19 +94,19 @@ function FieldRenderer({
             onChange={(e) => onChange(field.key, Number(e.target.value))}
             style={{ width: '100%' }}
           />
-        </ConfigField>
+        </SettingsField>
       );
 
     case 'string':
     default:
       return (
-        <ConfigField label={field.label} hint={field.description}>
+        <SettingsField label={field.label} hint={field.description}>
           <input
             type="text"
             value={String(value)}
             onChange={(e) => onChange(field.key, e.target.value)}
           />
-        </ConfigField>
+        </SettingsField>
       );
   }
 }
@@ -129,7 +129,7 @@ export function ProviderSettingsSection({
   const sectionDesc = description ?? `${schema.displayName} ${group} configuration.`;
 
   return (
-    <ConfigSection title={sectionTitle} description={sectionDesc} columns={3}>
+    <SettingsSection title={sectionTitle} description={sectionDesc} columns={3}>
       {visibleFields.map((field) => (
         <FieldRenderer
           key={field.key}
@@ -138,6 +138,6 @@ export function ProviderSettingsSection({
           onChange={onChange}
         />
       ))}
-    </ConfigSection>
+    </SettingsSection>
   );
 }

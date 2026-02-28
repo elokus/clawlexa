@@ -79,7 +79,7 @@ Legacy OpenAI-compatible HTTP fallback (`/chat/completions`) is retained only fo
 
 ### 4. TTS (Text-to-Speech)
 
-Providers are now registry-based and mapped in `src/adapters/decomposed-tts/`:
+Providers are now registry-based and mapped in `src/adapters/tts/`:
 
 | Provider | Transport | Streaming | Status |
 |----------|-----------|-----------|--------|

@@ -218,9 +218,9 @@ interface UnifiedSessionsStore {
   activeOverlay: OverlayType;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // View State (Prompts vs Sessions)
+  // View State (Sessions / Prompts / Settings)
   // ─────────────────────────────────────────────────────────────────────────
-  activeView: 'sessions' | 'prompts';
+  activeView: 'sessions' | 'prompts' | 'settings';
 
   // ─────────────────────────────────────────────────────────────────────────
   // Toast Notifications
@@ -315,7 +315,7 @@ interface UnifiedSessionsStore {
   // ─────────────────────────────────────────────────────────────────────────
   // View & Prompts Actions
   // ─────────────────────────────────────────────────────────────────────────
-  setActiveView: (view: 'sessions' | 'prompts') => void;
+  setActiveView: (view: 'sessions' | 'prompts' | 'settings') => void;
   loadPrompts: () => Promise<void>;
   selectPrompt: (id: string) => Promise<void>;
   selectVersion: (version: string) => Promise<void>;
