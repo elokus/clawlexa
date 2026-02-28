@@ -106,12 +106,34 @@ describe('provider-config parsers', () => {
     expect(parsed.rimeApiKey).toBe('rime-test');
   });
 
+  test('parses local decomposed endpoint settings', () => {
+    const parsed = parseDecomposedProviderConfig({
+      sttProvider: 'local',
+      ttsProvider: 'local',
+      localEndpoint: 'http://localhost:1060',
+      inlineTtsChunkingEnabled: false,
+    });
+
+    expect(parsed.sttProvider).toBe('local');
+    expect(parsed.ttsProvider).toBe('local');
+    expect(parsed.localEndpoint).toBe('http://localhost:1060');
+    expect(parsed.inlineTtsChunkingEnabled).toBe(false);
+  });
+
   test('rejects invalid decomposed Deepgram punctuation chunking type', () => {
     expect(() =>
       parseDecomposedProviderConfig({
         deepgramTtsPunctuationChunkingEnabled: 'false',
       })
     ).toThrow('providerConfig.deepgramTtsPunctuationChunkingEnabled must be a boolean');
+  });
+
+  test('rejects invalid decomposed inline TTS chunking type', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        inlineTtsChunkingEnabled: 'false',
+      })
+    ).toThrow('providerConfig.inlineTtsChunkingEnabled must be a boolean');
   });
 
   test('rejects invalid decomposed customSttMode', () => {

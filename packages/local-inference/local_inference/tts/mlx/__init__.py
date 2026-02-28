@@ -1,0 +1,3 @@
+from .qwen import QWEN_SYNTHETIC_WORD_MS_PER_WORD
+
+__all__ = ["QWEN_SYNTHETIC_WORD_MS_PER_WORD"]

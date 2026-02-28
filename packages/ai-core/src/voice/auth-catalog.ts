@@ -88,6 +88,16 @@ const DEFAULT_GOOGLE_CHIRP_TTS_VOICES = [
 ];
 const DEFAULT_KOKORO_TTS_VOICES = ['af_nicole', 'af_bella'];
 const DEFAULT_POCKET_TTS_VOICES = ['alba', 'marius', 'javert'];
+const DEFAULT_LOCAL_STT_MODELS = ['mlx-community/parakeet-tdt-0.6b-v3'];
+const DEFAULT_LOCAL_TTS_MODELS = [
+  'qwen3-0.6b',
+  'qwen3-1.7b',
+  'qwen3-1.7b-vd',
+  'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16',
+  'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16',
+  'mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16',
+  'mlx-community/Kokoro-82M-bf16',
+];
 const DEFAULT_ULTRAVOX_MODELS = ['ultravox-v0.7'];
 const DEFAULT_GEMINI_MODELS = ['gemini-2.5-flash-native-audio-preview'];
 const DEFAULT_GEMINI_VOICES = [
@@ -503,6 +513,9 @@ export async function fetchRuntimeProviderCatalog(input: {
       'deepgram-stt': {
         models: deepgram.sttModels,
       },
+      'local-stt': {
+        models: DEFAULT_LOCAL_STT_MODELS,
+      },
       'openai-llm': {
         models: openai.textModels,
       },
@@ -544,6 +557,9 @@ export async function fetchRuntimeProviderCatalog(input: {
       },
       'pocket-tts': {
         voices: mapSchemaVoices(DEFAULT_POCKET_TTS_VOICES, providerSchemas.decomposed?.voices),
+      },
+      'local-tts': {
+        models: DEFAULT_LOCAL_TTS_MODELS,
       },
     },
     providerSchemas,

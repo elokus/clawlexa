@@ -59,3 +59,4 @@ repomix-output.xml
 packages/voice-runtime/test-audio/*.raw
 packages/voice-runtime/data/test/*.raw
 packages/voice-runtime/data/test/*.wav
+*.wav

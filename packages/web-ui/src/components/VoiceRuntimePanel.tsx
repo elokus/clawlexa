@@ -689,6 +689,8 @@ export function VoiceRuntimePanel({
           const voiceOptions = selectedProvider?.voiceCatalogKey
             ? asVoiceList(catalog, selectedProvider.voiceCatalogKey)
             : [];
+          const supportsVoiceCatalog = Boolean(selectedProvider?.voiceCatalogKey);
+          const hasVoiceOptions = voiceOptions.length > 0;
 
           return (
             <ConfigSection
@@ -719,34 +721,77 @@ export function VoiceRuntimePanel({
                     onChange={(next) => updatePath(stage.authPath, next)}
                     profileNames={authProfileNames}
                   />
-                  <VoiceSelector
-                    label="Voice / Model"
-                    voices={voiceOptions}
-                    value={asString(getPathValue(config, stage.voicePath), asString(getPathValue(config, stage.modelPath)))}
-                    onChange={(voiceId) => {
-                      const voicePath = stage.voicePath as string;
-                      updateMany([
-                        { path: stage.modelPath, value: voiceId },
-                        { path: voicePath, value: voiceId },
-                      ]);
-                    }}
-                    languageFilter={config.voice.language}
-                  />
+                  {supportsVoiceCatalog && hasVoiceOptions ? (
+                    <VoiceSelector
+                      label="Voice / Model"
+                      voices={voiceOptions}
+                      value={asString(getPathValue(config, stage.voicePath), asString(getPathValue(config, stage.modelPath)))}
+                      onChange={(voiceId) => {
+                        const voicePath = stage.voicePath as string;
+                        updateMany([
+                          { path: stage.modelPath, value: voiceId },
+                          { path: voicePath, value: voiceId },
+                        ]);
+                      }}
+                      languageFilter={config.voice.language}
+                    />
+                  ) : (
+                    <>
+                      {modelOptions.length > 0 ? (
+                        <ConfigField label="Model">
+                          <select
+                            value={asString(getPathValue(config, stage.modelPath))}
+                            onChange={(event) => updatePath(stage.modelPath, event.target.value)}
+                          >
+                            {modelOptions.map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </select>
+                        </ConfigField>
+                      ) : (
+                        <ConfigField label="Model">
+                          <input
+                            value={asString(getPathValue(config, stage.modelPath))}
+                            onChange={(event) => updatePath(stage.modelPath, event.target.value)}
+                          />
+                        </ConfigField>
+                      )}
+                      <ConfigField label="Voice">
+                        <input
+                          value={asString(getPathValue(config, stage.voicePath), '')}
+                          onChange={(event) =>
+                            updatePath(stage.voicePath as string, event.target.value)
+                          }
+                        />
+                      </ConfigField>
+                    </>
+                  )}
                 </>
               ) : (
                 <>
-                  <ConfigField label="Model">
-                    <select
-                      value={asString(getPathValue(config, stage.modelPath))}
-                      onChange={(event) => updatePath(stage.modelPath, event.target.value)}
-                    >
-                      {modelOptions.map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                  </ConfigField>
+                  {modelOptions.length > 0 ? (
+                    <ConfigField label="Model">
+                      <select
+                        value={asString(getPathValue(config, stage.modelPath))}
+                        onChange={(event) => updatePath(stage.modelPath, event.target.value)}
+                      >
+                        {modelOptions.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                    </ConfigField>
+                  ) : (
+                    <ConfigField label="Model">
+                      <input
+                        value={asString(getPathValue(config, stage.modelPath))}
+                        onChange={(event) => updatePath(stage.modelPath, event.target.value)}
+                      />
+                    </ConfigField>
+                  )}
                   <AuthProfileSelect
                     value={asString(getPathValue(config, stage.authPath), '') || undefined}
                     onChange={(next) => updatePath(stage.authPath, next)}

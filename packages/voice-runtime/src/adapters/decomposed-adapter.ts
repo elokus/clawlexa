@@ -96,7 +96,7 @@ type TurnMarker = (typeof TURN_MARKERS)[number];
 type ConversationRole = 'user' | 'assistant' | 'system';
 
 interface DecomposedOptions {
-  sttProvider: 'openai' | 'deepgram';
+  sttProvider: 'openai' | 'deepgram' | 'local';
   sttModel: string;
   customSttMode: 'provider' | 'custom' | 'hybrid';
   llmProvider: 'openai' | 'openrouter' | 'anthropic' | 'google';
@@ -107,12 +107,14 @@ interface DecomposedOptions {
   deepgramTtsTransport: 'websocket';
   deepgramTtsWsUrl: string;
   deepgramTtsPunctuationChunkingEnabled: boolean;
+  inlineTtsChunkingEnabled: boolean;
   cartesiaTtsWsUrl: string;
   fishTtsWsUrl: string;
   rimeTtsWsUrl: string;
   googleChirpEndpoint: string;
   kokoroEndpoint: string;
   pocketTtsEndpoint: string;
+  localEndpoint: string;
   silenceMs: number;
   minSpeechMs: number;
   minRms: number;
@@ -430,6 +432,24 @@ const DECOMPOSED_CONFIG_SCHEMA: ProviderConfigSchema = {
       defaultValue: true,
       description:
         'When enabled, Deepgram streaming TTS flushes on punctuation for lower latency. Disable for one continuous segment per turn.',
+    },
+    {
+      key: 'inlineTtsChunkingEnabled',
+      label: 'Inline TTS Chunking',
+      type: 'boolean',
+      group: 'advanced',
+      defaultValue: true,
+      description:
+        'When enabled, inline/non-streaming TTS is synthesized in small segments while text streams in. Disable to synthesize one full utterance per response.',
+    },
+    {
+      key: 'localEndpoint',
+      label: 'Local Inference Endpoint',
+      type: 'string',
+      group: 'advanced',
+      defaultValue: 'http://localhost:1060',
+      description:
+        'Base URL for local STT/TTS provider calls (for example http://localhost:1060).',
     },
     // LLM completion fields (enabled, shortTimeoutMs, longTimeoutMs) are managed
     // by the dedicated turn.llmCompletion section in voice.config.json, not providerSettings.
@@ -957,6 +977,9 @@ export class DecomposedAdapter implements ProviderAdapter {
   private async transcribeAudio(pcm: Uint8Array): Promise<string> {
     if (!this.options || !this.input) return '';
     this.setState('thinking');
+    if (this.options.sttProvider === 'local') {
+      return this.transcribeWithLocal(pcm);
+    }
     if (this.options.sttProvider === 'deepgram') {
       return this.transcribeWithDeepgram(pcm);
     }
@@ -1020,6 +1043,33 @@ export class DecomposedAdapter implements ProviderAdapter {
 
     const payload = (await response.json()) as DeepgramListenResponse;
     return payload.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? '';
+  }
+
+  private async transcribeWithLocal(pcm: Uint8Array): Promise<string> {
+    if (!this.options) {
+      return '';
+    }
+
+    const wav = encodeWavPcm16Mono(pcm, AUDIO_SAMPLE_RATE);
+    const endpoint = new URL('/v1/audio/transcriptions', this.options.localEndpoint);
+    endpoint.searchParams.set('model', this.options.sttModel);
+    endpoint.searchParams.set('language', this.options.language);
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'audio/wav',
+      },
+      body: wav,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Local STT failed (${response.status}): ${errorText}`);
+    }
+
+    const payload = (await response.json()) as { text?: string };
+    return payload.text?.trim() ?? '';
   }
 
   private async runAssistantTurn(
@@ -1221,7 +1271,9 @@ export class DecomposedAdapter implements ProviderAdapter {
         return { ...result, marker };
       }
 
-      console.log(`[DecomposedAdapter] TTS path: inline-segment (provider=${this.options.ttsProvider})`);
+      console.log(
+        `[DecomposedAdapter] TTS path: inline-segment (provider=${this.options.ttsProvider}, chunking=${this.options.inlineTtsChunkingEnabled ? 'on' : 'off'})`
+      );
       const result = await this.streamTextWithInlineTts(
         textStream,
         assistantId,
@@ -1299,6 +1351,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     let spokenWords = 0;
     let spokenPlaybackMs = 0;
     const spokenStreamEnabled = this.options?.spokenStreamEnabled === true;
+    const inlineTtsChunkingEnabled = this.options?.inlineTtsChunkingEnabled !== false;
 
     let speakQueue: Promise<void> = Promise.resolve();
     const queueSegment = (segmentText: string): void => {
@@ -1350,10 +1403,12 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.events.emit('transcriptDelta', delta, 'assistant', assistantId);
 
       speechBuffer += delta;
-      const split = splitSpeakableText(speechBuffer);
-      speechBuffer = split.remainder;
-      for (const segment of split.segments) {
-        queueSegment(segment);
+      if (inlineTtsChunkingEnabled) {
+        const split = splitSpeakableText(speechBuffer);
+        speechBuffer = split.remainder;
+        for (const segment of split.segments) {
+          queueSegment(segment);
+        }
       }
     }
 
@@ -2471,6 +2526,7 @@ export class DecomposedAdapter implements ProviderAdapter {
             rimeApiKey: this.options.rimeApiKey,
             kokoroEndpoint: this.options.kokoroEndpoint,
             pocketTtsEndpoint: this.options.pocketTtsEndpoint,
+            localEndpoint: this.options.localEndpoint,
             googleChirpEndpoint: this.options.googleChirpEndpoint,
             cartesiaTtsWsUrl: this.options.cartesiaTtsWsUrl,
             fishTtsWsUrl: this.options.fishTtsWsUrl,
@@ -2842,6 +2898,9 @@ export class DecomposedAdapter implements ProviderAdapter {
       deepgramTtsWsUrl: providerConfig.deepgramTtsWsUrl ?? 'wss://api.deepgram.com/v1/speak',
       deepgramTtsPunctuationChunkingEnabled:
         providerConfig.deepgramTtsPunctuationChunkingEnabled ?? true,
+      inlineTtsChunkingEnabled:
+        providerConfig.inlineTtsChunkingEnabled ??
+        defaultInlineTtsChunkingEnabled(ttsProvider, ttsModel),
       cartesiaTtsWsUrl:
         providerConfig.cartesiaTtsWsUrl ?? 'wss://api.cartesia.ai/tts/websocket',
       fishTtsWsUrl: providerConfig.fishTtsWsUrl ?? 'wss://api.fish.audio/v1/tts/live',
@@ -2852,6 +2911,7 @@ export class DecomposedAdapter implements ProviderAdapter {
       kokoroEndpoint:
         providerConfig.kokoroEndpoint ?? 'http://localhost:8880/v1/audio/speech',
       pocketTtsEndpoint: providerConfig.pocketTtsEndpoint ?? 'http://localhost:8000/tts',
+      localEndpoint: providerConfig.localEndpoint ?? 'http://localhost:1060',
       silenceMs: providerConfig.turn?.silenceMs ?? 700,
       minSpeechMs: providerConfig.turn?.minSpeechMs ?? 350,
       minRms: providerConfig.turn?.minRms ?? 0.015,
@@ -3225,6 +3285,21 @@ function shouldFlushDeepgramStream(
   }
 
   return false;
+}
+
+function isQwenTtsModelId(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return normalized.includes('qwen3') || normalized.includes('qwen-tts');
+}
+
+function defaultInlineTtsChunkingEnabled(
+  ttsProvider: DecomposedTtsProvider,
+  ttsModel: string
+): boolean {
+  if (ttsProvider === 'local' && isQwenTtsModelId(ttsModel)) {
+    return false;
+  }
+  return true;
 }
 
 function countWords(text: string): number {

@@ -57,9 +57,17 @@ tasks:
   dev:
     desc: Start all services (daemon, agent, web) concurrently
     deps:
+      - dev:local-inference
       - dev:daemon
       - dev:agent
       - dev:web
+
+  dev:local-inference:
+    desc: Start local inference server (STT/TTS)
+    dir: packages/local-inference
+    cmds:
+      - uv sync --extra mlx
+      - uv run --extra mlx local-inference --stt-model mlx-community/parakeet-tdt-0.6b-v3 --tts-model qwen3-0.6b --qwen-language de --qwen-seed 42
 
   dev:daemon:
     desc: Start terminal-host daemon

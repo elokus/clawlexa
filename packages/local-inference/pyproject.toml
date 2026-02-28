@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-inference"
+version = "0.1.0"
+description = "Local inference server for STT and TTS - backend-agnostic (MLX, ONNX, ...)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pydantic>=2.0",
+    "numpy",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+mlx = [
+    "parakeet-mlx",
+    "mlx-audio==0.3.1",
+    "mlx-lm==0.30.5",
+    "transformers==5.0.0rc3",
+]
+onnx = ["kokoro-onnx"]
+
+[project.scripts]
+local-inference = "local_inference.server:main"
+
+[tool.setuptools.packages.find]
+include = ["local_inference*"]

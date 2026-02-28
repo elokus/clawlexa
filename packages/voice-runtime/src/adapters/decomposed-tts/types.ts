@@ -9,6 +9,7 @@ export const DECOMPOSED_TTS_PROVIDERS = [
   'google-chirp',
   'kokoro',
   'pocket-tts',
+  'local',
 ] as const;
 
 export type DecomposedTtsProvider = (typeof DECOMPOSED_TTS_PROVIDERS)[number];
@@ -26,6 +27,7 @@ export interface DecomposedTtsProviderContext {
   rimeApiKey?: string;
   kokoroEndpoint: string;
   pocketTtsEndpoint: string;
+  localEndpoint: string;
   googleChirpEndpoint: string;
   cartesiaTtsWsUrl: string;
   fishTtsWsUrl: string;

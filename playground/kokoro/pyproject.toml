@@ -1,0 +1,13 @@
+[project]
+name = "kokoro-playground"
+version = "0.1.0"
+description = "Kokoro-ONNX TTS streaming benchmark (server + client)"
+requires-python = ">=3.12"
+dependencies = [
+    "kokoro-onnx",
+    "fastapi",
+    "uvicorn",
+    "websockets",
+    "sounddevice",
+    "numpy",
+]

@@ -1,0 +1,10 @@
+[project]
+name = "mlx-audio-test"
+version = "0.1.0"
+description = "Benchmark mlx-audio TTS models (Qwen3-TTS, Chatterbox) for German"
+requires-python = ">=3.12"
+dependencies = [
+    "mlx-audio",
+    "sounddevice",
+    "numpy",
+]

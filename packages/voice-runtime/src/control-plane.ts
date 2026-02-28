@@ -43,7 +43,7 @@ export const RUNTIME_VOICE_TO_VOICE_PROVIDERS = [
 export type RuntimeVoiceToVoiceProvider =
   (typeof RUNTIME_VOICE_TO_VOICE_PROVIDERS)[number];
 
-export const RUNTIME_STT_PROVIDERS = ['deepgram', 'openai'] as const;
+export const RUNTIME_STT_PROVIDERS = ['deepgram', 'openai', 'local'] as const;
 export type RuntimeSttProvider = (typeof RUNTIME_STT_PROVIDERS)[number];
 
 export const RUNTIME_LLM_PROVIDERS = [
@@ -63,6 +63,7 @@ export const RUNTIME_TTS_PROVIDERS = [
   'google-chirp',
   'kokoro',
   'pocket-tts',
+  'local',
 ] as const;
 export type RuntimeTtsProvider = (typeof RUNTIME_TTS_PROVIDERS)[number];
 
@@ -1035,6 +1036,11 @@ export function getRuntimeConfigManifest(): RuntimeConfigManifest {
             label: 'openai',
             modelCatalogKey: 'openai-stt',
           },
+          {
+            id: 'local',
+            label: 'local',
+            modelCatalogKey: 'local-stt',
+          },
         ],
       },
       {
@@ -1113,6 +1119,11 @@ export function getRuntimeConfigManifest(): RuntimeConfigManifest {
             id: 'pocket-tts',
             label: 'pocket-tts',
             voiceCatalogKey: 'pocket-tts',
+          },
+          {
+            id: 'local',
+            label: 'local',
+            modelCatalogKey: 'local-tts',
           },
         ],
       },

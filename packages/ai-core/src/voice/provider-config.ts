@@ -22,7 +22,7 @@ const GEMINI_VAD_MODES = ['server', 'manual'] as const;
 const GEMINI_SPEECH_SENSITIVITIES = ['high', 'low'] as const;
 const PIPECAT_TRANSPORTS = ['websocket', 'webrtc'] as const;
 const PIPECAT_AUDIO_INPUT_ENCODINGS = ['binary-pcm16', 'client-message-base64'] as const;
-const DECOMPOSED_STT_PROVIDERS = ['openai', 'deepgram'] as const;
+const DECOMPOSED_STT_PROVIDERS = ['openai', 'deepgram', 'local'] as const;
 const DECOMPOSED_LLM_PROVIDERS = [
   'openai',
   'openrouter',
@@ -38,6 +38,7 @@ const DECOMPOSED_TTS_PROVIDERS = [
   'google-chirp',
   'kokoro',
   'pocket-tts',
+  'local',
 ] as const;
 const DECOMPOSED_TTS_TRANSPORTS = ['websocket'] as const;
 const DECOMPOSED_CUSTOM_STT_MODES = ['provider', 'custom', 'hybrid'] as const;
@@ -403,6 +404,12 @@ export function parseDecomposedProviderConfig(raw: unknown): DecomposedProviderC
     googleChirpEndpoint: optionalString(object, 'googleChirpEndpoint', 'providerConfig'),
     kokoroEndpoint: optionalString(object, 'kokoroEndpoint', 'providerConfig'),
     pocketTtsEndpoint: optionalString(object, 'pocketTtsEndpoint', 'providerConfig'),
+    localEndpoint: optionalString(object, 'localEndpoint', 'providerConfig'),
+    inlineTtsChunkingEnabled: optionalBoolean(
+      object,
+      'inlineTtsChunkingEnabled',
+      'providerConfig'
+    ),
     turn: parseDecomposedTurnConfig(object.turn),
   };
 }

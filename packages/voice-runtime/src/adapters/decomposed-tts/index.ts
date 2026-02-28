@@ -3,6 +3,7 @@ import { synthesizeDeepgramSegment } from './deepgram-tts.js';
 import { synthesizeFishSegment } from './fish-tts.js';
 import { synthesizeGoogleChirpSegment } from './google-chirp-tts.js';
 import { synthesizeKokoroSegment } from './kokoro-tts.js';
+import { synthesizeLocalSegment } from './local-tts.js';
 import { synthesizeOpenAiSegment } from './openai-tts.js';
 import { synthesizePocketTtsSegment } from './pocket-tts.js';
 import { synthesizeRimeSegment } from './rime-tts.js';
@@ -69,6 +70,13 @@ const PROVIDERS: Record<DecomposedTtsProvider, TtsProviderDefinition> = {
     supportsRealtimeStreaming: false,
     supportsProviderWordTimestamps: false,
     synthesizeSegment: synthesizePocketTtsSegment,
+  },
+  local: {
+    id: 'local',
+    defaultModel: 'kokoro-v1.0',
+    supportsRealtimeStreaming: false,
+    supportsProviderWordTimestamps: false,
+    synthesizeSegment: synthesizeLocalSegment,
   },
 };
 

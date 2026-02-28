@@ -103,7 +103,7 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   fishAudioApiKey?: string;
   rimeApiKey?: string;
   customSttMode?: 'provider' | 'custom' | 'hybrid';
-  sttProvider?: 'openai' | 'deepgram';
+  sttProvider?: 'openai' | 'deepgram' | 'local';
   sttModel?: string;
   llmProvider?: 'openai' | 'openrouter' | 'anthropic' | 'google';
   llmModel?: string;
@@ -115,7 +115,8 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
     | 'rime'
     | 'google-chirp'
     | 'kokoro'
-    | 'pocket-tts';
+    | 'pocket-tts'
+    | 'local';
   ttsModel?: string;
   ttsVoice?: string;
   deepgramTtsTransport?: 'websocket';
@@ -127,6 +128,8 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   googleChirpEndpoint?: string;
   kokoroEndpoint?: string;
   pocketTtsEndpoint?: string;
+  localEndpoint?: string;
+  inlineTtsChunkingEnabled?: boolean;
   turn?: {
     silenceMs?: number;
     minSpeechMs?: number;

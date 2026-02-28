@@ -1,0 +1,14 @@
+[project]
+name = "qwen-tts-playground"
+version = "0.1.0"
+description = "Qwen3-TTS streaming benchmark via mlx-audio — fixed voice consistency"
+requires-python = ">=3.12"
+dependencies = [
+    "mlx-audio @ file:///${PROJECT_ROOT}/../mlx-audio/repo",
+    "fastapi",
+    "uvicorn",
+    "websockets",
+    "sounddevice",
+    "numpy",
+    "soundfile",
+]

@@ -70,4 +70,20 @@ describe('ai-core voice auth catalog', () => {
     expect(byProvider.fish).toBe('fish-key');
     expect(byProvider.rime).toBe('rime-key');
   });
+
+  it('includes local provider model catalogs for decomposed STT/TTS', async () => {
+    const catalog = await fetchRuntimeProviderCatalog({
+      openaiApiKey: '',
+      deepgramApiKey: '',
+      ultravoxApiKey: '',
+    });
+
+    expect(catalog.entries['local-stt']?.models).toContain(
+      'mlx-community/parakeet-tdt-0.6b-v3'
+    );
+    expect(catalog.entries['local-tts']?.models).toContain('qwen3-0.6b');
+    expect(catalog.entries['local-tts']?.models).toContain(
+      'mlx-community/Kokoro-82M-bf16'
+    );
+  });
 });
