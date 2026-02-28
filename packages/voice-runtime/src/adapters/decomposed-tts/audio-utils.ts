@@ -1,6 +1,11 @@
 export const AUDIO_SAMPLE_RATE = 24000;
 export const PCM_BYTES_PER_100MS = (AUDIO_SAMPLE_RATE * 2) / 10;
 
+interface StreamPcmResponseOptions {
+  passthroughChunks?: boolean;
+  minChunkBytes?: number;
+}
+
 export function chunkArrayBuffer(input: ArrayBuffer, chunkSize: number): ArrayBuffer[] {
   const bytes = new Uint8Array(input);
   const chunks: ArrayBuffer[] = [];
@@ -13,11 +18,22 @@ export function chunkArrayBuffer(input: ArrayBuffer, chunkSize: number): ArrayBu
 
 export async function streamPcmResponse(
   response: Response,
-  emitChunk: (chunk: ArrayBuffer) => Promise<boolean>
+  emitChunk: (chunk: ArrayBuffer) => Promise<boolean>,
+  options?: StreamPcmResponseOptions
 ): Promise<void> {
+  const passthroughChunks = options?.passthroughChunks === true;
+  const minChunkBytes = Math.max(2, options?.minChunkBytes ?? PCM_BYTES_PER_100MS);
+  const evenMinChunkBytes = minChunkBytes % 2 === 0 ? minChunkBytes : minChunkBytes + 1;
+
   if (!response.body) {
-    const audio = await response.arrayBuffer();
-    const chunks = chunkArrayBuffer(audio, PCM_BYTES_PER_100MS);
+    let audio = await response.arrayBuffer();
+    if (audio.byteLength % 2 !== 0) {
+      // PCM16 requires an even number of bytes; drop trailing partial sample.
+      audio = audio.slice(0, audio.byteLength - 1);
+    }
+    const chunks = passthroughChunks
+      ? [audio]
+      : chunkArrayBuffer(audio, evenMinChunkBytes);
     for (const chunk of chunks) {
       const keepGoing = await emitChunk(chunk);
       if (!keepGoing) {
@@ -43,17 +59,40 @@ export async function streamPcmResponse(
   };
 
   const flushPending = async (force: boolean): Promise<boolean> => {
-    while (pending.byteLength >= PCM_BYTES_PER_100MS || (force && pending.byteLength > 0)) {
+    if (passthroughChunks) {
+      const emitBytes = pending.byteLength - (pending.byteLength % 2);
+      if (emitBytes > 0) {
+        const chunk = pending.slice(0, emitBytes);
+        pending = pending.slice(emitBytes);
+        const keepGoing = await emitChunk(chunk.buffer);
+        if (!keepGoing) {
+          return false;
+        }
+      }
+      if (force && pending.byteLength > 0) {
+        // Keep transport resilient: discard trailing partial PCM16 sample.
+        pending = new Uint8Array(0);
+      }
+      return true;
+    }
+
+    while (pending.byteLength >= evenMinChunkBytes || (force && pending.byteLength > 0)) {
       const chunkSize =
-        pending.byteLength >= PCM_BYTES_PER_100MS
-          ? PCM_BYTES_PER_100MS
-          : pending.byteLength;
-      const chunk = pending.slice(0, chunkSize);
-      pending = pending.slice(chunkSize);
+        pending.byteLength >= evenMinChunkBytes ? evenMinChunkBytes : pending.byteLength;
+      const evenChunkSize = chunkSize - (chunkSize % 2);
+      if (evenChunkSize <= 0) {
+        break;
+      }
+      const chunk = pending.slice(0, evenChunkSize);
+      pending = pending.slice(evenChunkSize);
       const keepGoing = await emitChunk(chunk.buffer);
       if (!keepGoing) {
         return false;
       }
+    }
+    if (force && pending.byteLength > 0) {
+      // Keep transport resilient: discard trailing partial PCM16 sample.
+      pending = new Uint8Array(0);
     }
     return true;
   };
@@ -65,6 +104,15 @@ export async function streamPcmResponse(
         break;
       }
       if (!value || value.byteLength === 0) {
+        continue;
+      }
+      if (passthroughChunks) {
+        appendPending(value);
+        const keepGoing = await flushPending(false);
+        if (!keepGoing) {
+          await reader.cancel();
+          break;
+        }
         continue;
       }
       appendPending(value);

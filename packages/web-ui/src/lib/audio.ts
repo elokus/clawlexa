@@ -212,6 +212,13 @@ export class AudioController {
     if (!this.playbackContext || this.playbackContext.state === 'closed') return;
 
     try {
+      if (data.byteLength < 2) return;
+      if (data.byteLength % 2 !== 0) {
+        // Defensive guard against malformed PCM16 payload boundaries.
+        data = data.slice(0, data.byteLength - 1);
+      }
+      if (data.byteLength < 2) return;
+
       // Convert PCM16 to Float32
       const pcm16 = new Int16Array(data);
       if (pcm16.length === 0) return;

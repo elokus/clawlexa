@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -86,7 +87,17 @@ class MlxAudioBackend(TtsBackend):
             instruct=warmup_instruct,
         )
 
-    def generate_pcm16(
+    def supports_streaming(self, model_id: str | None = None) -> bool:
+        resolved_model_id = (
+            self.normalize_model_id(model_id)
+            if model_id is not None
+            else self._loaded_model
+        )
+        if not resolved_model_id:
+            return False
+        return detect_model_family(resolved_model_id) == ModelFamily.QWEN3_BASE
+
+    def _iter_audio_chunks(
         self,
         text: str,
         voice: str | None = None,
@@ -95,7 +106,9 @@ class MlxAudioBackend(TtsBackend):
         temperature: float | None = None,
         seed: int | None = None,
         instruct: str | None = None,
-    ) -> bytes:
+        stream: bool = False,
+        streaming_interval: float | None = None,
+    ) -> Iterator[np.ndarray]:
         if self._model is None or self._loaded_model is None:
             raise RuntimeError("TTS model is not loaded")
 
@@ -127,11 +140,73 @@ class MlxAudioBackend(TtsBackend):
             else self._model.generate
         )
 
-        chunks: list[np.ndarray] = []
-        for result in generator(**plan["kwargs"]):
+        kwargs = dict(plan["kwargs"])
+        if (
+            stream
+            and family == ModelFamily.QWEN3_BASE
+            and plan["method"] == "generate"
+        ):
+            kwargs["stream"] = True
+            if streaming_interval is not None:
+                kwargs["streaming_interval"] = streaming_interval
+
+        for result in generator(**kwargs):
             chunk = _extract_audio_chunk(result)
             if chunk is not None and chunk.size > 0:
-                chunks.append(chunk)
+                yield chunk
+
+    def stream_pcm16(
+        self,
+        text: str,
+        voice: str | None = None,
+        *,
+        language: str | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+        instruct: str | None = None,
+        streaming_interval: float | None = None,
+    ) -> Iterator[bytes]:
+        emitted = 0
+        for audio in self._iter_audio_chunks(
+            text,
+            voice,
+            language=language,
+            temperature=temperature,
+            seed=seed,
+            instruct=instruct,
+            stream=True,
+            streaming_interval=streaming_interval,
+        ):
+            audio = np.clip(audio, -1.0, 1.0)
+            pcm = (audio * 32767.0).astype(np.int16)
+            if pcm.size > 0:
+                emitted += 1
+                yield pcm.tobytes()
+
+        if emitted == 0:
+            raise RuntimeError("TTS generation produced no audio")
+
+    def generate_pcm16(
+        self,
+        text: str,
+        voice: str | None = None,
+        *,
+        language: str | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+        instruct: str | None = None,
+    ) -> bytes:
+        chunks: list[np.ndarray] = []
+        for chunk in self._iter_audio_chunks(
+            text,
+            voice,
+            language=language,
+            temperature=temperature,
+            seed=seed,
+            instruct=instruct,
+            stream=False,
+        ):
+            chunks.append(chunk)
 
         if not chunks:
             raise RuntimeError("TTS generation produced no audio")

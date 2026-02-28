@@ -410,6 +410,16 @@ export function parseDecomposedProviderConfig(raw: unknown): DecomposedProviderC
       'inlineTtsChunkingEnabled',
       'providerConfig'
     ),
+    localTtsStreamingIntervalSec: optionalPositiveNumber(
+      object,
+      'localTtsStreamingIntervalSec',
+      'providerConfig'
+    ),
+    localQwenAdaptiveUnderrunEnabled: optionalBoolean(
+      object,
+      'localQwenAdaptiveUnderrunEnabled',
+      'providerConfig'
+    ),
     turn: parseDecomposedTurnConfig(object.turn),
   };
 }

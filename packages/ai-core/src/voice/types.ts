@@ -130,6 +130,8 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   pocketTtsEndpoint?: string;
   localEndpoint?: string;
   inlineTtsChunkingEnabled?: boolean;
+  localTtsStreamingIntervalSec?: number;
+  localQwenAdaptiveUnderrunEnabled?: boolean;
   turn?: {
     silenceMs?: number;
     minSpeechMs?: number;

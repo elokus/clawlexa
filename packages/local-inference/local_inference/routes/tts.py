@@ -41,6 +41,8 @@ class SpeechRequest(BaseModel):
     temperature: float | None = None
     seed: int | None = None
     instruct: str | None = None
+    stream: bool | None = None
+    streaming_interval: float | None = None
     response_format: str = "pcm"
 
     def resolved_text(self) -> str:
@@ -105,21 +107,60 @@ async def synthesize_audio(
         payload.lang_code
     )
     requested_instruct = _normalize_value(payload.instruct)
-    pcm = await run_in_threadpool(
-        tts.generate_pcm16,
-        text,
-        requested_voice,
-        language=requested_language,
-        temperature=payload.temperature,
-        seed=payload.seed,
-        instruct=requested_instruct,
-    )
 
-    chunk_size = max(1, int((tts.sample_rate * 2) / 10))
+    supports_streaming_fn = getattr(tts, "supports_streaming", None)
+    supports_streaming = bool(
+        callable(supports_streaming_fn)
+        and supports_streaming_fn(requested_model or tts.loaded_model)
+    )
+    stream_pcm16_fn = getattr(tts, "stream_pcm16", None)
+    stream_requested = payload.stream if payload.stream is not None else supports_streaming
+
     headers = {
         "x-audio-format": "pcm16-le",
         "x-audio-sample-rate": str(tts.sample_rate),
     }
+
+    if stream_requested and supports_streaming and callable(stream_pcm16_fn):
+        interval = payload.streaming_interval
+        if interval is None or interval <= 0:
+            interval = 1.0
+
+        def stream_pcm_chunks():
+            lock = request.app.state.tts_lock
+            with lock:
+                for chunk in stream_pcm16_fn(
+                    text,
+                    requested_voice,
+                    language=requested_language,
+                    temperature=payload.temperature,
+                    seed=payload.seed,
+                    instruct=requested_instruct,
+                    streaming_interval=interval,
+                ):
+                    yield chunk
+
+        return StreamingResponse(
+            stream_pcm_chunks(),
+            media_type="application/octet-stream",
+            headers=headers,
+        )
+
+    def generate_pcm_with_lock() -> bytes:
+        lock = request.app.state.tts_lock
+        with lock:
+            return tts.generate_pcm16(
+                text,
+                requested_voice,
+                language=requested_language,
+                temperature=payload.temperature,
+                seed=payload.seed,
+                instruct=requested_instruct,
+            )
+
+    pcm = await run_in_threadpool(generate_pcm_with_lock)
+
+    chunk_size = max(1, int((tts.sample_rate * 2) / 10))
 
     return StreamingResponse(
         _iter_pcm_chunks(pcm, chunk_size),

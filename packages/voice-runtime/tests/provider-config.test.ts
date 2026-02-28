@@ -112,12 +112,16 @@ describe('provider-config parsers', () => {
       ttsProvider: 'local',
       localEndpoint: 'http://localhost:1060',
       inlineTtsChunkingEnabled: false,
+      localTtsStreamingIntervalSec: 0.8,
+      localQwenAdaptiveUnderrunEnabled: false,
     });
 
     expect(parsed.sttProvider).toBe('local');
     expect(parsed.ttsProvider).toBe('local');
     expect(parsed.localEndpoint).toBe('http://localhost:1060');
     expect(parsed.inlineTtsChunkingEnabled).toBe(false);
+    expect(parsed.localTtsStreamingIntervalSec).toBe(0.8);
+    expect(parsed.localQwenAdaptiveUnderrunEnabled).toBe(false);
   });
 
   test('rejects invalid decomposed Deepgram punctuation chunking type', () => {
@@ -134,6 +138,22 @@ describe('provider-config parsers', () => {
         inlineTtsChunkingEnabled: 'false',
       })
     ).toThrow('providerConfig.inlineTtsChunkingEnabled must be a boolean');
+  });
+
+  test('rejects invalid decomposed local TTS streaming interval', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        localTtsStreamingIntervalSec: 0,
+      })
+    ).toThrow('providerConfig.localTtsStreamingIntervalSec must be a positive number');
+  });
+
+  test('rejects invalid decomposed local qwen adaptive underrun type', () => {
+    expect(() =>
+      parseDecomposedProviderConfig({
+        localQwenAdaptiveUnderrunEnabled: 'true',
+      })
+    ).toThrow('providerConfig.localQwenAdaptiveUnderrunEnabled must be a boolean');
   });
 
   test('rejects invalid decomposed customSttMode', () => {

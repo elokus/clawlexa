@@ -20,7 +20,14 @@ export async function synthesizeLocalSegment(
     response_format: 'pcm',
   };
   if (isQwenModel(context.model)) {
+    const interval =
+      Number.isFinite(context.localTtsStreamingIntervalSec) &&
+      context.localTtsStreamingIntervalSec > 0
+        ? context.localTtsStreamingIntervalSec
+        : 1.0;
     requestBody.seed = 42;
+    requestBody.stream = true;
+    requestBody.streaming_interval = interval;
   }
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -36,6 +43,8 @@ export async function synthesizeLocalSegment(
     throw new Error(`Local TTS failed (${response.status}): ${errorText}`);
   }
 
-  await streamPcmResponse(response, emitChunk);
+  await streamPcmResponse(response, emitChunk, {
+    passthroughChunks: isQwenModel(context.model),
+  });
   return { precision: 'segment' };
 }

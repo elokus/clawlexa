@@ -89,6 +89,21 @@ const DEEPGRAM_FLUSH_FALLBACK_FORCE_MS = 1400;
 const MIC_ECHO_COOLDOWN_MS = 520;
 const SPEAKING_START_COOLDOWN_MS = 220;
 const ASSISTANT_RMS_DECAY_MS = 420;
+const LOCAL_QWEN_ADAPTIVE_START_BUFFER_MIN_MS = 120;
+const LOCAL_QWEN_ADAPTIVE_START_BUFFER_MAX_MS = 4000;
+const LOCAL_QWEN_ADAPTIVE_START_BUFFER_DEFAULT_MS = 220;
+const LOCAL_QWEN_ADAPTIVE_START_BUFFER_WAIT_CAP_MS = 4500;
+const LOCAL_QWEN_ADAPTIVE_UNDERRUN_THRESHOLD_MS = -40;
+const LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS = 220;
+const LOCAL_QWEN_ADAPTIVE_INTERVAL_MIN = 0.6;
+const LOCAL_QWEN_ADAPTIVE_INTERVAL_MAX = 4.0;
+const LOCAL_QWEN_ADAPTIVE_INTERVAL_STEP = 0.1;
+const LOCAL_QWEN_ADAPTIVE_BOOTSTRAP_INTERVAL_MULTIPLIER = 2.0;
+const LOCAL_QWEN_ADAPTIVE_RTF_EMA_ALPHA = 0.35;
+const LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_DEFAULT = 60;
+const LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_MIN = 16;
+const LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_MAX = 220;
+const LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_EMA_ALPHA = 0.25;
 const TURN_MARKERS = ['✓', '○', '◐'] as const;
 const decomposedLlmRuntime = createLlmRuntime();
 
@@ -115,6 +130,8 @@ interface DecomposedOptions {
   kokoroEndpoint: string;
   pocketTtsEndpoint: string;
   localEndpoint: string;
+  localTtsStreamingIntervalSec: number;
+  localQwenAdaptiveUnderrunEnabled: boolean;
   silenceMs: number;
   minSpeechMs: number;
   minRms: number;
@@ -451,6 +468,27 @@ const DECOMPOSED_CONFIG_SCHEMA: ProviderConfigSchema = {
       description:
         'Base URL for local STT/TTS provider calls (for example http://localhost:1060).',
     },
+    {
+      key: 'localTtsStreamingIntervalSec',
+      label: 'Local Qwen Streaming Interval (s)',
+      type: 'number',
+      group: 'advanced',
+      min: 0.2,
+      max: 4,
+      step: 0.1,
+      defaultValue: 1.0,
+      description:
+        'Streaming chunk interval for local Qwen TTS. Lower values reduce first audio latency but can increase chunk overhead.',
+    },
+    {
+      key: 'localQwenAdaptiveUnderrunEnabled',
+      label: 'Local Qwen Adaptive Anti-Underrun',
+      type: 'boolean',
+      group: 'advanced',
+      defaultValue: true,
+      description:
+        'Dynamically increases startup buffer and streaming interval for local Qwen TTS when generation falls behind playback.',
+    },
     // LLM completion fields (enabled, shortTimeoutMs, longTimeoutMs) are managed
     // by the dedicated turn.llmCompletion section in voice.config.json, not providerSettings.
   ],
@@ -487,6 +525,10 @@ export class DecomposedAdapter implements ProviderAdapter {
   private deepgramTtsConnectionReady: Promise<SpeakLiveClient> | null = null;
   private deepgramTtsRequestQueue: Promise<void> = Promise.resolve();
   private turnDetector: TurnDetector | null = null;
+  private localQwenAdaptiveStartBufferMs = LOCAL_QWEN_ADAPTIVE_START_BUFFER_DEFAULT_MS;
+  private localQwenAdaptiveIntervalSec = 1.0;
+  private localQwenAdaptiveProducerRtfEma = 1.0;
+  private localQwenAdaptiveAudioMsPerChar = LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_DEFAULT;
   capabilities(): ProviderCapabilities {
     return DECOMPOSED_CAPABILITIES;
   }
@@ -545,6 +587,10 @@ export class DecomposedAdapter implements ProviderAdapter {
     this.interruptionGeneration += 1;
     this.assistantTurnQueue = Promise.resolve();
     this.deepgramTtsRequestQueue = Promise.resolve();
+    this.localQwenAdaptiveStartBufferMs = LOCAL_QWEN_ADAPTIVE_START_BUFFER_DEFAULT_MS;
+    this.localQwenAdaptiveIntervalSec = this.options.localTtsStreamingIntervalSec;
+    this.localQwenAdaptiveProducerRtfEma = 1.0;
+    this.localQwenAdaptiveAudioMsPerChar = LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_DEFAULT;
     this.closeDeepgramTtsConnection();
     this.connected = true;
 
@@ -2484,27 +2530,249 @@ export class DecomposedAdapter implements ProviderAdapter {
     let emittedChunks = 0;
     let firstAudioAtMs: number | null = null;
     let emittedPlaybackMs = 0;
+    let chunkIndex = 0;
+    let firstChunkArrivedAtMs: number | null = null;
+    let firstChunkEmittedAtMs: number | null = null;
+    let lastChunkArrivedAtMs: number | null = null;
+    let producerAudioMs = 0;
+    let worstPlayoutLeadMs = Number.POSITIVE_INFINITY;
+    let underrunChunks = 0;
+    let finalPlayoutLeadMs = 0;
+    let cumulativeGapDeficitMs = 0;
+    let maxGapDeficitMs = 0;
+    let chunksWithGapDeficit = 0;
+    const isAdaptiveLocalQwenTts =
+      this.options.ttsProvider === 'local' &&
+      this.options.localQwenAdaptiveUnderrunEnabled &&
+      isQwenTtsModelId(this.options.ttsModel);
+    const configuredIntervalMs =
+      clampNumber(
+        this.options.localTtsStreamingIntervalSec,
+        LOCAL_QWEN_ADAPTIVE_INTERVAL_MIN,
+        LOCAL_QWEN_ADAPTIVE_INTERVAL_MAX
+      ) * 1000;
+    const predictedSegmentAudioMs = Math.max(
+      LOCAL_QWEN_ADAPTIVE_START_BUFFER_DEFAULT_MS * 2,
+      Math.round(text.length * this.localQwenAdaptiveAudioMsPerChar)
+    );
+    const predictedDeficitMsFromEma =
+      Math.max(0, this.localQwenAdaptiveProducerRtfEma - 1) * predictedSegmentAudioMs;
+    const startupFloorFromIntervalMs = Math.round(
+      configuredIntervalMs * LOCAL_QWEN_ADAPTIVE_BOOTSTRAP_INTERVAL_MULTIPLIER
+    );
+    const localQwenAdaptiveState = isAdaptiveLocalQwenTts
+      ? {
+          startupBufferMs: clampNumber(
+            Math.max(
+              this.localQwenAdaptiveStartBufferMs,
+              startupFloorFromIntervalMs,
+              Math.round(LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS + predictedDeficitMsFromEma)
+            ),
+            LOCAL_QWEN_ADAPTIVE_START_BUFFER_MIN_MS,
+            LOCAL_QWEN_ADAPTIVE_START_BUFFER_MAX_MS
+          ),
+          intervalSec: clampNumber(
+            this.localQwenAdaptiveIntervalSec,
+            LOCAL_QWEN_ADAPTIVE_INTERVAL_MIN,
+            LOCAL_QWEN_ADAPTIVE_INTERVAL_MAX
+          ),
+          released: false,
+          releaseAtMs: null as number | null,
+          emittedSinceReleaseMs: 0,
+          startupBufferedAudioMs: 0,
+          predictedSegmentAudioMs,
+          queuedChunks: [] as Array<{ chunk: ArrayBuffer; audioMs: number; arrivedAtMs: number }>,
+        }
+      : null;
     let synthesisResult: SegmentSynthesisResult | null = null;
 
-    const emitChunk = async (chunk: ArrayBuffer): Promise<boolean> => {
+    const emitAudioChunk = async (
+      chunk: ArrayBuffer,
+      chunkAudioMs: number,
+      arrivedAtMs: number
+    ): Promise<boolean> => {
       if (!this.isTurnCurrent(turnGeneration)) {
         return false;
       }
+
       emittedAudioBytes += chunk.byteLength;
       emittedChunks += 1;
-      emittedPlaybackMs += (chunk.byteLength / 2 / AUDIO_SAMPLE_RATE) * 1000;
+      emittedPlaybackMs += chunkAudioMs;
+      chunkIndex += 1;
+
+      const emittedAtMs = Date.now();
       if (firstAudioAtMs === null) {
-        firstAudioAtMs = Date.now();
+        firstAudioAtMs = emittedAtMs;
         onFirstAudio?.();
       }
+      if (firstChunkEmittedAtMs === null) {
+        firstChunkEmittedAtMs = emittedAtMs;
+      }
+
+      const interChunkGapMs =
+        lastChunkArrivedAtMs === null ? null : Math.max(0, arrivedAtMs - lastChunkArrivedAtMs);
+      lastChunkArrivedAtMs = arrivedAtMs;
+      const gapDeficitMs =
+        interChunkGapMs === null ? 0 : Math.max(0, interChunkGapMs - chunkAudioMs);
+      if (gapDeficitMs > 0) {
+        cumulativeGapDeficitMs += gapDeficitMs;
+        maxGapDeficitMs = Math.max(maxGapDeficitMs, gapDeficitMs);
+        chunksWithGapDeficit += 1;
+      }
+
+      if (localQwenAdaptiveState && localQwenAdaptiveState.releaseAtMs !== null) {
+        localQwenAdaptiveState.emittedSinceReleaseMs += chunkAudioMs;
+        const elapsedSinceReleaseMs = Math.max(
+          0,
+          emittedAtMs - localQwenAdaptiveState.releaseAtMs
+        );
+        const playoutLeadMs =
+          localQwenAdaptiveState.emittedSinceReleaseMs - elapsedSinceReleaseMs;
+        finalPlayoutLeadMs = playoutLeadMs;
+        worstPlayoutLeadMs = Math.min(worstPlayoutLeadMs, playoutLeadMs);
+        if (playoutLeadMs < LOCAL_QWEN_ADAPTIVE_UNDERRUN_THRESHOLD_MS) {
+          underrunChunks += 1;
+        }
+      }
+
+      const producerElapsedMs = Math.max(0, arrivedAtMs - ttsStartMs);
+      const producerRtf =
+        producerAudioMs > 0 ? producerElapsedMs / producerAudioMs : 0;
+
+      this.emitLatency({
+        stage: 'tts',
+        durationMs: producerElapsedMs,
+        provider: this.options?.ttsProvider,
+        model: this.options?.ttsModel || this.options?.ttsVoice,
+        details: {
+          metric: 'chunk',
+          chunkIndex,
+          chunkAudioMs: Math.round(chunkAudioMs),
+          chunkBytes: chunk.byteLength,
+          firstChunkTtfbMs:
+            firstChunkArrivedAtMs === null
+              ? null
+              : Math.max(0, firstChunkArrivedAtMs - ttsStartMs),
+          firstChunkEmitLatencyMs:
+            firstChunkEmittedAtMs === null
+              ? null
+              : Math.max(0, firstChunkEmittedAtMs - ttsStartMs),
+          producerElapsedMs,
+          producerAudioMs: Math.round(producerAudioMs),
+          producerRtf: roundTo(producerRtf, 3),
+          interChunkGapMs,
+          gapDeficitMs: Math.round(gapDeficitMs),
+          cumulativeGapDeficitMs: Math.round(cumulativeGapDeficitMs),
+          emittedAudioMs: Math.round(emittedPlaybackMs),
+          playoutLeadMs: Math.round(finalPlayoutLeadMs),
+          adaptiveIntervalSec: localQwenAdaptiveState?.intervalSec ?? null,
+          adaptiveStartupBufferMs: localQwenAdaptiveState?.startupBufferMs ?? null,
+          segmentIndex: latencyDetails.segmentIndex,
+        },
+      });
+
       this.trackAssistantOutput(chunk);
       this.events.emit('audio', {
         data: chunk,
         sampleRate: AUDIO_SAMPLE_RATE,
         format: 'pcm16',
       });
-      await sleep(20);
+
+      if (!localQwenAdaptiveState) {
+        await sleep(20);
+      }
       return true;
+    };
+
+    const emitChunk = async (chunk: ArrayBuffer): Promise<boolean> => {
+      if (!this.isTurnCurrent(turnGeneration)) {
+        return false;
+      }
+      const nowMs = Date.now();
+      if (firstChunkArrivedAtMs === null) {
+        firstChunkArrivedAtMs = nowMs;
+      }
+
+      const chunkAudioMs = (chunk.byteLength / 2 / AUDIO_SAMPLE_RATE) * 1000;
+      producerAudioMs += chunkAudioMs;
+
+      if (localQwenAdaptiveState && !localQwenAdaptiveState.released) {
+        localQwenAdaptiveState.queuedChunks.push({
+          chunk,
+          audioMs: chunkAudioMs,
+          arrivedAtMs: nowMs,
+        });
+        localQwenAdaptiveState.startupBufferedAudioMs += chunkAudioMs;
+
+        const elapsedSinceFirstChunkMs = Math.max(
+          0,
+          nowMs - (firstChunkArrivedAtMs ?? nowMs)
+        );
+        const producerElapsedMs = Math.max(0, nowMs - ttsStartMs);
+        const producerRtf =
+          producerAudioMs > 0 ? producerElapsedMs / producerAudioMs : 0;
+        const projectedDeficitMs =
+          Math.max(0, producerRtf - 1) * localQwenAdaptiveState.predictedSegmentAudioMs;
+        const targetFromRtf =
+          LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS + projectedDeficitMs;
+        localQwenAdaptiveState.startupBufferMs = clampNumber(
+          Math.round(
+            localQwenAdaptiveState.startupBufferMs * 0.6 + targetFromRtf * 0.4
+          ),
+          LOCAL_QWEN_ADAPTIVE_START_BUFFER_MIN_MS,
+          LOCAL_QWEN_ADAPTIVE_START_BUFFER_MAX_MS
+        );
+        const startupWaitCapMs = Math.min(
+          LOCAL_QWEN_ADAPTIVE_START_BUFFER_WAIT_CAP_MS,
+          Math.max(1200, Math.round(localQwenAdaptiveState.startupBufferMs + 400))
+        );
+
+        const shouldRelease =
+          localQwenAdaptiveState.startupBufferedAudioMs >=
+            localQwenAdaptiveState.startupBufferMs ||
+          elapsedSinceFirstChunkMs >= startupWaitCapMs;
+
+        if (!shouldRelease) {
+          return true;
+        }
+
+        localQwenAdaptiveState.released = true;
+        localQwenAdaptiveState.releaseAtMs = Date.now();
+        this.emitLatency({
+          stage: 'tts',
+          durationMs: Math.max(0, localQwenAdaptiveState.releaseAtMs - ttsStartMs),
+          provider: this.options?.ttsProvider,
+          model: this.options?.ttsModel || this.options?.ttsVoice,
+          details: {
+            metric: 'startup-release',
+            startupBufferedAudioMs: Math.round(
+              localQwenAdaptiveState.startupBufferedAudioMs
+            ),
+            adaptiveStartupBufferMs: localQwenAdaptiveState.startupBufferMs,
+            elapsedSinceFirstChunkMs: Math.round(elapsedSinceFirstChunkMs),
+            startupWaitCapMs,
+            predictedSegmentAudioMs: localQwenAdaptiveState.predictedSegmentAudioMs,
+            adaptiveIntervalSec: localQwenAdaptiveState.intervalSec,
+            segmentIndex: latencyDetails.segmentIndex,
+          },
+        });
+
+        while (localQwenAdaptiveState.queuedChunks.length > 0) {
+          const queued = localQwenAdaptiveState.queuedChunks.shift();
+          if (!queued) break;
+          const keepGoing = await emitAudioChunk(
+            queued.chunk,
+            queued.audioMs,
+            queued.arrivedAtMs
+          );
+          if (!keepGoing) {
+            return false;
+          }
+        }
+        return true;
+      }
+
+      return emitAudioChunk(chunk, chunkAudioMs, nowMs);
     };
 
     try {
@@ -2527,6 +2795,11 @@ export class DecomposedAdapter implements ProviderAdapter {
             kokoroEndpoint: this.options.kokoroEndpoint,
             pocketTtsEndpoint: this.options.pocketTtsEndpoint,
             localEndpoint: this.options.localEndpoint,
+            localTtsStreamingIntervalSec:
+              this.options.ttsProvider === 'local' &&
+              isQwenTtsModelId(this.options.ttsModel)
+                ? this.localQwenAdaptiveIntervalSec
+                : this.options.localTtsStreamingIntervalSec,
             googleChirpEndpoint: this.options.googleChirpEndpoint,
             cartesiaTtsWsUrl: this.options.cartesiaTtsWsUrl,
             fishTtsWsUrl: this.options.fishTtsWsUrl,
@@ -2540,6 +2813,25 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.clearTtsRequest(ttsController);
     }
 
+    if (
+      localQwenAdaptiveState &&
+      localQwenAdaptiveState.released &&
+      localQwenAdaptiveState.queuedChunks.length > 0
+    ) {
+      while (localQwenAdaptiveState.queuedChunks.length > 0) {
+        const queued = localQwenAdaptiveState.queuedChunks.shift();
+        if (!queued) break;
+        const keepGoing = await emitAudioChunk(
+          queued.chunk,
+          queued.audioMs,
+          queued.arrivedAtMs
+        );
+        if (!keepGoing) {
+          break;
+        }
+      }
+    }
+
     if (!this.isTurnCurrent(turnGeneration)) {
       return {
         playbackMs: emittedPlaybackMs,
@@ -2548,6 +2840,142 @@ export class DecomposedAdapter implements ProviderAdapter {
         wordTimestampsTimeBase: synthesisResult?.wordTimestampsTimeBase,
       };
     }
+
+    if (localQwenAdaptiveState) {
+      const producerElapsedMs =
+        lastChunkArrivedAtMs === null ? 0 : Math.max(0, lastChunkArrivedAtMs - ttsStartMs);
+      const producerRtf =
+        producerAudioMs > 0 ? producerElapsedMs / producerAudioMs : 0;
+
+      this.localQwenAdaptiveProducerRtfEma = roundTo(
+        clampNumber(
+          this.localQwenAdaptiveProducerRtfEma * (1 - LOCAL_QWEN_ADAPTIVE_RTF_EMA_ALPHA) +
+            producerRtf * LOCAL_QWEN_ADAPTIVE_RTF_EMA_ALPHA,
+          0.7,
+          3.0
+        ),
+        3
+      );
+      if (text.length > 0 && emittedPlaybackMs > 0) {
+        const observedAudioMsPerChar = emittedPlaybackMs / text.length;
+        this.localQwenAdaptiveAudioMsPerChar = roundTo(
+          clampNumber(
+            this.localQwenAdaptiveAudioMsPerChar *
+              (1 - LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_EMA_ALPHA) +
+              observedAudioMsPerChar * LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_EMA_ALPHA,
+            LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_MIN,
+            LOCAL_QWEN_ADAPTIVE_AUDIO_MS_PER_CHAR_MAX
+          ),
+          2
+        );
+      }
+
+      const requiredBufferFromDeficit =
+        cumulativeGapDeficitMs + LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS;
+      const requiredBufferFromRtf =
+        producerRtf > 1
+          ? (producerRtf - 1) * emittedPlaybackMs + LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS
+          : LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS;
+      const projectedNextAudioMs = Math.max(
+        LOCAL_QWEN_ADAPTIVE_START_BUFFER_DEFAULT_MS * 2,
+        Math.round(text.length * this.localQwenAdaptiveAudioMsPerChar)
+      );
+      const requiredBufferFromRtfEma =
+        Math.max(0, this.localQwenAdaptiveProducerRtfEma - 1) * projectedNextAudioMs +
+        LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS;
+      const suggestedStartupBufferMs = Math.max(
+        LOCAL_QWEN_ADAPTIVE_START_BUFFER_MIN_MS,
+        requiredBufferFromDeficit,
+        requiredBufferFromRtf,
+        requiredBufferFromRtfEma
+      );
+
+      this.localQwenAdaptiveStartBufferMs = clampNumber(
+        Math.round(
+          this.localQwenAdaptiveStartBufferMs * 0.25 + suggestedStartupBufferMs * 0.75
+        ),
+        LOCAL_QWEN_ADAPTIVE_START_BUFFER_MIN_MS,
+        LOCAL_QWEN_ADAPTIVE_START_BUFFER_MAX_MS
+      );
+
+      if (
+        chunksWithGapDeficit === 0 &&
+        producerRtf < 0.95 &&
+        finalPlayoutLeadMs > LOCAL_QWEN_ADAPTIVE_LEAD_TARGET_MS * 2
+      ) {
+        this.localQwenAdaptiveStartBufferMs = clampNumber(
+          this.localQwenAdaptiveStartBufferMs - 40,
+          LOCAL_QWEN_ADAPTIVE_START_BUFFER_MIN_MS,
+          LOCAL_QWEN_ADAPTIVE_START_BUFFER_MAX_MS
+        );
+      }
+
+      const baseInterval = clampNumber(
+        this.options.localTtsStreamingIntervalSec,
+        LOCAL_QWEN_ADAPTIVE_INTERVAL_MIN,
+        LOCAL_QWEN_ADAPTIVE_INTERVAL_MAX
+      );
+      const intervalMin = Math.max(
+        LOCAL_QWEN_ADAPTIVE_INTERVAL_MIN,
+        roundTo(baseInterval - 0.25, 2)
+      );
+      const intervalMax = Math.min(
+        LOCAL_QWEN_ADAPTIVE_INTERVAL_MAX,
+        roundTo(baseInterval + 2.0, 2)
+      );
+      const gapPressure =
+        emittedPlaybackMs > 0 ? cumulativeGapDeficitMs / emittedPlaybackMs : 0;
+      const rtfPressure = Math.max(0, producerRtf - 1);
+      const increaseBy = Math.min(
+        0.45,
+        Math.max(
+          LOCAL_QWEN_ADAPTIVE_INTERVAL_STEP,
+          rtfPressure * 0.9 + gapPressure * 0.8
+        )
+      );
+      const adjustedInterval =
+        chunksWithGapDeficit > 0 || producerRtf > 1.01
+          ? localQwenAdaptiveState.intervalSec + increaseBy
+          : chunksWithGapDeficit === 0 && producerRtf < 0.9
+            ? localQwenAdaptiveState.intervalSec - LOCAL_QWEN_ADAPTIVE_INTERVAL_STEP
+            : localQwenAdaptiveState.intervalSec;
+      this.localQwenAdaptiveIntervalSec = roundTo(
+        clampNumber(
+          adjustedInterval,
+          intervalMin,
+          intervalMax
+        ),
+        2
+      );
+
+      this.emitLatency({
+        stage: 'tts',
+        durationMs: Math.max(0, Date.now() - ttsStartMs),
+        provider: this.options.ttsProvider,
+        model: this.options.ttsModel || this.options.ttsVoice,
+        details: {
+          metric: 'adaptive-update',
+          producerRtf: roundTo(producerRtf, 3),
+          worstPlayoutLeadMs:
+            worstPlayoutLeadMs === Number.POSITIVE_INFINITY
+              ? null
+              : Math.round(worstPlayoutLeadMs),
+          finalPlayoutLeadMs: Math.round(finalPlayoutLeadMs),
+          underrunChunks,
+          chunksWithGapDeficit,
+          cumulativeGapDeficitMs: Math.round(cumulativeGapDeficitMs),
+          maxGapDeficitMs: Math.round(maxGapDeficitMs),
+          suggestedStartupBufferMs: Math.round(suggestedStartupBufferMs),
+          requiredBufferFromRtfEma: Math.round(requiredBufferFromRtfEma),
+          adaptiveProducerRtfEma: this.localQwenAdaptiveProducerRtfEma,
+          adaptiveAudioMsPerChar: this.localQwenAdaptiveAudioMsPerChar,
+          nextStreamingIntervalSec: this.localQwenAdaptiveIntervalSec,
+          nextStartupBufferMs: Math.round(this.localQwenAdaptiveStartBufferMs),
+          segmentIndex: latencyDetails.segmentIndex,
+        },
+      });
+    }
+
     this.emitLatency({
       stage: 'tts',
       durationMs: Date.now() - ttsStartMs,
@@ -2559,6 +2987,24 @@ export class DecomposedAdapter implements ProviderAdapter {
         chunks: emittedChunks,
         firstAudioLatencyMs:
           firstAudioAtMs === null ? null : Math.max(0, firstAudioAtMs - ttsStartMs),
+        firstChunkTtfbMs:
+          firstChunkArrivedAtMs === null
+            ? null
+            : Math.max(0, firstChunkArrivedAtMs - ttsStartMs),
+        producerRtf:
+          producerAudioMs > 0 && lastChunkArrivedAtMs !== null
+            ? roundTo(
+                Math.max(0, lastChunkArrivedAtMs - ttsStartMs) / producerAudioMs,
+                3
+              )
+            : null,
+        underrunChunks,
+        adaptiveStartupBufferMs: localQwenAdaptiveState
+          ? Math.round(this.localQwenAdaptiveStartBufferMs)
+          : null,
+        adaptiveStreamingIntervalSec: localQwenAdaptiveState
+          ? this.localQwenAdaptiveIntervalSec
+          : null,
         ...latencyDetails,
       },
     });
@@ -2912,6 +3358,8 @@ export class DecomposedAdapter implements ProviderAdapter {
         providerConfig.kokoroEndpoint ?? 'http://localhost:8880/v1/audio/speech',
       pocketTtsEndpoint: providerConfig.pocketTtsEndpoint ?? 'http://localhost:8000/tts',
       localEndpoint: providerConfig.localEndpoint ?? 'http://localhost:1060',
+      localTtsStreamingIntervalSec: providerConfig.localTtsStreamingIntervalSec ?? 1.0,
+      localQwenAdaptiveUnderrunEnabled: providerConfig.localQwenAdaptiveUnderrunEnabled ?? true,
       silenceMs: providerConfig.turn?.silenceMs ?? 700,
       minSpeechMs: providerConfig.turn?.minSpeechMs ?? 350,
       minRms: providerConfig.turn?.minRms ?? 0.015,
@@ -3045,6 +3493,18 @@ async function* prependToAsyncGenerator(
 ): AsyncGenerator<string> {
   if (prefix) yield prefix;
   yield* source;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
+function roundTo(value: number, digits: number): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
 }
 
 function parseMarker(

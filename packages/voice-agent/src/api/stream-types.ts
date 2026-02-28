@@ -113,6 +113,16 @@ export type AISDKStreamEvent =
   // Errors
   | { type: 'error'; error: string }
 
+  // Latency metrics (custom extension for runtime observability)
+  | {
+      type: 'latency';
+      stage: 'stt' | 'llm' | 'tts' | 'turn' | 'tool' | 'connection';
+      durationMs: number;
+      provider?: string;
+      model?: string;
+      details?: Record<string, unknown>;
+    }
+
   // Process lifecycle notifications (background tasks)
   | { type: 'process-status'; processName: string; sessionId: string; status: 'completed' | 'error'; summary?: string };
 

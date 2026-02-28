@@ -61,6 +61,7 @@ export interface Message {
   role: MessageRole;
   parts: MessagePart[];
   createdAt: number;
+  ttfbMs?: number;
   itemId?: string;
   order?: number;
   generatedText?: string;
@@ -142,6 +143,14 @@ export type AISDKStreamEvent =
   | { type: 'finish-step'; finishReason?: string; usage?: Record<string, number> }
   | { type: 'finish'; finishReason: string }
   | { type: 'error'; error: string }
+  | {
+      type: 'latency';
+      stage: 'stt' | 'llm' | 'tts' | 'turn' | 'tool' | 'connection';
+      durationMs: number;
+      provider?: string;
+      model?: string;
+      details?: Record<string, unknown>;
+    }
   | { type: 'process-status'; processName: string; sessionId: string; status: 'completed' | 'error'; summary?: string };
 
 /** Re-export timeline types for message-handler compatibility */
@@ -445,6 +454,7 @@ function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
           type: 'transcript',
           role: message.role as 'user' | 'assistant',
           content,
+          ttfbMs: message.ttfbMs,
           generatedContent,
           spokenContent,
           spokenChars: message.spokenChars,
@@ -1546,6 +1556,37 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         case 'error':
           session = { ...session, status: 'error' };
           break;
+
+        case 'latency': {
+          if (event.stage !== 'tts') break;
+          const firstAudioLatencyMs = event.details?.firstAudioLatencyMs;
+          if (typeof firstAudioLatencyMs !== 'number' || !Number.isFinite(firstAudioLatencyMs)) {
+            break;
+          }
+          const segmentIndex = event.details?.segmentIndex;
+          if (typeof segmentIndex === 'number' && segmentIndex > 1) {
+            break;
+          }
+
+          let targetIndex = -1;
+          for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+            if (messages[idx]?.role === 'assistant') {
+              targetIndex = idx;
+              break;
+            }
+          }
+
+          if (targetIndex >= 0) {
+            const target = messages[targetIndex]!;
+            if (typeof target.ttfbMs !== 'number') {
+              messages[targetIndex] = {
+                ...target,
+                ttfbMs: Math.max(0, Math.round(firstAudioLatencyMs)),
+              };
+            }
+          }
+          break;
+        }
 
         // Ignore lifecycle events
         case 'start':

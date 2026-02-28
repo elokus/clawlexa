@@ -28,6 +28,7 @@ export interface DecomposedTtsProviderContext {
   kokoroEndpoint: string;
   pocketTtsEndpoint: string;
   localEndpoint: string;
+  localTtsStreamingIntervalSec: number;
   googleChirpEndpoint: string;
   cartesiaTtsWsUrl: string;
   fishTtsWsUrl: string;

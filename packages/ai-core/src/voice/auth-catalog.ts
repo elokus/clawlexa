@@ -94,6 +94,8 @@ const DEFAULT_LOCAL_TTS_MODELS = [
   'qwen3-1.7b',
   'qwen3-1.7b-vd',
   'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16',
+  'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit',
+  'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit',
   'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16',
   'mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16',
   'mlx-community/Kokoro-82M-bf16',

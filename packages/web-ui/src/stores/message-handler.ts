@@ -269,6 +269,32 @@ export function handleWebSocketMessage(msg: WSMessage): void {
         });
       }
 
+      if (event.type === 'latency' && event.stage === 'tts') {
+        const details = (event.details ?? {}) as Record<string, unknown>;
+        const metric = typeof details.metric === 'string' ? details.metric : null;
+        if (metric === 'chunk') {
+          const chunkIndex =
+            typeof details.chunkIndex === 'number' ? details.chunkIndex : null;
+          const ttfb =
+            typeof details.firstChunkTtfbMs === 'number'
+              ? `${Math.round(details.firstChunkTtfbMs)}ms`
+              : 'n/a';
+          const rtf =
+            typeof details.producerRtf === 'number'
+              ? details.producerRtf.toFixed(3)
+              : 'n/a';
+          const lead =
+            typeof details.playoutLeadMs === 'number'
+              ? `${Math.round(details.playoutLeadMs)}ms`
+              : 'n/a';
+          console.debug(
+            `[TTS Debug] chunk${chunkIndex ? ` #${chunkIndex}` : ''} ttfb=${ttfb} rtf=${rtf} lead=${lead}`
+          );
+        } else if (metric === 'adaptive-update' || metric === 'startup-release') {
+          console.debug('[TTS Debug]', metric, details);
+        }
+      }
+
       // For voice sessions, also populate voiceTimeline for AgentStage compatibility
       // Detect voice session: it's the root of the current tree with type='voice'
       const { sessionTree, voiceActive } = store;
@@ -761,6 +787,40 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               store.addVoiceTimelineItem(fallbackTool);
             }
             store.setCurrentTool(null);
+            break;
+          }
+
+          case 'latency': {
+            if (event.stage !== 'tts') {
+              break;
+            }
+            const firstAudioLatencyMs = event.details?.firstAudioLatencyMs;
+            if (typeof firstAudioLatencyMs !== 'number' || !Number.isFinite(firstAudioLatencyMs)) {
+              break;
+            }
+            const segmentIndex = event.details?.segmentIndex;
+            if (typeof segmentIndex === 'number' && segmentIndex > 1) {
+              break;
+            }
+
+            const { voiceTimeline } = store;
+            const assistantIdx = [...voiceTimeline]
+              .map((item, idx) => ({ item, idx }))
+              .reverse()
+              .find(
+                ({ item }) =>
+                  item.type === 'transcript' &&
+                  item.role === 'assistant'
+              )?.idx;
+
+            if (assistantIdx !== undefined && assistantIdx >= 0) {
+              const target = voiceTimeline[assistantIdx];
+              if (target?.type === 'transcript' && typeof target.ttfbMs !== 'number') {
+                store.updateVoiceTimelineItem(target.id, {
+                  ttfbMs: Math.max(0, Math.round(firstAudioLatencyMs)),
+                } as Partial<TranscriptItem>);
+              }
+            }
             break;
           }
 

@@ -293,6 +293,34 @@ export class VoiceAgent {
     });
 
     this.runtime.on('latency', (metric) => {
+      const latencyMetricTag =
+        metric.stage === 'tts' && typeof metric.details?.metric === 'string'
+          ? metric.details.metric
+          : null;
+
+      if (latencyMetricTag === 'chunk') {
+        const chunkIndex =
+          typeof metric.details?.chunkIndex === 'number' ? metric.details.chunkIndex : null;
+        const chunkAudioMs =
+          typeof metric.details?.chunkAudioMs === 'number' ? metric.details.chunkAudioMs : null;
+        const producerRtf =
+          typeof metric.details?.producerRtf === 'number' ? metric.details.producerRtf : null;
+        const playoutLeadMs =
+          typeof metric.details?.playoutLeadMs === 'number' ? metric.details.playoutLeadMs : null;
+        const firstChunkTtfbMs =
+          typeof metric.details?.firstChunkTtfbMs === 'number'
+            ? metric.details.firstChunkTtfbMs
+            : null;
+        console.log(
+          `[VoiceLatency] tts-chunk` +
+            (chunkIndex !== null ? ` #${chunkIndex}` : '') +
+            (chunkAudioMs !== null ? ` audio=${chunkAudioMs}ms` : '') +
+            (firstChunkTtfbMs !== null ? ` ttfb=${firstChunkTtfbMs}ms` : '') +
+            (producerRtf !== null ? ` rtf=${producerRtf.toFixed(3)}` : '') +
+            (playoutLeadMs !== null ? ` lead=${playoutLeadMs}ms` : '')
+        );
+      }
+
       const firstAudioLatency =
         metric.stage === 'tts' && typeof metric.details?.firstAudioLatencyMs === 'number'
           ? ` firstAudio=${metric.details.firstAudioLatencyMs}ms`
@@ -317,6 +345,15 @@ export class VoiceAgent {
           model: metric.model ?? null,
           details: metric.details ?? {},
           timestamp: new Date().toISOString(),
+        });
+
+        wsBroadcast.streamChunk(this.currentSessionId, {
+          type: 'latency',
+          stage: metric.stage,
+          durationMs: metric.durationMs,
+          provider: metric.provider,
+          model: metric.model,
+          details: metric.details,
         });
       }
     });

@@ -47,6 +47,7 @@ interface DisplayMessage {
   role: 'user' | 'assistant' | 'system';
   parts: MessagePart[];
   timestamp: number;
+  ttfbMs?: number;
   pending?: boolean;
   /** Full LLM-generated text (for spoken highlighting) */
   generatedText?: string;
@@ -82,6 +83,7 @@ function timelineToMessages(timeline: TimelineItem[]): DisplayMessage[] {
         role: transcript.role === 'user' ? 'user' : 'assistant',
         parts: [{ type: 'text', text: transcript.content }],
         timestamp: transcript.timestamp,
+        ttfbMs: transcript.ttfbMs,
         pending: transcript.pending,
         generatedText: transcript.generatedContent,
         spokenWords: transcript.spokenWords,
@@ -129,6 +131,7 @@ function sessionToMessages(session: SessionState | undefined): DisplayMessage[] 
     role: msg.role,
     parts: msg.parts,
     timestamp: msg.createdAt,
+    ttfbMs: msg.ttfbMs,
   }));
 }
 
@@ -392,6 +395,11 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
           }
         })}
       </MessageContent>
+      {!isUser && typeof message.ttfbMs === 'number' && (
+        <div className="mt-1 pl-3 text-[10px] font-mono text-muted-foreground/70">
+          TTFB {message.ttfbMs} ms
+        </div>
+      )}
     </Message>
   );
 }

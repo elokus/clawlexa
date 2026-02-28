@@ -9,8 +9,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 
+export type SettingsPage = 'agents' | 'voice-pipeline' | 'audio' | 'credentials' | 'system';
+
 export interface RouteParams {
   sessionId?: string;
+  settingsPage?: SettingsPage;
 }
 
 export interface RouterState {
@@ -21,6 +24,8 @@ export interface RouterState {
 /**
  * Parse the current URL path and extract route parameters.
  */
+const SETTINGS_PAGES: Set<string> = new Set(['agents', 'voice-pipeline', 'audio', 'credentials', 'system']);
+
 function parseRoute(pathname: string): RouterState {
   const params: RouteParams = {};
 
@@ -29,6 +34,14 @@ function parseRoute(pathname: string): RouterState {
   if (sessionMatch) {
     params.sessionId = sessionMatch[1];
     return { path: '/session/:sessionId', params };
+  }
+
+  // Match /settings/:page?
+  const settingsMatch = pathname.match(/^\/settings(?:\/([a-z-]+))?\/?$/);
+  if (settingsMatch) {
+    const page = settingsMatch[1];
+    params.settingsPage = (page && SETTINGS_PAGES.has(page) ? page : 'agents') as SettingsPage;
+    return { path: '/settings', params };
   }
 
   // Match /dev
@@ -57,6 +70,13 @@ export function navigate(path: string, replace = false): void {
   }
   // Dispatch popstate event so listeners update
   window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/**
+ * Navigate to a settings page.
+ */
+export function navigateToSettings(page?: SettingsPage, replace = false): void {
+  navigate(page ? `/settings/${page}` : '/settings/agents', replace);
 }
 
 /**
