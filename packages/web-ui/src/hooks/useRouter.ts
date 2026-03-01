@@ -12,6 +12,7 @@ import { useState, useEffect, useRef } from 'react';
 export type SettingsPage =
   | 'agents'
   | 'voice-pipeline'
+  | 'voices'
   | 'audio'
   | 'credentials'
   | 'models'
@@ -33,6 +34,7 @@ export interface RouterState {
 const SETTINGS_PAGES: Set<string> = new Set([
   'agents',
   'voice-pipeline',
+  'voices',
   'audio',
   'credentials',
   'models',

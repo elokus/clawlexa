@@ -52,6 +52,13 @@ import {
   getAuthProfilesPath,
 } from '../voice/settings.js';
 import {
+  listVoices,
+  getVoice,
+  saveVoice,
+  deleteVoice,
+  type VoiceMeta,
+} from '../voice/voices.js';
+import {
   fetchRuntimeProviderCatalogFromAuthProfiles,
   getRuntimeConfigManifest,
   runtimeAuthKeySetToProviderMap,
@@ -922,6 +929,168 @@ async function handleWebhook(
       res.end(JSON.stringify({ provider, ...result }));
     } catch (error) {
       console.error('[API] Error testing auth profile:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Voices API — Voice Library (provider-agnostic clone references)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/config/voices - List all voice references
+  if (req.method === 'GET' && req.url === '/api/config/voices') {
+    try {
+      const voices = listVoices();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ voices }));
+    } catch (error) {
+      console.error('[API] Error listing voices:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  // POST /api/config/voices - Create voice from uploaded WAV + metadata
+  if (req.method === 'POST' && req.url === '/api/config/voices') {
+    try {
+      const body = await readJsonBody<{
+        label: string;
+        refText: string;
+        language: string;
+        instruct?: string;
+        model?: string;
+        seed?: number;
+        wavBase64: string;
+      }>(req);
+
+      if (!body.label || !body.refText || !body.wavBase64) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'label, refText, and wavBase64 are required' }));
+        return;
+      }
+
+      const wavBuffer = Buffer.from(body.wavBase64, 'base64');
+      const meta = saveVoice(body.label, {
+        refText: body.refText,
+        language: body.language || 'English',
+        instruct: body.instruct,
+        model: body.model,
+        seed: body.seed,
+      }, wavBuffer);
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ voice: meta }));
+    } catch (error) {
+      console.error('[API] Error creating voice:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  // DELETE /api/config/voices/:label - Delete a voice reference
+  const voiceDeleteMatch = req.url?.match(/^\/api\/config\/voices\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'DELETE' && voiceDeleteMatch) {
+    try {
+      const label = voiceDeleteMatch[1]!;
+      const deleted = deleteVoice(label);
+      if (!deleted) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Voice not found' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ deleted: label }));
+    } catch (error) {
+      console.error('[API] Error deleting voice:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  // GET /api/config/voices/:label/audio - Serve the reference WAV
+  const voiceAudioMatch = req.url?.match(/^\/api\/config\/voices\/([a-zA-Z0-9_-]+)\/audio$/);
+  if (req.method === 'GET' && voiceAudioMatch) {
+    try {
+      const label = voiceAudioMatch[1]!;
+      const entry = getVoice(label);
+      if (!entry) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Voice not found' }));
+        return;
+      }
+      const wavData = fs.readFileSync(entry.refAudioPath);
+      res.writeHead(200, {
+        'Content-Type': 'audio/wav',
+        'Content-Length': String(wavData.length),
+      });
+      res.end(wavData);
+    } catch (error) {
+      console.error('[API] Error serving voice audio:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (error as Error).message }));
+    }
+    return;
+  }
+
+  // POST /api/config/voices/design - Generate voice via VoiceDesign model
+  if (req.method === 'POST' && req.url === '/api/config/voices/design') {
+    try {
+      const body = await readJsonBody<{
+        label: string;
+        instruct: string;
+        text: string;
+        language?: string;
+        seed?: number;
+        temperature?: number;
+        model?: string;
+        localEndpoint?: string;
+      }>(req);
+
+      if (!body.label || !body.instruct || !body.text) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'label, instruct, and text are required' }));
+        return;
+      }
+
+      const endpoint = body.localEndpoint || process.env.LOCAL_INFERENCE_URL || 'http://localhost:1060';
+      const designResponse = await fetch(`${endpoint}/v1/voice/design`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instruct: body.instruct,
+          text: body.text,
+          language: body.language || 'English',
+          seed: body.seed ?? 42,
+          temperature: body.temperature ?? 0.7,
+          model: body.model,
+        }),
+      });
+
+      if (!designResponse.ok) {
+        const errText = await designResponse.text();
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Voice design failed: ${errText}` }));
+        return;
+      }
+
+      const wavBuffer = Buffer.from(await designResponse.arrayBuffer());
+      const meta = saveVoice(body.label, {
+        refText: body.text,
+        language: body.language || 'English',
+        instruct: body.instruct,
+        model: body.model || 'qwen3-1.7b-vd-4bit',
+        seed: body.seed ?? 42,
+      }, wavBuffer);
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ voice: meta }));
+    } catch (error) {
+      console.error('[API] Error designing voice:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (error as Error).message }));
     }

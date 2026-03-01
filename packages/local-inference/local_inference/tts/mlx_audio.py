@@ -110,6 +110,8 @@ class MlxAudioBackend(TtsBackend):
         instruct: str | None = None,
         stream: bool = False,
         streaming_interval: float | None = None,
+        ref_audio: str | None = None,
+        ref_text: str | None = None,
     ) -> Iterator[np.ndarray]:
         if self._model is None or self._loaded_model is None:
             raise RuntimeError("TTS model is not loaded")
@@ -128,6 +130,8 @@ class MlxAudioBackend(TtsBackend):
             qwen_ref_audio=self._qwen_ref_audio,
             qwen_ref_text=self._qwen_ref_text,
             qwen_voice_design_instruct=self._qwen_voice_design_instruct,
+            ref_audio_override=ref_audio,
+            ref_text_override=ref_text,
         )
 
         family = detect_model_family(self._loaded_model)
@@ -167,6 +171,8 @@ class MlxAudioBackend(TtsBackend):
         seed: int | None = None,
         instruct: str | None = None,
         streaming_interval: float | None = None,
+        ref_audio: str | None = None,
+        ref_text: str | None = None,
     ) -> Iterator[bytes]:
         emitted = 0
         for audio in self._iter_audio_chunks(
@@ -178,6 +184,8 @@ class MlxAudioBackend(TtsBackend):
             instruct=instruct,
             stream=True,
             streaming_interval=streaming_interval,
+            ref_audio=ref_audio,
+            ref_text=ref_text,
         ):
             audio = np.clip(audio, -1.0, 1.0)
             pcm = (audio * 32767.0).astype(np.int16)
@@ -197,6 +205,8 @@ class MlxAudioBackend(TtsBackend):
         temperature: float | None = None,
         seed: int | None = None,
         instruct: str | None = None,
+        ref_audio: str | None = None,
+        ref_text: str | None = None,
     ) -> bytes:
         chunks: list[np.ndarray] = []
         for chunk in self._iter_audio_chunks(
@@ -207,6 +217,8 @@ class MlxAudioBackend(TtsBackend):
             seed=seed,
             instruct=instruct,
             stream=False,
+            ref_audio=ref_audio,
+            ref_text=ref_text,
         ):
             chunks.append(chunk)
 

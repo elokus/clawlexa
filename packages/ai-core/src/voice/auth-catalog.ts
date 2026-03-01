@@ -11,6 +11,7 @@ export const RUNTIME_AUTH_PROVIDERS = [
   'fish',
   'rime',
   'ultravox',
+  'openclaw',
 ] as const;
 
 export type RuntimeAuthProvider = (typeof RUNTIME_AUTH_PROVIDERS)[number];
@@ -43,6 +44,7 @@ export interface RuntimeAuthKeySet {
   fishAudioApiKey: string;
   rimeApiKey: string;
   ultravoxApiKey: string;
+  openclawToken: string;
 }
 
 export type RuntimeAuthKeyByProvider = Record<RuntimeAuthProvider, string>;
@@ -170,6 +172,7 @@ export function resolveRuntimeApiKey(
   }
   if (provider === 'rime') return env.RIME_API_KEY ?? '';
   if (provider === 'ultravox') return env.ULTRAVOX_API_KEY ?? '';
+  if (provider === 'openclaw') return env.OPENCLAW_TOKEN ?? '';
   return '';
 }
 
@@ -188,6 +191,7 @@ export function resolveRuntimeAuthKeySet(input: {
     fishAudioApiKey: resolveRuntimeApiKey('fish', input),
     rimeApiKey: resolveRuntimeApiKey('rime', input),
     ultravoxApiKey: resolveRuntimeApiKey('ultravox', input),
+    openclawToken: resolveRuntimeApiKey('openclaw', input),
   };
 }
 
@@ -205,6 +209,7 @@ export function runtimeAuthKeySetToProviderMap(
     fish: auth.fishAudioApiKey,
     rime: auth.rimeApiKey,
     ultravox: auth.ultravoxApiKey,
+    openclaw: auth.openclawToken,
   };
 }
 
@@ -563,6 +568,9 @@ export async function fetchRuntimeProviderCatalog(input: {
       'local-tts': {
         models: DEFAULT_LOCAL_TTS_MODELS,
       },
+      'openclaw-llm': {
+        models: ['openclaw-channel'],
+      },
     },
     providerSchemas,
   };
@@ -694,6 +702,15 @@ export async function testRuntimeProviderCredentials(
         ok: res.ok,
         status: res.status,
         message: res.ok ? 'Rime credentials valid' : await res.text(),
+      };
+    }
+
+    if (provider === 'openclaw') {
+      // OpenClaw uses a local token — just check it's not empty
+      return {
+        ok: !!apiKey,
+        status: apiKey ? 200 : 401,
+        message: apiKey ? 'OpenClaw token configured' : 'OpenClaw token not set',
       };
     }
 

@@ -24,6 +24,8 @@ class TtsBackend(Protocol):
         temperature: float | None = None,
         seed: int | None = None,
         instruct: str | None = None,
+        ref_audio: str | None = None,
+        ref_text: str | None = None,
     ) -> bytes:
         ...
 

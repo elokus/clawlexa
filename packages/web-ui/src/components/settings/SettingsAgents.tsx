@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useUnifiedSessionsStore, usePromptsState } from '../../stores';
 import { SettingsSection, SettingsField } from './SettingsSection';
+import { AgentVoicePipeline } from './AgentVoicePipeline';
 import type { PromptInfo } from '../../lib/prompts-api';
 
 function AgentCard({
@@ -73,6 +74,16 @@ function AgentDetailEditor({ agent }: { agent: PromptInfo }) {
 
   const isActiveVersion = agent.activeVersion === selectedVersion;
 
+  const handleMetadataChange = useCallback(
+    (key: string, value: string | string[]) => {
+      const updated = { ...agent.metadata, [key]: value };
+      updatePromptMetadata(agent.id, updated);
+    },
+    [agent.id, agent.metadata, updatePromptMetadata]
+  );
+
+  const isVoice = agent.type === 'voice';
+
   return (
     <div className="agent-detail">
       {/* Agent Properties */}
@@ -87,24 +98,45 @@ function AgentDetailEditor({ agent }: { agent: PromptInfo }) {
         <SettingsField label="Type">
           <input type="text" value={agent.type === 'voice' ? 'Voice Agent' : 'Subagent'} readOnly className="readonly" />
         </SettingsField>
-        {agent.metadata?.wakeWord && (
-          <SettingsField label="Wake Word">
-            <input type="text" value={agent.metadata.wakeWord} readOnly className="readonly" />
+        {isVoice && (
+          <SettingsField label="Wake Word" hint="Porcupine wake word trigger">
+            <input
+              type="text"
+              value={agent.metadata?.wakeWord ?? ''}
+              onChange={(e) => handleMetadataChange('wakeWord', e.target.value)}
+            />
           </SettingsField>
         )}
-        {agent.metadata?.voice && (
-          <SettingsField label="Voice">
-            <input type="text" value={agent.metadata.voice} readOnly className="readonly" />
+        {isVoice && (
+          <SettingsField label="Voice" hint="Provider voice ID (e.g. echo, ash, Puck)">
+            <input
+              type="text"
+              value={agent.metadata?.voice ?? ''}
+              onChange={(e) => handleMetadataChange('voice', e.target.value)}
+            />
           </SettingsField>
         )}
-        {agent.metadata?.model && (
-          <SettingsField label="Model">
-            <input type="text" value={agent.metadata.model} readOnly className="readonly" />
+        {!isVoice && agent.metadata?.model && (
+          <SettingsField label="Model" hint="LLM model for this subagent">
+            <input
+              type="text"
+              value={agent.metadata.model}
+              onChange={(e) => handleMetadataChange('model', e.target.value)}
+            />
           </SettingsField>
         )}
         {agent.metadata?.tools && agent.metadata.tools.length > 0 && (
-          <SettingsField label="Tools">
-            <input type="text" value={agent.metadata.tools.join(', ')} readOnly className="readonly" />
+          <SettingsField label="Tools" hint="Comma-separated tool names">
+            <input
+              type="text"
+              value={agent.metadata.tools.join(', ')}
+              onChange={(e) =>
+                handleMetadataChange(
+                  'tools',
+                  e.target.value.split(',').map((t) => t.trim()).filter(Boolean)
+                )
+              }
+            />
           </SettingsField>
         )}
       </SettingsSection>
@@ -163,6 +195,9 @@ function AgentDetailEditor({ agent }: { agent: PromptInfo }) {
           spellCheck={false}
         />
       </SettingsSection>
+
+      {/* Voice Pipeline (voice agents only) */}
+      {isVoice && <AgentVoicePipeline agentName={agent.name} />}
     </div>
   );
 }

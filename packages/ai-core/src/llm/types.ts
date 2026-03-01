@@ -137,6 +137,15 @@ export interface GoogleLlmOptions extends LlmCommonOptions {
   providerOverrides?: Record<string, unknown>;
 }
 
+export interface OpenClawChannelLlmOptions extends LlmCommonOptions {
+  /** WebSocket endpoint for the OpenClaw VoiceClaw channel (e.g. ws://localhost:18800) */
+  endpoint?: string;
+  /** Auth token for the OpenClaw VoiceClaw channel */
+  token?: string;
+  /** VoiceClaw client identifier for session routing */
+  clientId?: string;
+}
+
 export interface GenericLlmOptions extends LlmCommonOptions {
   reasoning?: LlmReasoningOptions;
   providerOverrides?: Record<string, unknown>;
@@ -152,6 +161,7 @@ export interface LlmOptionsByProvider {
   google: GoogleLlmOptions;
   deepgram: GenericLlmOptions;
   ultravox: GenericLlmOptions;
+  'openclaw-channel': OpenClawChannelLlmOptions;
 }
 
 export type LlmOptionsForProvider<P extends RuntimeProviderId> =

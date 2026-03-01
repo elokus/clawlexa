@@ -19,6 +19,12 @@ export async function synthesizeLocalSegment(
     input: text,
     response_format: 'pcm',
   };
+  if (context.voiceRefAudio) {
+    requestBody.ref_audio = context.voiceRefAudio;
+    if (context.voiceRefText) {
+      requestBody.ref_text = context.voiceRefText;
+    }
+  }
   if (isQwenModel(context.model)) {
     const interval =
       Number.isFinite(context.localTtsStreamingIntervalSec) &&

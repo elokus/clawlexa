@@ -25,6 +25,11 @@ import {
   streamOpenRouter,
   type OpenRouterStreamInput,
 } from './adapters/openrouter.js';
+import {
+  completeOpenClawChannel,
+  streamOpenClawChannel,
+  type OpenClawChannelStreamInput,
+} from './adapters/openclaw-channel.js';
 
 export interface LlmRuntimeAdapterOverrides {
   anthropic?: {
@@ -42,6 +47,10 @@ export interface LlmRuntimeAdapterOverrides {
   openrouter?: {
     stream?: (input: OpenRouterStreamInput) => AsyncIterable<LlmEvent>;
     complete?: (input: OpenRouterStreamInput) => Promise<LlmCompleteResult>;
+  };
+  openclawChannel?: {
+    stream?: (input: OpenClawChannelStreamInput) => AsyncIterable<LlmEvent>;
+    complete?: (input: OpenClawChannelStreamInput) => Promise<LlmCompleteResult>;
   };
 }
 
@@ -61,6 +70,10 @@ interface ResolvedLlmRuntimeAdapters {
   openrouter: {
     stream: (input: OpenRouterStreamInput) => AsyncIterable<LlmEvent>;
     complete: (input: OpenRouterStreamInput) => Promise<LlmCompleteResult>;
+  };
+  openclawChannel: {
+    stream: (input: OpenClawChannelStreamInput) => AsyncIterable<LlmEvent>;
+    complete: (input: OpenClawChannelStreamInput) => Promise<LlmCompleteResult>;
   };
 }
 
@@ -84,6 +97,10 @@ class LlmRuntimeImpl implements LlmRuntime {
       openrouter: {
         stream: overrides?.openrouter?.stream ?? streamOpenRouter,
         complete: overrides?.openrouter?.complete ?? completeOpenRouter,
+      },
+      openclawChannel: {
+        stream: overrides?.openclawChannel?.stream ?? streamOpenClawChannel,
+        complete: overrides?.openclawChannel?.complete ?? completeOpenClawChannel,
       },
     };
   }
@@ -111,6 +128,11 @@ class LlmRuntimeImpl implements LlmRuntime {
       return;
     }
 
+    if (input.model.provider === 'openclaw-channel') {
+      yield* this.adapters.openclawChannel.stream(input as OpenClawChannelStreamInput);
+      return;
+    }
+
     yield {
       type: 'error',
       error: `llm-runtime provider adapter not implemented yet for ${input.model.provider}:${input.model.model}`,
@@ -134,6 +156,10 @@ class LlmRuntimeImpl implements LlmRuntime {
 
     if (input.model.provider === 'openrouter') {
       return this.adapters.openrouter.complete(input as OpenRouterStreamInput);
+    }
+
+    if (input.model.provider === 'openclaw-channel') {
+      return this.adapters.openclawChannel.complete(input as OpenClawChannelStreamInput);
     }
 
     const events: LlmEvent[] = [];
@@ -185,6 +211,14 @@ class LlmRuntimeImpl implements LlmRuntime {
 
   completeGoogle(input: GoogleStreamInput): Promise<LlmCompleteResult> {
     return this.adapters.google.complete(input);
+  }
+
+  streamOpenClawChannel(input: OpenClawChannelStreamInput): AsyncIterable<LlmEvent> {
+    return this.adapters.openclawChannel.stream(input);
+  }
+
+  completeOpenClawChannel(input: OpenClawChannelStreamInput): Promise<LlmCompleteResult> {
+    return this.adapters.openclawChannel.complete(input);
   }
 }
 

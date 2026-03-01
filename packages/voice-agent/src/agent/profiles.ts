@@ -367,6 +367,17 @@ Sage nur "Ich starte eine Coding-Session." und rufe dann das Tool auf. Nichts we
   greetingTrigger: "[Conversation started - user just said the wake word 'Computer']",
 };
 
+// OpenClaw - Voice relay to OpenClaw agent pipeline
+// Uses decomposed mode with openclaw-channel LLM provider
+export const OPENCLAW_PROFILE: AgentProfile = {
+  name: 'OpenClaw',
+  wakeWord: 'hey_openclaw',
+  instructions: `You are a voice interface to an OpenClaw agent. Keep responses concise and conversational. Avoid markdown, lists, and code blocks — your responses will be spoken aloud.`,
+  voice: 'echo',
+  tools: [],
+  greetingTrigger: "[Conversation started - user activated OpenClaw voice channel]",
+};
+
 // Profile registry by wake word and name
 export const profiles: Record<string, AgentProfile> = {
   // Jarvis - by wake word and name (case-insensitive)
@@ -375,6 +386,9 @@ export const profiles: Record<string, AgentProfile> = {
   // Marvin - by wake word and name (case-insensitive)
   computer: MARVIN_PROFILE,
   marvin: MARVIN_PROFILE,
+  // OpenClaw - by wake word and name (case-insensitive)
+  hey_openclaw: OPENCLAW_PROFILE,
+  openclaw: OPENCLAW_PROFILE,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -387,6 +401,7 @@ export const profiles: Record<string, AgentProfile> = {
 const PROFILE_PROMPT_MAPPING: Record<string, string> = {
   jarvis: 'jarvis',
   marvin: 'marvin',
+  openclaw: 'openclaw',
 };
 
 /**

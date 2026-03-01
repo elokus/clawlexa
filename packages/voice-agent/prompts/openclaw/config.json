@@ -1,0 +1,11 @@
+{
+  "name": "OpenClaw",
+  "description": "Voice relay to OpenClaw agent — STT/TTS handled locally, LLM via OpenClaw channel",
+  "type": "voice",
+  "activeVersion": "v1",
+  "metadata": {
+    "voice": "echo",
+    "wakeWord": "hey_openclaw",
+    "tools": []
+  }
+}

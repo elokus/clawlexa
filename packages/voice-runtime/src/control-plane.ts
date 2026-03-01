@@ -72,18 +72,27 @@ export type RuntimeAuthProvider = CoreRuntimeAuthProvider;
 
 export type RuntimeProviderName = RuntimeVoiceToVoiceProvider | 'decomposed';
 
+export interface RuntimeProfileOverride {
+  mode?: RuntimeVoiceMode;
+  voice?: string;
+  provider?: RuntimeVoiceToVoiceProvider;
+  decomposed?: {
+    stt?: { provider?: RuntimeSttProvider; model?: string; language?: string; authProfile?: string };
+    llm?: { provider?: RuntimeLlmProvider; model?: string; authProfile?: string };
+    tts?: { provider?: RuntimeTtsProvider; model?: string; voice?: string; authProfile?: string; voiceRef?: string };
+  };
+  voiceToVoice?: {
+    provider?: RuntimeVoiceToVoiceProvider;
+    model?: string;
+    voice?: string;
+  };
+}
+
 export interface RuntimeVoiceConfigDocument {
   voice: {
     mode: RuntimeVoiceMode;
     language: string;
-    profileOverrides: Record<
-      string,
-      {
-        mode?: RuntimeVoiceMode;
-        voice?: string;
-        provider?: RuntimeVoiceToVoiceProvider;
-      }
-    >;
+    profileOverrides: Record<string, RuntimeProfileOverride>;
     voiceToVoice: {
       provider: RuntimeVoiceToVoiceProvider;
       model: string;
@@ -113,6 +122,7 @@ export interface RuntimeVoiceConfigDocument {
         model: string;
         voice: string;
         authProfile?: string;
+        voiceRef?: string;
       };
     };
     turn: {
@@ -173,6 +183,7 @@ export interface RuntimeResolvedConfig {
   decomposedTtsProvider: RuntimeTtsProvider;
   decomposedTtsModel: string;
   decomposedTtsVoice: string;
+  decomposedTtsVoiceRef?: string;
   auth: RuntimeAuthKeySet;
   turn: {
     strategy: 'provider-native' | 'layered';
@@ -223,6 +234,7 @@ export interface RuntimeSessionInputBuildInput {
   decomposedTtsProvider: RuntimeTtsProvider;
   decomposedTtsModel: string;
   decomposedTtsVoice: string;
+  decomposedTtsVoiceRef?: string;
   turn: RuntimeResolvedConfig['turn'];
   providerSettings: Record<string, unknown>;
   auth: RuntimeAuthKeySet;
@@ -482,35 +494,60 @@ export function resolveRuntimeConfigFromDocuments(input: {
     ? normalizeRuntimeMode(env.VOICE_MODE)
     : override.mode ?? input.voiceConfig.voice.mode;
 
+  const v2vOverride = override.voiceToVoice ?? {};
   const configuredProvider =
-    override.provider ?? input.voiceConfig.voice.voiceToVoice.provider;
+    override.provider ?? v2vOverride.provider ?? input.voiceConfig.voice.voiceToVoice.provider;
   const provider = env.VOICE_PROVIDER
     ? normalizeRuntimeProvider(env.VOICE_PROVIDER)
     : mode === 'decomposed'
       ? 'decomposed'
       : configuredProvider;
 
+  // Deep-merge decomposed overrides: profile override > global config
+  const dOverride = override.decomposed ?? {};
+  const mergedDecomposed = {
+    stt: {
+      provider: dOverride.stt?.provider ?? input.voiceConfig.voice.decomposed.stt.provider,
+      model: dOverride.stt?.model ?? input.voiceConfig.voice.decomposed.stt.model,
+      language: dOverride.stt?.language ?? input.voiceConfig.voice.decomposed.stt.language,
+      authProfile: dOverride.stt?.authProfile ?? input.voiceConfig.voice.decomposed.stt.authProfile,
+    },
+    llm: {
+      provider: dOverride.llm?.provider ?? input.voiceConfig.voice.decomposed.llm.provider,
+      model: dOverride.llm?.model ?? input.voiceConfig.voice.decomposed.llm.model,
+      authProfile: dOverride.llm?.authProfile ?? input.voiceConfig.voice.decomposed.llm.authProfile,
+    },
+    tts: {
+      provider: dOverride.tts?.provider ?? input.voiceConfig.voice.decomposed.tts.provider,
+      model: dOverride.tts?.model ?? input.voiceConfig.voice.decomposed.tts.model,
+      voice: dOverride.tts?.voice ?? input.voiceConfig.voice.decomposed.tts.voice,
+      authProfile: dOverride.tts?.authProfile ?? input.voiceConfig.voice.decomposed.tts.authProfile,
+      voiceRef: dOverride.tts?.voiceRef ?? input.voiceConfig.voice.decomposed.tts.voiceRef,
+    },
+  };
+
   let voice: string;
   if (mode === 'decomposed') {
     voice =
       override.voice ??
-      input.voiceConfig.voice.decomposed.tts.voice ??
+      mergedDecomposed.tts.voice ??
       input.profileVoice;
   } else if (provider === 'gemini-live') {
-    voice = override.voice ?? input.voiceConfig.voice.voiceToVoice.geminiVoice;
+    voice = override.voice ?? v2vOverride.voice ?? input.voiceConfig.voice.voiceToVoice.geminiVoice;
   } else {
     voice =
       override.voice ??
+      v2vOverride.voice ??
       input.voiceConfig.voice.voiceToVoice.voice ??
       input.profileVoice;
   }
 
   const voiceToVoiceAuthProfile = input.voiceConfig.voice.voiceToVoice.authProfile;
-  const decomposedLlmAuthProfile = input.voiceConfig.voice.decomposed.llm.authProfile;
-  const decomposedSttAuthProfile = input.voiceConfig.voice.decomposed.stt.authProfile;
-  const decomposedTtsAuthProfile = input.voiceConfig.voice.decomposed.tts.authProfile;
-  const decomposedLlmProvider = input.voiceConfig.voice.decomposed.llm.provider;
-  const decomposedTtsProvider = input.voiceConfig.voice.decomposed.tts.provider;
+  const decomposedLlmAuthProfile = mergedDecomposed.llm.authProfile;
+  const decomposedSttAuthProfile = mergedDecomposed.stt.authProfile;
+  const decomposedTtsAuthProfile = mergedDecomposed.tts.authProfile;
+  const decomposedLlmProvider = mergedDecomposed.llm.provider;
+  const decomposedTtsProvider = mergedDecomposed.tts.provider;
   const decomposedTtsUsesOpenAi = decomposedTtsProvider === 'openai';
   const decomposedTtsUsesGoogle = decomposedTtsProvider === 'google-chirp';
   const decomposedTtsUsesDeepgram = decomposedTtsProvider === 'deepgram';
@@ -609,26 +646,31 @@ export function resolveRuntimeConfigFromDocuments(input: {
     authProfiles: input.authProfiles,
     env,
   });
+  const openclawToken = resolveRuntimeApiKey('openclaw', {
+    authProfiles: input.authProfiles,
+    env,
+  });
 
   return {
     mode,
     provider,
     language: input.voiceConfig.voice.language,
     voice,
-    model: input.voiceConfig.voice.voiceToVoice.model || input.fallbackModel,
+    model: v2vOverride.model ?? (input.voiceConfig.voice.voiceToVoice.model || input.fallbackModel),
     geminiModel: input.voiceConfig.voice.voiceToVoice.geminiModel,
     geminiVoice: input.voiceConfig.voice.voiceToVoice.geminiVoice,
     ultravoxModel: input.voiceConfig.voice.voiceToVoice.ultravoxModel,
     pipecatServerUrl: input.voiceConfig.voice.voiceToVoice.pipecatServerUrl,
     pipecatTransport: input.voiceConfig.voice.voiceToVoice.pipecatTransport,
     pipecatBotId: input.voiceConfig.voice.voiceToVoice.pipecatBotId,
-    decomposedSttProvider: input.voiceConfig.voice.decomposed.stt.provider,
-    decomposedSttModel: input.voiceConfig.voice.decomposed.stt.model,
-    decomposedLlmProvider: input.voiceConfig.voice.decomposed.llm.provider,
-    decomposedLlmModel: input.voiceConfig.voice.decomposed.llm.model,
-    decomposedTtsProvider: input.voiceConfig.voice.decomposed.tts.provider,
-    decomposedTtsModel: input.voiceConfig.voice.decomposed.tts.model,
-    decomposedTtsVoice: input.voiceConfig.voice.decomposed.tts.voice,
+    decomposedSttProvider: mergedDecomposed.stt.provider,
+    decomposedSttModel: mergedDecomposed.stt.model,
+    decomposedLlmProvider: mergedDecomposed.llm.provider,
+    decomposedLlmModel: mergedDecomposed.llm.model,
+    decomposedTtsProvider: mergedDecomposed.tts.provider,
+    decomposedTtsModel: mergedDecomposed.tts.model,
+    decomposedTtsVoice: mergedDecomposed.tts.voice,
+    decomposedTtsVoiceRef: mergedDecomposed.tts.voiceRef,
     auth: {
       openaiApiKey,
       openrouterApiKey,
@@ -639,6 +681,7 @@ export function resolveRuntimeConfigFromDocuments(input: {
       fishAudioApiKey,
       rimeApiKey,
       ultravoxApiKey,
+      openclawToken,
     },
     turn: {
       strategy: input.voiceConfig.voice.turn.strategy,
@@ -741,6 +784,7 @@ function providerConfigForRuntime(input: RuntimeSessionInputBuildInput): unknown
       ttsProvider: input.decomposedTtsProvider,
       ttsModel: input.decomposedTtsModel,
       ttsVoice: input.decomposedTtsVoice,
+      voiceRef: input.decomposedTtsVoiceRef,
       turn: input.turn,
     };
   }

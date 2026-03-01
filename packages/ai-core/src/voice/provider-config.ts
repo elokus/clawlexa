@@ -28,6 +28,7 @@ const DECOMPOSED_LLM_PROVIDERS = [
   'openrouter',
   'anthropic',
   'google',
+  'openclaw-channel',
 ] as const;
 const DECOMPOSED_TTS_PROVIDERS = [
   'openai',

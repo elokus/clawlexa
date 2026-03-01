@@ -47,6 +47,8 @@ def build_generation_plan(
     qwen_ref_audio: str | None,
     qwen_ref_text: str,
     qwen_voice_design_instruct: str,
+    ref_audio_override: str | None = None,
+    ref_text_override: str | None = None,
 ) -> TtsGenerationPlan:
     family = detect_model_family(model_id)
 
@@ -61,6 +63,8 @@ def build_generation_plan(
         )
 
     if family in (ModelFamily.QWEN3_BASE, ModelFamily.QWEN3_VOICE_DESIGN):
+        effective_ref_audio = ref_audio_override or qwen_ref_audio
+        effective_ref_text = ref_text_override or qwen_ref_text
         return mlx_qwen.build_plan(
             model_id=model_id,
             text=text,
@@ -68,8 +72,8 @@ def build_generation_plan(
             language=language or "German",
             temperature=0.8 if temperature is None else temperature,
             instruct=instruct,
-            qwen_ref_audio=qwen_ref_audio,
-            qwen_ref_text=qwen_ref_text,
+            qwen_ref_audio=effective_ref_audio,
+            qwen_ref_text=effective_ref_text,
             qwen_voice_design_instruct=qwen_voice_design_instruct,
         )
 

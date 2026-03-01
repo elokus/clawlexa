@@ -9,6 +9,7 @@ import type {
   LlmRuntimeRequest as CoreLlmRuntimeRequest,
   LlmOptionsForProvider,
   OpenAiLlmOptions,
+  OpenClawChannelLlmOptions,
   OpenRouterLlmOptions,
   RuntimeProviderId,
 } from '@voiceclaw/ai-core/llm';
@@ -18,6 +19,7 @@ export type OpenRouterProviderId = 'openrouter';
 export type OpenAiProviderId = 'openai';
 export type AnthropicProviderId = 'anthropic';
 export type GoogleProviderId = 'google';
+export type OpenClawChannelProviderId = 'openclaw-channel';
 
 export type {
   AnthropicLlmOptions,
@@ -25,6 +27,7 @@ export type {
   LlmCompleteResult,
   LlmEvent,
   OpenAiLlmOptions,
+  OpenClawChannelLlmOptions,
   OpenRouterLlmOptions,
 } from '@voiceclaw/ai-core/llm';
 
@@ -115,6 +118,24 @@ export interface LlmRuntime extends CoreLlmRuntime {
     options?: GoogleLlmOptions | Record<string, unknown>;
     toolHandler?: LlmRuntimeRequest<GoogleProviderId>['toolHandler'];
     response?: LlmRuntimeRequest<GoogleProviderId>['response'];
+    signal?: AbortSignal;
+  }): Promise<LlmCompleteResult>;
+
+  streamOpenClawChannel(input: {
+    model: LlmModelRef<OpenClawChannelProviderId>;
+    context: LlmContext;
+    options?: OpenClawChannelLlmOptions | Record<string, unknown>;
+    toolHandler?: LlmRuntimeRequest<OpenClawChannelProviderId>['toolHandler'];
+    response?: LlmRuntimeRequest<OpenClawChannelProviderId>['response'];
+    signal?: AbortSignal;
+  }): AsyncIterable<LlmEvent>;
+
+  completeOpenClawChannel(input: {
+    model: LlmModelRef<OpenClawChannelProviderId>;
+    context: LlmContext;
+    options?: OpenClawChannelLlmOptions | Record<string, unknown>;
+    toolHandler?: LlmRuntimeRequest<OpenClawChannelProviderId>['toolHandler'];
+    response?: LlmRuntimeRequest<OpenClawChannelProviderId>['response'];
     signal?: AbortSignal;
   }): Promise<LlmCompleteResult>;
 }

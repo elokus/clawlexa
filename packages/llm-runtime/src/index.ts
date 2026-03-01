@@ -8,6 +8,8 @@ export type {
   LlmRuntimeRequest,
   OpenAiLlmOptions,
   OpenAiProviderId,
+  OpenClawChannelLlmOptions,
+  OpenClawChannelProviderId,
   OpenRouterLlmOptions,
   OpenRouterProviderId,
   LlmProviderId,
@@ -38,3 +40,8 @@ export {
   streamOpenRouter,
   type OpenRouterStreamInput,
 } from './adapters/openrouter.js';
+export {
+  completeOpenClawChannel,
+  streamOpenClawChannel,
+  type OpenClawChannelStreamInput,
+} from './adapters/openclaw-channel.js';

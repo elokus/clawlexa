@@ -1,0 +1,9 @@
+{
+  "refText": "Hallo ich bin Marlon, dein persönlicher Sprachassistent. Ich bin hier um dir bei deinen täglichen Aufgaben zu helfen. Womit starten wir?",
+  "language": "German",
+  "instruct": "A cheerful excited german deep voice. Professional and confident",
+  "model": "qwen3-1.7b-vd-4bit",
+  "seed": 42,
+  "label": "exsited-marlon",
+  "createdAt": "2026-03-01T11:50:39.693Z"
+}

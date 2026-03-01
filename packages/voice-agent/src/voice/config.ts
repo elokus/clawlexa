@@ -6,6 +6,7 @@ import {
   loadAuthProfiles,
   loadVoiceConfig,
 } from './settings.js';
+import { getVoice } from './voices.js';
 import type { VoiceRuntimeConfig } from './types.js';
 
 function safeLoadConfig() {
@@ -18,7 +19,7 @@ function safeLoadConfig() {
 
 export function resolveVoiceRuntimeConfig(profile: AgentProfile): VoiceRuntimeConfig {
   const { voice: voiceDoc, auth: authDoc } = safeLoadConfig();
-  return resolveRuntimeConfigFromDocuments({
+  const resolved = resolveRuntimeConfigFromDocuments({
     profileName: profile.name,
     profileVoice: profile.voice,
     fallbackModel: config.agent.model,
@@ -26,4 +27,18 @@ export function resolveVoiceRuntimeConfig(profile: AgentProfile): VoiceRuntimeCo
     authProfiles: authDoc,
     env: process.env,
   });
+
+  // Resolve voice clone reference label → actual file paths
+  if (resolved.decomposedTtsVoiceRef) {
+    const entry = getVoice(resolved.decomposedTtsVoiceRef);
+    if (entry) {
+      resolved.providerSettings = {
+        ...resolved.providerSettings,
+        voiceRefAudio: entry.refAudioPath,
+        voiceRefText: entry.meta.refText,
+      };
+    }
+  }
+
+  return resolved;
 }

@@ -1179,7 +1179,8 @@ export class DecomposedAdapter implements ProviderAdapter {
       this.options.llmProvider === 'openrouter' ||
       this.options.llmProvider === 'openai' ||
       this.options.llmProvider === 'anthropic' ||
-      this.options.llmProvider === 'google'
+      this.options.llmProvider === 'google' ||
+      this.options.llmProvider === 'openclaw-channel'
     );
   }
 
@@ -1188,6 +1189,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (provider === 'openai') return 'OpenAI';
     if (provider === 'anthropic') return 'Anthropic';
     if (provider === 'google') return 'Google';
+    if (provider === 'openclaw-channel') return 'OpenClaw Channel';
     return provider;
   }
 
@@ -1197,6 +1199,7 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (this.options.llmProvider === 'openai') return this.options.openaiApiKey;
     if (this.options.llmProvider === 'anthropic') return this.options.anthropicApiKey;
     if (this.options.llmProvider === 'google') return this.options.googleApiKey;
+    if (this.options.llmProvider === 'openclaw-channel') return undefined; // Uses token, not API key
     return undefined;
   }
 
@@ -1837,6 +1840,8 @@ export class DecomposedAdapter implements ProviderAdapter {
             kokoroEndpoint: this.options.kokoroEndpoint,
             pocketTtsEndpoint: this.options.pocketTtsEndpoint,
             localEndpoint: this.options.localEndpoint,
+            voiceRefAudio: this.options.voiceRefAudio,
+            voiceRefText: this.options.voiceRefText,
             localTtsStreamingIntervalSec:
               this.options.ttsProvider === 'local' &&
               isQwenTtsModelId(this.options.ttsModel)

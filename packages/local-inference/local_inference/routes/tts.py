@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
 import logging
 
+import numpy as np
+import soundfile as sf
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from ..tts.base import TtsBackend
@@ -44,9 +47,22 @@ class SpeechRequest(BaseModel):
     stream: bool | None = None
     streaming_interval: float | None = None
     response_format: str = "pcm"
+    ref_audio: str | None = None
+    ref_text: str | None = None
 
     def resolved_text(self) -> str:
         return (self.input or self.text or "").strip()
+
+
+class VoiceDesignRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    instruct: str
+    text: str
+    language: str = "English"
+    seed: int = 42
+    temperature: float = 0.7
+    model: str | None = None
 
 
 async def _swap_tts_model_if_needed(
@@ -121,6 +137,9 @@ async def synthesize_audio(
         "x-audio-sample-rate": str(tts.sample_rate),
     }
 
+    requested_ref_audio = _normalize_value(payload.ref_audio)
+    requested_ref_text = _normalize_value(payload.ref_text)
+
     if stream_requested and supports_streaming and callable(stream_pcm16_fn):
         interval = payload.streaming_interval
         if interval is None or interval <= 0:
@@ -137,6 +156,8 @@ async def synthesize_audio(
                     seed=payload.seed,
                     instruct=requested_instruct,
                     streaming_interval=interval,
+                    ref_audio=requested_ref_audio,
+                    ref_text=requested_ref_text,
                 ):
                     yield chunk
 
@@ -156,6 +177,8 @@ async def synthesize_audio(
                 temperature=payload.temperature,
                 seed=payload.seed,
                 instruct=requested_instruct,
+                ref_audio=requested_ref_audio,
+                ref_text=requested_ref_text,
             )
 
     pcm = await run_in_threadpool(generate_pcm_with_lock)
@@ -166,4 +189,49 @@ async def synthesize_audio(
         _iter_pcm_chunks(pcm, chunk_size),
         media_type="application/octet-stream",
         headers=headers,
+    )
+
+
+@router.post("/v1/voice/design")
+async def design_voice(
+    request: Request,
+    payload: VoiceDesignRequest,
+) -> Response:
+    """Generate a voice via VoiceDesign model and return as WAV.
+
+    Swaps to a VoiceDesign model if needed, generates audio from the instruct
+    description, and returns a 24kHz WAV file suitable for use as a clone
+    reference.
+    """
+    tts: TtsBackend = request.app.state.tts
+
+    vd_model = payload.model or "qwen3-1.7b-vd-4bit"
+    await _swap_tts_model_if_needed(request, tts, vd_model)
+
+    def generate_wav() -> tuple[bytes, int]:
+        lock = request.app.state.tts_lock
+        with lock:
+            pcm = tts.generate_pcm16(
+                payload.text,
+                voice=None,
+                language=payload.language,
+                temperature=payload.temperature,
+                seed=payload.seed,
+                instruct=payload.instruct,
+            )
+        sample_rate = tts.sample_rate
+        audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32767.0
+        buf = io.BytesIO()
+        sf.write(buf, audio, sample_rate, format="WAV")
+        buf.seek(0)
+        return buf.getvalue(), sample_rate
+
+    wav_bytes, sample_rate = await run_in_threadpool(generate_wav)
+
+    return Response(
+        content=wav_bytes,
+        media_type="audio/wav",
+        headers={
+            "x-audio-sample-rate": str(sample_rate),
+        },
     )

@@ -105,7 +105,7 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   customSttMode?: 'provider' | 'custom' | 'hybrid';
   sttProvider?: 'openai' | 'deepgram' | 'local';
   sttModel?: string;
-  llmProvider?: 'openai' | 'openrouter' | 'anthropic' | 'google';
+  llmProvider?: 'openai' | 'openrouter' | 'anthropic' | 'google' | 'openclaw-channel';
   llmModel?: string;
   ttsProvider?:
     | 'openai'
@@ -132,6 +132,9 @@ export interface DecomposedProviderConfig extends Record<string, unknown> {
   inlineTtsChunkingEnabled?: boolean;
   localTtsStreamingIntervalSec?: number;
   localQwenAdaptiveUnderrunEnabled?: boolean;
+  voiceRef?: string;
+  voiceRefAudio?: string;
+  voiceRefText?: string;
   turn?: {
     silenceMs?: number;
     minSpeechMs?: number;

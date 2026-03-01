@@ -8,6 +8,7 @@ import { SettingsSidebar } from './SettingsSidebar';
 import { SaveBar } from './SaveBar';
 import { SettingsAgents } from './SettingsAgents';
 import { SettingsVoicePipeline } from './SettingsVoicePipeline';
+import { SettingsVoices } from './SettingsVoices';
 import { SettingsAudio } from './SettingsAudio';
 import { SettingsCredentials } from './SettingsCredentials';
 import { SettingsSystem } from './SettingsSystem';
@@ -17,11 +18,15 @@ import type { SettingsPage } from '../../hooks/useRouter';
 const PAGE_META: Record<SettingsPage, { title: string; description: string }> = {
   agents: {
     title: 'Agents',
-    description: 'Voice profiles, prompts, wake words, and tool configuration.',
+    description: 'Voice profiles, prompts, voice pipeline, and tool configuration.',
   },
   'voice-pipeline': {
-    title: 'Voice Pipeline',
-    description: 'Runtime mode, provider selection, and model configuration.',
+    title: 'Default Pipeline',
+    description: 'Global defaults for voice mode, providers, and models. Agents inherit these unless overridden.',
+  },
+  voices: {
+    title: 'Voice Library',
+    description: 'Manage cloned voice references and generate new voices via voice design.',
   },
   audio: {
     title: 'Audio & VAD',
@@ -47,6 +52,8 @@ function PageContent({ page }: { page: SettingsPage }) {
       return <SettingsAgents />;
     case 'voice-pipeline':
       return <SettingsVoicePipeline />;
+    case 'voices':
+      return <SettingsVoices />;
     case 'audio':
       return <SettingsAudio />;
     case 'credentials':

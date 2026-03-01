@@ -14,7 +14,7 @@ export interface DecomposedOptions {
   sttProvider: 'openai' | 'deepgram' | 'local';
   sttModel: string;
   customSttMode: 'provider' | 'custom' | 'hybrid';
-  llmProvider: 'openai' | 'openrouter' | 'anthropic' | 'google';
+  llmProvider: 'openai' | 'openrouter' | 'anthropic' | 'google' | 'openclaw-channel';
   llmModel: string;
   ttsProvider: DecomposedTtsProvider;
   ttsModel: string;
@@ -32,6 +32,8 @@ export interface DecomposedOptions {
   localEndpoint: string;
   localTtsStreamingIntervalSec: number;
   localQwenAdaptiveUnderrunEnabled: boolean;
+  voiceRefAudio?: string;
+  voiceRefText?: string;
   silenceMs: number;
   minSpeechMs: number;
   minRms: number;
@@ -338,6 +340,8 @@ export function resolveDecomposedOptions(input: SessionInput): DecomposedOptions
     localEndpoint: providerConfig.localEndpoint ?? 'http://localhost:1060',
     localTtsStreamingIntervalSec: providerConfig.localTtsStreamingIntervalSec ?? 1.0,
     localQwenAdaptiveUnderrunEnabled: providerConfig.localQwenAdaptiveUnderrunEnabled ?? true,
+    voiceRefAudio: providerConfig.voiceRefAudio,
+    voiceRefText: providerConfig.voiceRefText,
     silenceMs: providerConfig.turn?.silenceMs ?? 700,
     minSpeechMs: providerConfig.turn?.minSpeechMs ?? 350,
     minRms: providerConfig.turn?.minRms ?? 0.015,

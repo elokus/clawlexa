@@ -7,7 +7,10 @@ QWEN_MODEL_PRESETS: dict[str, str] = {
     "qwen3-0.6b-8bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
     "qwen3-0.6b-4bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
     "qwen3-1.7b": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+    "qwen3-1.7b-8bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+    "qwen3-1.7b-4bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit",
     "qwen3-1.7b-vd": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16",
+    "qwen3-1.7b-vd-4bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit",
 }
 
 # Derived from the provided log sample:

@@ -42,15 +42,29 @@ export interface VoiceConfigDocument {
   voice: {
     mode: VoiceMode;
     language: string;
-    profileOverrides: Record<string, { mode?: VoiceMode; voice?: string; provider?: string }>;
+    profileOverrides: Record<string, {
+      mode?: VoiceMode;
+      voice?: string;
+      provider?: string;
+      decomposed?: {
+        stt?: { provider?: string; model?: string; language?: string; authProfile?: string };
+        llm?: { provider?: string; model?: string; authProfile?: string };
+        tts?: { provider?: string; model?: string; voice?: string; authProfile?: string; voiceRef?: string };
+      };
+      voiceToVoice?: {
+        provider?: string;
+        model?: string;
+        voice?: string;
+      };
+    }>;
     voiceToVoice: {
       provider: string;
       [key: string]: unknown;
     };
     decomposed: {
-      stt: { provider: string; [key: string]: unknown };
-      llm: { provider: string; [key: string]: unknown };
-      tts: { provider: string; [key: string]: unknown };
+      stt: { provider: string; model: string; language: string; authProfile?: string; [key: string]: unknown };
+      llm: { provider: string; model: string; authProfile?: string; [key: string]: unknown };
+      tts: { provider: string; model: string; voice: string; authProfile?: string; voiceRef?: string; [key: string]: unknown };
     };
     turn: {
       strategy: 'provider-native' | 'layered';
@@ -220,6 +234,87 @@ export async function saveAuthProfiles(config: AuthProfilesDocument): Promise<Au
   const payload = await res.json() as { config: AuthProfilesDocument };
   return payload.config;
 }
+
+// ─── Voice Library API ─────────────────────────────────────────────────────
+
+export interface VoiceMeta {
+  label: string;
+  refText: string;
+  language: string;
+  instruct?: string;
+  model?: string;
+  seed?: number;
+  createdAt: string;
+}
+
+export async function fetchVoices(): Promise<VoiceMeta[]> {
+  const res = await fetch(`${API_BASE}/api/config/voices`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch voices: ${res.status}`);
+  }
+  const payload = await res.json() as { voices: VoiceMeta[] };
+  return payload.voices;
+}
+
+export async function createVoice(data: {
+  label: string;
+  refText: string;
+  language: string;
+  instruct?: string;
+  model?: string;
+  seed?: number;
+  wavBase64: string;
+}): Promise<VoiceMeta> {
+  const res = await fetch(`${API_BASE}/api/config/voices`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to create voice (${res.status}): ${text}`);
+  }
+  const payload = await res.json() as { voice: VoiceMeta };
+  return payload.voice;
+}
+
+export async function deleteVoiceApi(label: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/config/voices/${encodeURIComponent(label)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to delete voice (${res.status}): ${text}`);
+  }
+}
+
+export function voiceAudioUrl(label: string): string {
+  return `${API_BASE}/api/config/voices/${encodeURIComponent(label)}/audio`;
+}
+
+export async function designVoice(data: {
+  label: string;
+  instruct: string;
+  text: string;
+  language?: string;
+  seed?: number;
+  temperature?: number;
+  model?: string;
+}): Promise<VoiceMeta> {
+  const res = await fetch(`${API_BASE}/api/config/voices/design`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to design voice (${res.status}): ${text}`);
+  }
+  const payload = await res.json() as { voice: VoiceMeta };
+  return payload.voice;
+}
+
+// ─── Auth Profile API ─────────────────────────────────────────────────────
 
 export async function testAuthProfile(input: {
   provider?: string;

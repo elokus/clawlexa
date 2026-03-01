@@ -29,6 +29,8 @@ export interface DecomposedTtsProviderContext {
   pocketTtsEndpoint: string;
   localEndpoint: string;
   localTtsStreamingIntervalSec: number;
+  voiceRefAudio?: string;
+  voiceRefText?: string;
   googleChirpEndpoint: string;
   cartesiaTtsWsUrl: string;
   fishTtsWsUrl: string;
