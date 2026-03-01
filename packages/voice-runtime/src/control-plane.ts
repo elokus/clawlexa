@@ -31,7 +31,11 @@ import type {
   VoiceProviderId,
 } from './types.js';
 
-export const RUNTIME_VOICE_MODES = ['voice-to-voice', 'decomposed'] as const;
+export const RUNTIME_VOICE_MODES = [
+  'voice-to-voice',
+  'realtime-text-tts',
+  'decomposed',
+] as const;
 export type RuntimeVoiceMode = (typeof RUNTIME_VOICE_MODES)[number];
 
 export const RUNTIME_VOICE_TO_VOICE_PROVIDERS = [
@@ -217,6 +221,7 @@ export interface RuntimeResolvedConfig {
 }
 
 export interface RuntimeSessionInputBuildInput {
+  mode: RuntimeVoiceMode;
   instructions: string;
   language: string;
   voice: string;
@@ -465,6 +470,7 @@ export function runtimeAuthKeySetToProviderMap(
 export function normalizeRuntimeMode(
   value: string | undefined
 ): RuntimeVoiceMode {
+  if (value === 'realtime-text-tts') return 'realtime-text-tts';
   return value === 'decomposed' ? 'decomposed' : 'voice-to-voice';
 }
 
@@ -478,6 +484,12 @@ export function normalizeRuntimeProvider(
   return 'openai-realtime';
 }
 
+function nonEmptyString(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function resolveRuntimeConfigFromDocuments(input: {
   profileName: string;
   profileVoice: string;
@@ -489,6 +501,7 @@ export function resolveRuntimeConfigFromDocuments(input: {
   const env = input.env ?? process.env;
   const profileKey = input.profileName.toLowerCase();
   const override = input.voiceConfig.voice.profileOverrides[profileKey] ?? {};
+  const profileVoice = nonEmptyString(input.profileVoice) ?? 'alloy';
 
   const mode = env.VOICE_MODE
     ? normalizeRuntimeMode(env.VOICE_MODE)
@@ -497,11 +510,14 @@ export function resolveRuntimeConfigFromDocuments(input: {
   const v2vOverride = override.voiceToVoice ?? {};
   const configuredProvider =
     override.provider ?? v2vOverride.provider ?? input.voiceConfig.voice.voiceToVoice.provider;
-  const provider = env.VOICE_PROVIDER
-    ? normalizeRuntimeProvider(env.VOICE_PROVIDER)
-    : mode === 'decomposed'
-      ? 'decomposed'
-      : configuredProvider;
+  const provider =
+    mode === 'realtime-text-tts'
+      ? 'openai-realtime'
+      : env.VOICE_PROVIDER
+        ? normalizeRuntimeProvider(env.VOICE_PROVIDER)
+        : mode === 'decomposed'
+          ? 'decomposed'
+        : configuredProvider;
 
   // Deep-merge decomposed overrides: profile override > global config
   const dOverride = override.decomposed ?? {};
@@ -526,20 +542,38 @@ export function resolveRuntimeConfigFromDocuments(input: {
     },
   };
 
+  const overrideVoice = nonEmptyString(override.voice);
+  const overrideV2vVoice = nonEmptyString(v2vOverride.voice);
+  const configuredV2vVoice = nonEmptyString(input.voiceConfig.voice.voiceToVoice.voice);
+  const configuredGeminiVoice = nonEmptyString(input.voiceConfig.voice.voiceToVoice.geminiVoice);
+  const configuredDecomposedTtsVoice = nonEmptyString(mergedDecomposed.tts.voice);
+
   let voice: string;
   if (mode === 'decomposed') {
     voice =
-      override.voice ??
-      mergedDecomposed.tts.voice ??
-      input.profileVoice;
+      overrideVoice ??
+      configuredDecomposedTtsVoice ??
+      profileVoice;
+  } else if (mode === 'realtime-text-tts') {
+    // OpenAI Realtime still validates this voice even when output audio is
+    // delegated to external TTS.
+    voice =
+      overrideVoice ??
+      overrideV2vVoice ??
+      configuredV2vVoice ??
+      profileVoice;
   } else if (provider === 'gemini-live') {
-    voice = override.voice ?? v2vOverride.voice ?? input.voiceConfig.voice.voiceToVoice.geminiVoice;
+    voice =
+      overrideVoice ??
+      overrideV2vVoice ??
+      configuredGeminiVoice ??
+      profileVoice;
   } else {
     voice =
-      override.voice ??
-      v2vOverride.voice ??
-      input.voiceConfig.voice.voiceToVoice.voice ??
-      input.profileVoice;
+      overrideVoice ??
+      overrideV2vVoice ??
+      configuredV2vVoice ??
+      profileVoice;
   }
 
   const voiceToVoiceAuthProfile = input.voiceConfig.voice.voiceToVoice.authProfile;
@@ -554,6 +588,8 @@ export function resolveRuntimeConfigFromDocuments(input: {
   const decomposedTtsUsesCartesia = decomposedTtsProvider === 'cartesia';
   const decomposedTtsUsesFish = decomposedTtsProvider === 'fish';
   const decomposedTtsUsesRime = decomposedTtsProvider === 'rime';
+  const modeUsesDecomposedTts =
+    mode === 'decomposed' || mode === 'realtime-text-tts';
 
   const openaiApiKey = resolveRuntimeApiKey('openai', {
     authProfileId:
@@ -592,7 +628,7 @@ export function resolveRuntimeConfigFromDocuments(input: {
           ? voiceToVoiceAuthProfile
           : mode === 'decomposed' && decomposedLlmProvider === 'google'
             ? decomposedLlmAuthProfile
-            : mode === 'decomposed' && decomposedTtsUsesGoogle
+            : modeUsesDecomposedTts && decomposedTtsUsesGoogle
               ? decomposedTtsAuthProfile
               : undefined,
       authProfiles: input.authProfiles,
@@ -604,7 +640,7 @@ export function resolveRuntimeConfigFromDocuments(input: {
           ? voiceToVoiceAuthProfile
           : mode === 'decomposed' && decomposedLlmProvider === 'google'
             ? decomposedLlmAuthProfile
-            : mode === 'decomposed' && decomposedTtsUsesGoogle
+            : modeUsesDecomposedTts && decomposedTtsUsesGoogle
               ? decomposedTtsAuthProfile
               : undefined,
       authProfiles: input.authProfiles,
@@ -619,7 +655,7 @@ export function resolveRuntimeConfigFromDocuments(input: {
   });
   const cartesiaApiKey = resolveRuntimeApiKey('cartesia', {
     authProfileId:
-      mode === 'decomposed' && decomposedTtsUsesCartesia
+      modeUsesDecomposedTts && decomposedTtsUsesCartesia
         ? decomposedTtsAuthProfile
         : undefined,
     authProfiles: input.authProfiles,
@@ -627,7 +663,7 @@ export function resolveRuntimeConfigFromDocuments(input: {
   });
   const fishAudioApiKey = resolveRuntimeApiKey('fish', {
     authProfileId:
-      mode === 'decomposed' && decomposedTtsUsesFish
+      modeUsesDecomposedTts && decomposedTtsUsesFish
         ? decomposedTtsAuthProfile
         : undefined,
     authProfiles: input.authProfiles,
@@ -635,7 +671,7 @@ export function resolveRuntimeConfigFromDocuments(input: {
   });
   const rimeApiKey = resolveRuntimeApiKey('rime', {
     authProfileId:
-      mode === 'decomposed' && decomposedTtsUsesRime
+      modeUsesDecomposedTts && decomposedTtsUsesRime
         ? decomposedTtsAuthProfile
         : undefined,
     authProfiles: input.authProfiles,
@@ -716,7 +752,13 @@ export function resolveRuntimeConfigFromDocuments(input: {
       llmShortReprompt: input.voiceConfig.voice.turn.llmCompletion.shortReprompt,
       llmLongReprompt: input.voiceConfig.voice.turn.llmCompletion.longReprompt,
     },
-    providerSettings: input.voiceConfig.voice.providerSettings?.[provider] ?? {},
+    providerSettings:
+      mode === 'realtime-text-tts'
+        ? {
+            ...(input.voiceConfig.voice.providerSettings?.decomposed ?? {}),
+            ...(input.voiceConfig.voice.providerSettings?.[provider] ?? {}),
+          }
+        : input.voiceConfig.voice.providerSettings?.[provider] ?? {},
   };
 }
 
@@ -798,6 +840,29 @@ function providerConfigForRuntime(input: RuntimeSessionInputBuildInput): unknown
       inputSampleRate: 24000,
       outputSampleRate: 24000,
       autoToolExecution: true,
+    };
+  }
+
+  if (
+    input.provider === 'openai-realtime' &&
+    input.mode === 'realtime-text-tts'
+  ) {
+    return {
+      ...ps,
+      apiKey: input.auth.openaiApiKey,
+      language: input.language,
+      turnDetection: (ps.turnDetection as string) ?? 'semantic_vad',
+      outputAudioMode: 'text-tts',
+      openaiApiKey: input.auth.openaiApiKey,
+      deepgramApiKey: input.auth.deepgramApiKey,
+      googleApiKey: input.auth.googleApiKey,
+      cartesiaApiKey: input.auth.cartesiaApiKey,
+      fishAudioApiKey: input.auth.fishAudioApiKey,
+      rimeApiKey: input.auth.rimeApiKey,
+      ttsProvider: input.decomposedTtsProvider,
+      ttsModel: input.decomposedTtsModel,
+      ttsVoice: input.decomposedTtsVoice,
+      voiceRef: input.decomposedTtsVoiceRef,
     };
   }
 

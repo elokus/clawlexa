@@ -4,10 +4,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { navigate } from '../../hooks/useRouter';
 import { useUnifiedSessionsStore, usePromptsState } from '../../stores';
 import { SettingsSection, SettingsField } from './SettingsSection';
 import { AgentVoicePipeline } from './AgentVoicePipeline';
-import type { PromptInfo } from '../../lib/prompts-api';
+import {
+  fetchPromptSettingsCatalog,
+  type PromptInfo,
+  type PromptSettingsCatalog,
+} from '../../lib/prompts-api';
 
 function AgentCard({
   agent,
@@ -57,11 +62,18 @@ function AgentCard({
   );
 }
 
-function AgentDetailEditor({ agent }: { agent: PromptInfo }) {
+function AgentDetailEditor({
+  agent,
+  catalog,
+}: {
+  agent: PromptInfo;
+  catalog: PromptSettingsCatalog | null;
+}) {
   const selectVersion = useUnifiedSessionsStore((s) => s.selectVersion);
   const setPromptContent = useUnifiedSessionsStore((s) => s.setPromptContent);
   const savePromptVersion = useUnifiedSessionsStore((s) => s.savePromptVersion);
   const setPromptActiveVersion = useUnifiedSessionsStore((s) => s.setPromptActiveVersion);
+  const updatePromptName = useUnifiedSessionsStore((s) => s.updatePromptName);
   const updatePromptMetadata = useUnifiedSessionsStore((s) => s.updatePromptMetadata);
 
   const {
@@ -72,73 +84,224 @@ function AgentDetailEditor({ agent }: { agent: PromptInfo }) {
     promptDirty,
   } = usePromptsState();
 
+  const [nameDraft, setNameDraft] = useState(agent.name);
+  const [toolToAdd, setToolToAdd] = useState('');
+
+  useEffect(() => {
+    setNameDraft(agent.name);
+  }, [agent.id, agent.name]);
+
   const isActiveVersion = agent.activeVersion === selectedVersion;
+  const isVoice = agent.type === 'voice';
 
   const handleMetadataChange = useCallback(
     (key: string, value: string | string[]) => {
       const updated = { ...agent.metadata, [key]: value };
-      updatePromptMetadata(agent.id, updated);
+      void updatePromptMetadata(agent.id, updated);
     },
     [agent.id, agent.metadata, updatePromptMetadata]
   );
 
-  const isVoice = agent.type === 'voice';
+  const fallbackWakeWords = ['hey_jarvis', 'computer', 'hey_openclaw'];
+  const wakeWordOptions = useMemo(() => {
+    const values = new Set<string>(fallbackWakeWords);
+    (catalog?.wakeWords ?? []).forEach((wakeWord) => {
+      if (wakeWord) values.add(wakeWord);
+    });
+    if (agent.metadata?.wakeWord) {
+      values.add(agent.metadata.wakeWord);
+    }
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [catalog?.wakeWords, agent.metadata?.wakeWord]);
+
+  const selectedTools = agent.metadata?.tools ?? [];
+  const toolCatalog = useMemo(() => {
+    const merged = new Map<string, { name: string; label: string; source: 'core' | 'manifest'; selectable: boolean }>();
+    (catalog?.tools ?? []).forEach((tool) => {
+      merged.set(tool.name, tool);
+    });
+
+    selectedTools.forEach((toolName) => {
+      if (!merged.has(toolName)) {
+        merged.set(toolName, {
+          name: toolName,
+          label: toolName,
+          source: 'manifest',
+          selectable: false,
+        });
+      }
+    });
+
+    return Array.from(merged.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [catalog?.tools, selectedTools]);
+
+  const selectableTools = useMemo(
+    () => toolCatalog.filter((tool) => tool.selectable),
+    [toolCatalog]
+  );
+
+  const addableTools = useMemo(
+    () => selectableTools.filter((tool) => !selectedTools.includes(tool.name)),
+    [selectableTools, selectedTools]
+  );
+
+  useEffect(() => {
+    if (addableTools.length === 0) {
+      setToolToAdd('');
+      return;
+    }
+    if (!addableTools.some((tool) => tool.name === toolToAdd)) {
+      setToolToAdd(addableTools[0]!.name);
+    }
+  }, [addableTools, toolToAdd]);
+
+  const toolLabelByName = useMemo(
+    () => new Map(toolCatalog.map((tool) => [tool.name, tool.label])),
+    [toolCatalog]
+  );
+
+  const discoveredManifestTools = useMemo(
+    () => toolCatalog.filter((tool) => tool.source === 'manifest'),
+    [toolCatalog]
+  );
+
+  const commitName = useCallback(async () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameDraft(agent.name);
+      return;
+    }
+    if (trimmed === agent.name) {
+      return;
+    }
+    await updatePromptName(agent.id, trimmed);
+  }, [agent.id, agent.name, nameDraft, updatePromptName]);
+
+  const addTool = useCallback(() => {
+    if (!toolToAdd) return;
+    if (selectedTools.includes(toolToAdd)) return;
+    handleMetadataChange('tools', [...selectedTools, toolToAdd]);
+  }, [handleMetadataChange, selectedTools, toolToAdd]);
+
+  const removeTool = useCallback(
+    (toolName: string) => {
+      handleMetadataChange('tools', selectedTools.filter((tool) => tool !== toolName));
+    },
+    [handleMetadataChange, selectedTools]
+  );
 
   return (
     <div className="agent-detail">
       {/* Agent Properties */}
       <SettingsSection
         title="Profile"
-        description={`Configure ${agent.name} agent properties.`}
-        columns={3}
+        description={`Configure ${agent.name} profile metadata.`}
+        columns={2}
       >
-        <SettingsField label="Name">
-          <input type="text" value={agent.name} readOnly className="readonly" />
+        <SettingsField label="Name" hint="Display name used in the UI.">
+          <input
+            type="text"
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={() => {
+              void commitName();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.currentTarget.blur();
+              }
+            }}
+          />
         </SettingsField>
-        <SettingsField label="Type">
-          <input type="text" value={agent.type === 'voice' ? 'Voice Agent' : 'Subagent'} readOnly className="readonly" />
-        </SettingsField>
+
         {isVoice && (
-          <SettingsField label="Wake Word" hint="Porcupine wake word trigger">
-            <input
-              type="text"
+          <SettingsField label="Wake Word" hint="Activation keyword used by the selected profile.">
+            <select
               value={agent.metadata?.wakeWord ?? ''}
               onChange={(e) => handleMetadataChange('wakeWord', e.target.value)}
-            />
+            >
+              {wakeWordOptions.map((wakeWord) => (
+                <option key={wakeWord} value={wakeWord}>
+                  {wakeWord}
+                </option>
+              ))}
+            </select>
           </SettingsField>
         )}
-        {isVoice && (
-          <SettingsField label="Voice" hint="Provider voice ID (e.g. echo, ash, Puck)">
-            <input
-              type="text"
-              value={agent.metadata?.voice ?? ''}
-              onChange={(e) => handleMetadataChange('voice', e.target.value)}
-            />
-          </SettingsField>
+      </SettingsSection>
+
+      {/* Tools */}
+      <SettingsSection
+        title="Tools"
+        description="Select enabled tools for this profile. Add tools from catalog and remove them using chips."
+        columns={1}
+      >
+        <SettingsField label="Tool Catalog" hint="Only core tools are selectable right now.">
+          <div className="agent-tool-picker-row">
+            <select
+              value={toolToAdd}
+              onChange={(e) => setToolToAdd(e.target.value)}
+              disabled={addableTools.length === 0}
+            >
+              {addableTools.length === 0 ? (
+                <option value="">No more tools to add</option>
+              ) : (
+                addableTools.map((tool) => (
+                  <option key={tool.name} value={tool.name}>
+                    {tool.label}
+                  </option>
+                ))
+              )}
+            </select>
+            <button
+              type="button"
+              className="agent-tool-btn"
+              onClick={addTool}
+              disabled={!toolToAdd}
+            >
+              Add Tool
+            </button>
+          </div>
+        </SettingsField>
+
+        <SettingsField label="Enabled Tools" hint="Click × on a chip to remove a tool.">
+          {selectedTools.length > 0 ? (
+            <div className="agent-tool-chip-list">
+              {selectedTools.map((toolName) => (
+                <span key={toolName} className="agent-tool-chip">
+                  <span className="agent-tool-chip-label">{toolLabelByName.get(toolName) ?? toolName}</span>
+                  <button
+                    type="button"
+                    className="agent-tool-chip-remove"
+                    onClick={() => removeTool(toolName)}
+                    aria-label={`Remove ${toolName}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="agent-tool-empty">No tools enabled for this profile.</div>
+          )}
+        </SettingsField>
+
+        {discoveredManifestTools.length > 0 && (
+          <div className="agent-tool-discovery-note">
+            Discovered {discoveredManifestTools.length} manifest tool(s) from
+            <code> .voiceclaw/tools/*/manifest.json</code>. Runtime execution wiring is not enabled yet.
+          </div>
         )}
-        {!isVoice && agent.metadata?.model && (
-          <SettingsField label="Model" hint="LLM model for this subagent">
-            <input
-              type="text"
-              value={agent.metadata.model}
-              onChange={(e) => handleMetadataChange('model', e.target.value)}
-            />
-          </SettingsField>
-        )}
-        {agent.metadata?.tools && agent.metadata.tools.length > 0 && (
-          <SettingsField label="Tools" hint="Comma-separated tool names">
-            <input
-              type="text"
-              value={agent.metadata.tools.join(', ')}
-              onChange={(e) =>
-                handleMetadataChange(
-                  'tools',
-                  e.target.value.split(',').map((t) => t.trim()).filter(Boolean)
-                )
-              }
-            />
-          </SettingsField>
-        )}
+
+        <div className="agent-tool-actions">
+          <button
+            type="button"
+            className="agent-tool-generator-btn"
+            onClick={() => navigate('/settings/tool-generator')}
+          >
+            Open Tool Generator
+          </button>
+        </div>
       </SettingsSection>
 
       {/* Prompt Version Control */}
@@ -208,10 +371,31 @@ export function SettingsAgents() {
   const { prompts, selectedPromptId, promptsLoading, promptsError } = usePromptsState();
 
   const [filter, setFilter] = useState<'all' | 'voice' | 'subagent'>('all');
+  const [settingsCatalog, setSettingsCatalog] = useState<PromptSettingsCatalog | null>(null);
 
   useEffect(() => {
     loadPrompts();
   }, [loadPrompts]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchPromptSettingsCatalog()
+      .then((catalog) => {
+        if (!cancelled) {
+          setSettingsCatalog(catalog);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSettingsCatalog(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredPrompts = useMemo(() => {
     if (filter === 'all') return prompts;
@@ -225,7 +409,7 @@ export function SettingsAgents() {
 
   const handleSelect = useCallback(
     (id: string) => {
-      selectPrompt(id);
+      void selectPrompt(id);
     },
     [selectPrompt]
   );
@@ -390,6 +574,111 @@ export function SettingsAgents() {
           margin-top: 8px;
         }
 
+        .agent-tool-picker-row {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 8px;
+        }
+
+        .agent-tool-btn,
+        .agent-tool-generator-btn {
+          min-height: auto;
+          min-width: auto;
+          padding: 8px 12px;
+          border-radius: 6px;
+          border: 1px solid var(--border);
+          background: var(--card);
+          color: var(--foreground);
+          font-family: var(--font-sans);
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .agent-tool-btn:hover:not(:disabled),
+        .agent-tool-generator-btn:hover {
+          background: var(--accent);
+        }
+
+        .agent-tool-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .agent-tool-chip-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .agent-tool-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 999px;
+          background: color-mix(in oklch, var(--color-blue) 12%, var(--muted));
+          color: var(--foreground);
+          border: 1px solid color-mix(in oklch, var(--color-blue) 30%, transparent);
+          padding: 4px 8px;
+        }
+
+        .agent-tool-chip-label {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          line-height: 1;
+        }
+
+        .agent-tool-chip-remove {
+          min-height: auto;
+          min-width: auto;
+          border: none;
+          background: transparent;
+          color: var(--muted-foreground);
+          font-size: 14px;
+          line-height: 1;
+          padding: 0;
+          cursor: pointer;
+        }
+
+        .agent-tool-chip-remove:hover {
+          color: var(--foreground);
+        }
+
+        .agent-tool-empty {
+          font-family: var(--font-sans);
+          font-size: 12px;
+          color: var(--muted-foreground);
+        }
+
+        .agent-tool-discovery-note {
+          font-family: var(--font-sans);
+          font-size: 11px;
+          line-height: 1.5;
+          color: var(--muted-foreground);
+          background: color-mix(in oklch, var(--muted) 50%, transparent);
+          border: 1px dashed var(--border);
+          border-radius: 6px;
+          padding: 10px 12px;
+        }
+
+        .agent-tool-discovery-note code {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          color: var(--foreground);
+        }
+
+        .agent-tool-actions {
+          display: flex;
+          justify-content: flex-start;
+        }
+
+        .agent-tool-generator-btn {
+          background: var(--color-blue-muted);
+          color: var(--color-blue);
+          border-color: color-mix(in oklch, var(--color-blue) 30%, transparent);
+        }
+
         .agent-prompt-toolbar {
           display: flex;
           align-items: center;
@@ -498,11 +787,6 @@ export function SettingsAgents() {
           box-shadow: 0 0 0 1px var(--color-blue);
         }
 
-        .readonly {
-          opacity: 0.7;
-          cursor: default;
-        }
-
         .agent-empty {
           text-align: center;
           padding: 40px 20px;
@@ -514,6 +798,16 @@ export function SettingsAgents() {
           font-size: 32px;
           opacity: 0.3;
           margin-bottom: 12px;
+        }
+
+        @media (max-width: 700px) {
+          .agent-tool-picker-row {
+            grid-template-columns: 1fr;
+          }
+
+          .agent-prompt-actions {
+            margin-left: 0;
+          }
         }
       `}</style>
 
@@ -555,7 +849,7 @@ export function SettingsAgents() {
       )}
 
       {/* Selected agent detail */}
-      {selectedAgent && <AgentDetailEditor agent={selectedAgent} />}
+      {selectedAgent && <AgentDetailEditor agent={selectedAgent} catalog={settingsCatalog} />}
     </>
   );
 }

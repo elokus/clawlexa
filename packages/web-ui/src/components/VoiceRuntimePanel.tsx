@@ -264,21 +264,30 @@ export function VoiceRuntimePanel({
   }, [open]);
 
   const manifest = catalog?.manifest;
-  const modeOptions = manifest?.modes ?? ['voice-to-voice', 'decomposed'];
+  const modeOptions = manifest?.modes ?? ['voice-to-voice', 'realtime-text-tts', 'decomposed'];
   const realtimeProviderPath = manifest?.realtimeProviderPath ?? 'voice.voiceToVoice.provider';
   const realtimeProviders = manifest?.realtimeProviders ?? [];
 
+  const isDecomposed = config?.voice.mode === 'decomposed';
+  const isRealtimeTextTts = config?.voice.mode === 'realtime-text-tts';
+  const isPipelineMode = isDecomposed || isRealtimeTextTts;
   const selectedRealtimeProviderId = config
-    ? asString(getPathValue(config, realtimeProviderPath), config.voice.voiceToVoice.provider)
+    ? isRealtimeTextTts
+      ? 'openai-realtime'
+      : asString(getPathValue(config, realtimeProviderPath), config.voice.voiceToVoice.provider)
     : '';
   const selectedRealtimeProvider =
     realtimeProviders.find((provider) => provider.id === selectedRealtimeProviderId) ??
     realtimeProviders[0];
 
-  const isDecomposed = config?.voice.mode === 'decomposed';
   const activeProviderKey = isDecomposed
     ? 'decomposed'
     : selectedRealtimeProvider?.id ?? selectedRealtimeProviderId;
+  const visibleStages = isDecomposed
+    ? manifest?.decomposedStages ?? []
+    : isRealtimeTextTts
+      ? (manifest?.decomposedStages ?? []).filter((stage) => stage.id === 'tts')
+      : [];
 
   const providerSettings = config?.voice.providerSettings?.[activeProviderKey] ?? {};
   const activeSchema = catalog?.providerSchemas?.[activeProviderKey] as ProviderConfigSchema | undefined;
@@ -366,13 +375,14 @@ export function VoiceRuntimePanel({
         : error || 'Voice runtime configuration unavailable.';
     }
 
-    if (isDecomposed) {
-      const parts = (manifest?.decomposedStages ?? []).map((stage) => {
+    if (isPipelineMode) {
+      const parts = visibleStages.map((stage) => {
         const provider = asString(getPathValue(config, stage.providerPath), 'n/a');
         const model = asString(getPathValue(config, stage.modelPath), 'n/a');
         return `${stage.id.toUpperCase()} ${provider}:${model}`;
       });
-      return `Decomposed • ${parts.join(' -> ')}`;
+      const label = isDecomposed ? 'Decomposed' : 'Realtime Text->TTS';
+      return `${label} • ${parts.join(' -> ')}`;
     }
 
     if (!selectedRealtimeProvider) {
@@ -392,10 +402,11 @@ export function VoiceRuntimePanel({
     config,
     error,
     isDecomposed,
+    isPipelineMode,
     loading,
-    manifest?.decomposedStages,
     selectedRealtimeProvider,
     selectedRealtimeProviderId,
+    visibleStages,
   ]);
 
   const overridesText = config
@@ -506,7 +517,7 @@ export function VoiceRuntimePanel({
       <ConfigDialog
         open={open}
         title="Voice Runtime Configuration"
-        subtitle="Switch between realtime voice-to-voice and decomposed STT -> LLM -> TTS pipelines with provider-native model lists."
+        subtitle="Switch between voice-to-voice, realtime-text-tts, and decomposed pipelines with provider-native model lists."
         statusText={statusMessage}
         statusTone={error || catalogError ? 'error' : 'neutral'}
         saving={saving}
@@ -523,7 +534,15 @@ export function VoiceRuntimePanel({
             <select
               value={config.voice.mode}
               onChange={(event) => {
-                updatePath('voice.mode', event.target.value);
+                const nextMode = event.target.value;
+                if (nextMode === 'realtime-text-tts') {
+                  updateMany([
+                    { path: 'voice.mode', value: nextMode },
+                    { path: realtimeProviderPath, value: 'openai-realtime' },
+                  ]);
+                  return;
+                }
+                updatePath('voice.mode', nextMode);
               }}
             >
               {modeOptions.map((mode) => (
@@ -534,7 +553,7 @@ export function VoiceRuntimePanel({
             </select>
           </ConfigField>
 
-          {!isDecomposed ? (
+          {!isPipelineMode ? (
             <ConfigField label="Provider">
               <select
                 value={selectedRealtimeProvider?.id ?? selectedRealtimeProviderId}
@@ -551,7 +570,14 @@ export function VoiceRuntimePanel({
             </ConfigField>
           ) : (
             <ConfigField label="Pipeline">
-              <input value="stt -> llm -> tts" readOnly />
+              <input
+                value={
+                  isDecomposed
+                    ? 'stt -> llm -> tts'
+                    : 'realtime(stt+vad+llm) -> tts'
+                }
+                readOnly
+              />
             </ConfigField>
           )}
 
@@ -589,7 +615,7 @@ export function VoiceRuntimePanel({
           </ConfigSection>
         )}
 
-        {isDecomposed && (manifest?.decomposedStages ?? []).map((stage) => {
+        {visibleStages.map((stage) => {
           const selectedProviderId = asString(getPathValue(config, stage.providerPath));
           const selectedProvider =
             stage.providers.find((provider) => provider.id === selectedProviderId) ??

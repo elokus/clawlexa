@@ -15,6 +15,11 @@ interface UseSpokenHighlightOptions {
   turnKey?: string | number | null;
   /** Optional cumulative word cue endpoints in milliseconds */
   wordCueEndMs?: number[];
+  /**
+   * Server-reported spoken word count for this turn.
+   * Used as a floor/completion boundary when cue timelines are shorter.
+   */
+  spokenWords?: number;
   /** Fallback pace in ms/word when no cue timeline is provided */
   fallbackMsPerWord?: number;
 }
@@ -32,6 +37,7 @@ export function useSpokenHighlight({
   audioController,
   turnKey = null,
   wordCueEndMs,
+  spokenWords,
   fallbackMsPerWord = DEFAULT_MS_PER_WORD,
 }: UseSpokenHighlightOptions): number {
   const [highlightedCount, setHighlightedCount] = useState(0);
@@ -79,6 +85,16 @@ export function useSpokenHighlight({
 
     const cueTimeline =
       Array.isArray(wordCueEndMs) && wordCueEndMs.length > 0 ? wordCueEndMs : undefined;
+    const cueWordCount = cueTimeline?.length ?? 0;
+    const clampedSpokenWords = clamp(
+      Number.isFinite(spokenWords) ? (spokenWords as number) : 0,
+      0,
+      totalWords
+    );
+    const hasCueOrServerBoundary = cueWordCount > 0 || clampedSpokenWords > 0;
+    const completionWordCount = hasCueOrServerBoundary
+      ? clamp(Math.max(cueWordCount, clampedSpokenWords), 0, totalWords)
+      : totalWords;
     const msPerWord = normalizePositive(fallbackMsPerWord, DEFAULT_MS_PER_WORD);
 
     const tick = () => {
@@ -106,12 +122,16 @@ export function useSpokenHighlight({
         ? countCuesForPlayback(cueTimeline, playbackMs)
         : Math.floor(playbackMs / msPerWord);
 
+      // Keep highlight in sync with server-side spoken progress when provided.
+      // This covers cases where cue timelines are temporarily incomplete.
+      nextWordCount = Math.max(nextWordCount, clampedSpokenWords);
+
       if (isFinalized && !hasPendingAudio) {
         // Audio fully drained — force-complete regardless of cue mode.
-        // The last cue's endMs may exceed the real playback clock by a few ms,
-        // but once the AudioContext has nothing left to play, all words should
-        // be marked spoken.
-        nextWordCount = totalWords;
+        // When runtime cues are available, they define the true spoken boundary.
+        // This avoids jumping to the full generated-text length when spoken-final
+        // is shorter (for example after interruption).
+        nextWordCount = completionWordCount;
       }
 
       nextWordCount = clamp(nextWordCount, 0, totalWords);
@@ -139,7 +159,7 @@ export function useSpokenHighlight({
         rafRef.current = 0;
       }
     };
-  }, [totalWords, isFinalized, isSpeaking, audioController, turnKey, wordCueEndMs, fallbackMsPerWord]);
+  }, [totalWords, isFinalized, isSpeaking, audioController, turnKey, wordCueEndMs, spokenWords, fallbackMsPerWord]);
 
   return highlightedCount;
 }

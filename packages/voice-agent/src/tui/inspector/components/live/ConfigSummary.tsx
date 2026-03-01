@@ -16,7 +16,7 @@ export function ConfigSummary() {
 
   const parts = [`model=${config.model}`, `voice=${config.voice}`, `lang=${config.language}`];
 
-  if (config.mode === 'decomposed') {
+  if (config.mode === 'decomposed' || config.mode === 'realtime-text-tts') {
     if (config.sttProvider) parts.push(`stt=${config.sttProvider}:${config.sttModel}`);
     if (config.llmProvider) parts.push(`llm=${config.llmProvider}:${config.llmModel}`);
     if (config.ttsProvider) parts.push(`tts=${config.ttsProvider}:${config.ttsModel}`);

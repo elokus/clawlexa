@@ -24,6 +24,9 @@ export interface TranscriptItem extends BaseTimelineItem {
   role: MessageRole;
   content: string;
   ttfbMs?: number;
+  audioRoundtripMs?: number;
+  sttMs?: number;
+  llmMs?: number;
   generatedContent?: string;
   spokenContent?: string;
   spokenChars?: number;

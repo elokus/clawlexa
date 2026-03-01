@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useVoiceState, useUnifiedSessionsStore } from '../../stores';
-import type { AgentState } from '../../types';
+import { useConfigStore } from '../../stores/config-store';
+import { useAudioAnalysis } from '../../hooks/useAudioAnalysis';
+import { Ferrofluid, type OrbStyle } from '../3d/Ferrofluid';
 
 const stateLabels: Record<string, string> = {
   idle: 'Ready',
@@ -9,177 +11,215 @@ const stateLabels: Record<string, string> = {
   speaking: 'Speaking',
 };
 
-const stateColors: Record<AgentState, string> = {
-  idle: 'var(--muted-foreground)',
-  listening: 'var(--color-blue)',
-  thinking: 'var(--color-purple)',
-  speaking: 'var(--color-green)',
-};
+const STYLE_OPTIONS: { value: OrbStyle; label: string }[] = [
+  { value: 'matte', label: 'Matte' },
+  { value: 'frosted', label: 'Frosted Glass' },
+  { value: 'wireframe', label: 'Wireframe' },
+  { value: 'ferrofluid', label: 'Metallic' },
+];
 
-/**
- * Generate a smooth closed blob path from control points.
- * Uses cubic bezier curves for organic feel.
- */
-function blobPath(points: Array<{ x: number; y: number }>, tension = 0.3): string {
-  const n = points.length;
-  if (n < 3) return '';
+const STORAGE_KEY = 'voiceclaw:orb-style';
 
-  const parts: string[] = [`M ${points[0]!.x} ${points[0]!.y}`];
-
-  for (let i = 0; i < n; i++) {
-    const p0 = points[(i - 1 + n) % n]!;
-    const p1 = points[i]!;
-    const p2 = points[(i + 1) % n]!;
-    const p3 = points[(i + 2) % n]!;
-
-    const cp1x = p1.x + (p2.x - p0.x) * tension;
-    const cp1y = p1.y + (p2.y - p0.y) * tension;
-    const cp2x = p2.x - (p3.x - p1.x) * tension;
-    const cp2y = p2.y - (p3.y - p1.y) * tension;
-
-    parts.push(`C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`);
-  }
-
-  parts.push('Z');
-  return parts.join(' ');
+function loadStyle(): OrbStyle {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored && STYLE_OPTIONS.some((o) => o.value === stored)) return stored as OrbStyle;
+  } catch { /* noop */ }
+  return 'matte';
 }
 
-function VoiceBlob({ state }: { state: AgentState }) {
-  const color = stateColors[state];
-  const isActive = state !== 'idle';
-  const isSpeaking = state === 'speaking';
-  const isListening = state === 'listening';
-  const isThinking = state === 'thinking';
+// ─── Helpers ─────────────────────────────────────────────────────
 
-  // Base blob radius and number of control points
-  const cx = 75;
-  const cy = 75;
-  const baseR = 40;
-  const pointCount = 8;
+/** Strip provider/org prefix and size/quant suffixes for compact display */
+function shortModel(full: string): string {
+  const name = full.split('/').pop() || full;
+  if (name.length <= 18) return name;
+  // Trim quantisation / size suffixes: "-12Hz-0.6B-Base-4bit" etc.
+  const m = name.match(/^([A-Za-z0-9]+-[A-Za-z0-9]+)/);
+  return m ? m[1] : name.slice(0, 18);
+}
 
-  // Generate multiple blob paths for animation layers
-  const blobs = useMemo(() => {
-    const configs = [
-      { offset: 0, rVariance: 6, name: 'a' },
-      { offset: Math.PI / pointCount, rVariance: 8, name: 'b' },
-    ];
+const TOOLTIP_CLS =
+  'absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 rounded-md border border-border bg-popover shadow-lg text-[9px] font-mono leading-relaxed opacity-0 group-hover/tip:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50';
 
-    return configs.map(({ offset, rVariance, name }) => {
-      const points = Array.from({ length: pointCount }, (_, i) => {
-        const angle = (i / pointCount) * Math.PI * 2 + offset;
-        const r = baseR + (i % 2 === 0 ? rVariance : -rVariance * 0.5);
-        return {
-          x: cx + Math.cos(angle) * r,
-          y: cy + Math.sin(angle) * r,
-        };
-      });
-      return { name, d: blobPath(points) };
-    });
-  }, []);
+// ─── Model Info with hover tooltip ───────────────────────────────
 
-  // Animation speed and scale per state
-  const animDuration = isSpeaking ? '1.2s' : isListening ? '2.5s' : isThinking ? '1.8s' : '6s';
-  const animDuration2 = isSpeaking ? '0.9s' : isListening ? '2s' : isThinking ? '1.5s' : '5s';
+const DEFAULT_PROFILE = 'jarvis';
 
+function ModelInfo({ voiceProfile }: { voiceProfile: string | null }) {
+  const profile = voiceProfile || DEFAULT_PROFILE;
+  const effectiveConfig = useConfigStore(
+    (s) => s.effectiveConfigs[profile] ?? null,
+  );
+  const loadEffectiveConfig = useConfigStore((s) => s.loadEffectiveConfig);
+
+  // Stable scalar selector for TTS voice — avoids new-object-per-render loop
+  const ttsVoice = useConfigStore((s) => {
+    const cfg = s.config;
+    if (!cfg) return '';
+    const key = profile.toLowerCase();
+    const override = cfg.voice.profileOverrides[key];
+    const d = override?.decomposed;
+    return d?.tts?.voiceRef ?? d?.tts?.voice
+      ?? cfg.voice.decomposed.tts.voiceRef ?? cfg.voice.decomposed.tts.voice
+      ?? '';
+  });
+
+  // Load effective config once per profile (not on every render)
+  const needsLoad = useRef(profile);
+  useEffect(() => {
+    if (needsLoad.current !== profile || !effectiveConfig) {
+      needsLoad.current = profile;
+      loadEffectiveConfig(profile);
+    }
+  }, [profile, effectiveConfig, loadEffectiveConfig]);
+
+  // Load full config once for TTS voice info
+  const loadConfig = useConfigStore((s) => s.loadConfig);
+  const configLoaded = useRef(false);
+  useEffect(() => {
+    if (!configLoaded.current) {
+      configLoaded.current = true;
+      loadConfig();
+    }
+  }, [loadConfig]);
+
+  if (!effectiveConfig) {
+    return <span className="text-muted-foreground/25">...</span>;
+  }
+
+  const { mode, model, voice, decomposed } = effectiveConfig;
+
+  // ── Decomposed: ASR · LLM · TTS ──
+  if (mode === 'decomposed') {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <span>ASR · LLM · TTS</span>
+        <span className="relative group/tip">
+          <InfoIcon />
+          <div className={TOOLTIP_CLS}>
+            <Row label="ASR" value={decomposed.stt} />
+            <Row label="LLM" value={decomposed.llm} />
+            <Row label="TTS" value={decomposed.tts} />
+            {(ttsVoice || voice) && <Sep />}
+            {ttsVoice && <Row label="Voice" value={ttsVoice} />}
+            {voice && !ttsVoice && <Row label="Voice" value={voice} />}
+          </div>
+        </span>
+      </span>
+    );
+  }
+
+  // ── Realtime-text-tts: realtime model + external TTS ──
+  if (mode === 'realtime-text-tts') {
+    const ttsShort = shortModel(decomposed.tts);
+    return (
+      <span className="inline-flex items-center gap-1">
+        <span>{model} · {ttsShort}</span>
+        <span className="relative group/tip">
+          <InfoIcon />
+          <div className={TOOLTIP_CLS}>
+            <Row label="Realtime" value={model} />
+            <Row label="TTS" value={decomposed.tts} />
+            {(ttsVoice || voice) && <Sep />}
+            {voice && <Row label="Voice" value={voice} />}
+            {ttsVoice && <Row label="TTS Voice" value={ttsVoice} />}
+          </div>
+        </span>
+      </span>
+    );
+  }
+
+  // ── Voice-to-voice: single model ──
   return (
-    <div className="relative w-[150px] h-[150px] flex items-center justify-center">
-      <svg viewBox="0 0 150 150" className="w-full h-full" aria-hidden="true">
-        <defs>
-          <radialGradient id="blob-glow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={color} stopOpacity={isActive ? 0.25 : 0.06} />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </radialGradient>
-        </defs>
+    <span className="inline-flex items-center gap-1">
+      <span>{model}</span>
+      {voice && (
+        <span className="relative group/tip">
+          <InfoIcon />
+          <div className={TOOLTIP_CLS}>
+            <Row label="Voice" value={voice} />
+          </div>
+        </span>
+      )}
+    </span>
+  );
+}
 
-        {/* Ambient glow */}
-        <circle cx={cx} cy={cy} r="65" fill="url(#blob-glow)" />
-
-        {/* Blob layer 1 — main shape */}
-        <path
-          d={blobs[0]!.d}
-          fill={color}
-          fillOpacity={isActive ? 0.15 : 0.05}
-          stroke={color}
-          strokeWidth={isActive ? 1.5 : 0.8}
-          strokeOpacity={isActive ? 0.6 : 0.15}
-          style={{
-            transformOrigin: `${cx}px ${cy}px`,
-            animation: `blob-morph-1 ${animDuration} ease-in-out infinite, blob-rotate-1 ${isSpeaking ? '3s' : '12s'} linear infinite`,
-          }}
-        />
-
-        {/* Blob layer 2 — offset, counter-rotated */}
-        <path
-          d={blobs[1]!.d}
-          fill={color}
-          fillOpacity={isActive ? 0.08 : 0.02}
-          stroke={color}
-          strokeWidth={isActive ? 1 : 0.5}
-          strokeOpacity={isActive ? 0.3 : 0.08}
-          style={{
-            transformOrigin: `${cx}px ${cy}px`,
-            animation: `blob-morph-2 ${animDuration2} ease-in-out infinite, blob-rotate-2 ${isSpeaking ? '4s' : '16s'} linear infinite`,
-          }}
-        />
-
-        {/* Center dot */}
-        <circle
-          cx={cx}
-          cy={cy}
-          r={isActive ? 3 : 2}
-          fill={color}
-          fillOpacity={isActive ? 0.7 : 0.2}
-          style={{
-            transition: 'r 0.4s ease, fill-opacity 0.4s ease',
-            animation: isSpeaking ? 'blob-center-pulse 0.6s ease-in-out infinite' : undefined,
-          }}
-        />
-      </svg>
-
-      <style>{`
-        @keyframes blob-morph-1 {
-          0%, 100% { transform: scale(1) rotate(0deg); }
-          25% { transform: scale(${isSpeaking ? 1.15 : isActive ? 1.06 : 1.02}) rotate(2deg); }
-          50% { transform: scale(${isSpeaking ? 0.9 : isActive ? 0.97 : 0.99}) rotate(-1deg); }
-          75% { transform: scale(${isSpeaking ? 1.12 : isActive ? 1.04 : 1.01}) rotate(1deg); }
-        }
-        @keyframes blob-morph-2 {
-          0%, 100% { transform: scale(1) rotate(0deg); }
-          33% { transform: scale(${isSpeaking ? 1.18 : isActive ? 1.08 : 1.03}) rotate(-3deg); }
-          66% { transform: scale(${isSpeaking ? 0.88 : isActive ? 0.95 : 0.98}) rotate(2deg); }
-        }
-        @keyframes blob-rotate-1 {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes blob-rotate-2 {
-          from { transform: rotate(360deg); }
-          to { transform: rotate(0deg); }
-        }
-        @keyframes blob-center-pulse {
-          0%, 100% { r: 3; fill-opacity: 0.7; }
-          50% { r: 5; fill-opacity: 0.4; }
-        }
-      `}</style>
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="text-muted-foreground/50 mr-1.5">{label}</span>
+      <span className="text-foreground/70">{value}</span>
     </div>
   );
 }
 
+function Sep() {
+  return <div className="my-0.5 border-t border-border/40" />;
+}
+
+function InfoIcon() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="inline-block text-muted-foreground/25 hover:text-muted-foreground/50 transition-colors cursor-help"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </svg>
+  );
+}
+
+// ─── Main Component ──────────────────────────────────────────────
+
 export function VoiceOrbCard() {
   const { voiceState, voiceProfile } = useVoiceState();
   const sessionName = useUnifiedSessionsStore((s) => s.sessionTree?.name);
+  const { micBands, speakerBands } = useAudioAnalysis();
+
+  const [orbStyle, setOrbStyle] = useState<OrbStyle>(loadStyle);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close on click outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const handleStyleChange = (style: OrbStyle) => {
+    setOrbStyle(style);
+    try { localStorage.setItem(STORAGE_KEY, style); } catch { /* noop */ }
+    setMenuOpen(false);
+  };
 
   const profileName = voiceProfile || 'Voice Agent';
   const displayName = profileName.charAt(0).toUpperCase() + profileName.slice(1);
 
-  const modelInfo = voiceProfile === 'marvin'
-    ? 'gpt-4o-realtime'
-    : 'gpt-4o-mini-realtime';
-
   return (
-    <div className="voice-orb-card">
+    <div className="voice-orb-card relative">
       <div className="flex justify-center py-2">
-        <VoiceBlob state={voiceState} />
+        <Ferrofluid
+          state={voiceState}
+          micBands={micBands}
+          speakerBands={speakerBands}
+          style={orbStyle}
+        />
       </div>
       <div className="px-3 pb-3 text-center">
         <div className="text-[11px] font-medium text-foreground/70">
@@ -188,9 +228,43 @@ export function VoiceOrbCard() {
           <span className="text-muted-foreground/50 font-normal">{stateLabels[voiceState]}</span>
         </div>
         <div className="text-[9px] font-mono text-muted-foreground/40 mt-0.5">
-          {modelInfo}
+          <ModelInfo voiceProfile={voiceProfile} />
           {sessionName && <span className="text-muted-foreground/25"> · {sessionName}</span>}
         </div>
+      </div>
+
+      {/* Style selector */}
+      <div ref={menuRef} className="absolute bottom-2 right-2">
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="p-1 rounded-md text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-muted/50 transition-colors"
+          title="Change visualization style"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+
+        {menuOpen && (
+          <div className="absolute bottom-full right-0 mb-1 py-1 min-w-[130px] rounded-lg border border-border bg-popover shadow-lg z-50">
+            {STYLE_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => handleStyleChange(value)}
+                className={`w-full px-3 py-1.5 text-left text-[11px] hover:bg-accent transition-colors flex items-center gap-2 ${
+                  orbStyle === value ? 'text-foreground font-medium' : 'text-muted-foreground'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    orbStyle === value ? 'bg-primary' : 'bg-transparent'
+                  }`}
+                />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

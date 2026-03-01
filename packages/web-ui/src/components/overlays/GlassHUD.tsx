@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceTimeline, useVoiceState, useFocusedSession } from '../../stores';
-import { VoiceIndicator } from '../VoiceIndicator';
 import type { TranscriptItem, TimelineItem } from '../../types';
 
 interface GlassHUDProps {
@@ -93,9 +92,9 @@ export function GlassHUD({ forceShow = false }: GlassHUDProps) {
             )}
           </div>
 
-          {/* Voice indicator */}
+          {/* State dot */}
           <div className="absolute right-4 top-1/2 -translate-y-1/2">
-            <VoiceIndicator state={state} size="sm" />
+            <span className={`block w-2 h-2 rounded-full animate-pulse ${stateDotColor}`} />
           </div>
         </motion.div>
       )}

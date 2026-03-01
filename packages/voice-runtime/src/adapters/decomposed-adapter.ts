@@ -9,7 +9,6 @@ import type { SpeakLiveClient } from '@deepgram/sdk';
 import { createLlmRuntime } from '@voiceclaw/llm-runtime';
 import {
   isRealtimeStreamingTtsProvider,
-  synthesizeTtsSegment,
 } from './tts/index.js';
 import {
   LOCAL_QWEN_ADAPTIVE_UNDERRUN_THRESHOLD_MS,
@@ -24,6 +23,12 @@ import type {
   DecomposedTtsProviderContext,
   SegmentSynthesisResult,
 } from './tts/types.js';
+import {
+  resolveSharedTtsConfig,
+  synthesizeWithSharedTts,
+  toSharedTtsProviderContext,
+  type SharedTtsConfig,
+} from './shared/tts-engine.js';
 import {
   DECOMPOSED_CAPABILITIES,
   DECOMPOSED_CONFIG_SCHEMA,
@@ -56,7 +61,7 @@ import {
   type LlmRequestTool,
   type TurnMarker,
 } from './decomposed-utils.js';
-import { transcribeStt } from './stt/index.js';
+import { transcribeWithSharedStt } from './shared/stt-engine.js';
 import type {
   AudioFrame,
   AudioNegotiation,
@@ -485,21 +490,30 @@ export class DecomposedAdapter implements ProviderAdapter {
     context: DecomposedTtsProviderContext;
     signal: AbortSignal;
   }): Promise<void> {
-    const loadedWithModelApi = await this.warmupLocalTtsViaModelLoadApi({
+    await this.preloadLocalTtsViaModelLoadApi({
       model: input.model,
       endpoint: input.endpoint,
       signal: input.signal,
     });
-    if (loadedWithModelApi) {
-      return;
-    }
+    // Warm the actual synthesis path used for realtime turns.
     await this.warmupLocalTtsViaSpeechRequest({
       context: input.context,
       signal: input.signal,
     });
   }
 
-  private async warmupLocalTtsViaModelLoadApi(input: {
+  private async waitForLocalTtsWarmupIfNeeded(): Promise<void> {
+    if (!this.options || this.options.ttsProvider !== 'local') {
+      return;
+    }
+    const pendingWarmup = this.localTtsWarmupPromise;
+    if (!pendingWarmup) {
+      return;
+    }
+    await pendingWarmup;
+  }
+
+  private async preloadLocalTtsViaModelLoadApi(input: {
     model: string;
     endpoint: string;
     signal: AbortSignal;
@@ -515,7 +529,7 @@ export class DecomposedAdapter implements ProviderAdapter {
         body: JSON.stringify({
           kind: 'tts',
           model: input.model,
-          warmup: true,
+          warmup: false,
         }),
         signal: input.signal,
       });
@@ -542,11 +556,13 @@ export class DecomposedAdapter implements ProviderAdapter {
     context: DecomposedTtsProviderContext;
     signal: AbortSignal;
   }): Promise<void> {
-    await synthesizeTtsSegment({
+    await synthesizeWithSharedTts({
       text: LOCAL_TTS_WARMUP_TEXT,
-      context: input.context,
-      emitChunk: async () => false,
+      config: this.resolveSharedTtsConfig(),
+      // Drain full audio so local generators are not left mid-stream.
+      emitChunk: async () => true,
       signal: input.signal,
+      localTtsStreamingIntervalSec: input.context.localTtsStreamingIntervalSec,
     });
   }
 
@@ -781,9 +797,9 @@ export class DecomposedAdapter implements ProviderAdapter {
   private async transcribeAudio(pcm: Uint8Array): Promise<string> {
     if (!this.options || !this.input) return '';
     this.setState('thinking');
-    return transcribeStt({
+    return transcribeWithSharedStt({
       pcm,
-      context: {
+      config: {
         provider: this.options.sttProvider,
         model: this.options.sttModel,
         language: this.options.language,
@@ -1762,6 +1778,10 @@ export class DecomposedAdapter implements ProviderAdapter {
     if (!this.options || !this.isTurnCurrent(turnGeneration)) {
       return { playbackMs: 0, precision: 'segment' };
     }
+    await this.waitForLocalTtsWarmupIfNeeded();
+    if (!this.isTurnCurrent(turnGeneration)) {
+      return { playbackMs: 0, precision: 'segment' };
+    }
     const ttsStartMs = Date.now();
     const ttsController = this.beginTtsRequest();
     const { onFirstAudio, ...latencyDetails } = details ?? {};
@@ -1972,11 +1992,12 @@ export class DecomposedAdapter implements ProviderAdapter {
           this.options.ttsProvider === 'local' && isQwenTtsModelId(this.options.ttsModel)
             ? this.adaptiveUnderrun.getStreamingIntervalSec()
             : this.options.localTtsStreamingIntervalSec;
-        synthesisResult = await synthesizeTtsSegment({
+        synthesisResult = await synthesizeWithSharedTts({
           text,
-          context: this.createTtsProviderContext(localTtsStreamingIntervalSec),
+          config: this.resolveSharedTtsConfig(),
           emitChunk,
           signal: ttsController.signal,
+          localTtsStreamingIntervalSec,
         });
       }
     } finally {
@@ -2096,14 +2117,12 @@ export class DecomposedAdapter implements ProviderAdapter {
     };
   }
 
-  private createTtsProviderContext(
-    localTtsStreamingIntervalSec: number
-  ): DecomposedTtsProviderContext {
+  private resolveSharedTtsConfig(): SharedTtsConfig {
     if (!this.options) {
       throw new Error('Decomposed TTS options are unavailable');
     }
 
-    return {
+    return resolveSharedTtsConfig({
       provider: this.options.ttsProvider,
       model: this.options.ttsModel,
       voice: this.options.ttsVoice,
@@ -2117,14 +2136,23 @@ export class DecomposedAdapter implements ProviderAdapter {
       kokoroEndpoint: this.options.kokoroEndpoint,
       pocketTtsEndpoint: this.options.pocketTtsEndpoint,
       localEndpoint: this.options.localEndpoint,
-      localTtsStreamingIntervalSec,
+      localTtsStreamingIntervalSec: this.options.localTtsStreamingIntervalSec,
       voiceRefAudio: this.options.voiceRefAudio,
       voiceRefText: this.options.voiceRefText,
       googleChirpEndpoint: this.options.googleChirpEndpoint,
       cartesiaTtsWsUrl: this.options.cartesiaTtsWsUrl,
       fishTtsWsUrl: this.options.fishTtsWsUrl,
       rimeTtsWsUrl: this.options.rimeTtsWsUrl,
-    };
+    });
+  }
+
+  private createTtsProviderContext(
+    localTtsStreamingIntervalSec: number
+  ): DecomposedTtsProviderContext {
+    return toSharedTtsProviderContext(
+      this.resolveSharedTtsConfig(),
+      localTtsStreamingIntervalSec
+    );
   }
 
   private async speakWithDeepgram(

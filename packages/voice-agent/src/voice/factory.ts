@@ -88,6 +88,7 @@ export function createVoiceRuntime(
   const runtimeHost = createPackageVoiceRuntime(getBuiltInProviderRegistry());
 
   const sessionInput = resolveRuntimeSessionInput({
+    mode: runtimeConfig.mode,
     instructions: profile.instructions,
     language: runtimeConfig.language,
     voice: runtimeConfig.voice,

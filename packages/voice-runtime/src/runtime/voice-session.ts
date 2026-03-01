@@ -25,6 +25,8 @@ import {
   WordCueTimelineBuilder,
 } from './word-cue-timeline.js';
 
+const OUTBOUND_SPEECH_RMS_THRESHOLD = 0.01;
+
 export class VoiceSessionImpl implements VoiceSession {
   private readonly events = new TypedEventEmitter<VoiceSessionEvents>();
   private readonly adapter: ProviderAdapter;
@@ -55,6 +57,9 @@ export class VoiceSessionImpl implements VoiceSession {
   private readonly spokenFinalizedItemIds = new Set<string>();
   private readonly spokenCueTimeline: WordCueTimelineBuilder;
   private playbackPositionOffsetMs = 0;
+  private lastOutboundAudioAtMs: number | null = null;
+  private lastOutboundSpeechAtMs: number | null = null;
+  private pendingInputAudioToFirstAssistantAudioAtMs: number | null = null;
 
   constructor(adapter: ProviderAdapter, input: SessionInput) {
     this.adapter = adapter;
@@ -108,6 +113,9 @@ export class VoiceSessionImpl implements VoiceSession {
     this.resetConversationOrderState();
     this.resetSpokenSynthesisState();
     this.playbackPositionOffsetMs = 0;
+    this.lastOutboundAudioAtMs = null;
+    this.lastOutboundSpeechAtMs = null;
+    this.pendingInputAudioToFirstAssistantAudioAtMs = null;
     this.resamplerPool.clear();
   }
 
@@ -117,6 +125,7 @@ export class VoiceSessionImpl implements VoiceSession {
     }
     this.clientTransport = transport;
     this.transportAudioHandler = (frame: AudioFrame) => {
+      this.markOutboundAudioFrame(frame);
       const providerInputRate = this.negotiation?.providerInputRate;
       if (!providerInputRate || frame.sampleRate === providerInputRate) {
         this.adapter.sendAudio(frame);
@@ -148,6 +157,7 @@ export class VoiceSessionImpl implements VoiceSession {
   }
 
   sendAudio(frame: AudioFrame): void {
+    this.markOutboundAudioFrame(frame);
     const providerInputRate = this.negotiation?.providerInputRate;
     if (!providerInputRate || frame.sampleRate === providerInputRate) {
       this.adapter.sendAudio(frame);
@@ -275,6 +285,47 @@ export class VoiceSessionImpl implements VoiceSession {
       inputRate,
       outputRate,
       format: 'pcm16',
+    });
+  }
+
+  private markOutboundAudioFrame(frame: AudioFrame): void {
+    if (frame.data.byteLength <= 0) {
+      return;
+    }
+    const nowMs = Date.now();
+    this.lastOutboundAudioAtMs = nowMs;
+    if (computeRmsPcm16(frame.data) >= OUTBOUND_SPEECH_RMS_THRESHOLD) {
+      this.lastOutboundSpeechAtMs = nowMs;
+    }
+  }
+
+  private armInputAudioToFirstAssistantAudioMetric(): void {
+    const anchorMs = this.lastOutboundSpeechAtMs ?? this.lastOutboundAudioAtMs;
+    if (anchorMs === null) {
+      return;
+    }
+    this.pendingInputAudioToFirstAssistantAudioAtMs = anchorMs;
+  }
+
+  private clearInputAudioToFirstAssistantAudioMetric(): void {
+    this.pendingInputAudioToFirstAssistantAudioAtMs = null;
+  }
+
+  private maybeEmitInputAudioToFirstAssistantAudioMetric(): void {
+    const inputAudioAtMs = this.pendingInputAudioToFirstAssistantAudioAtMs;
+    if (inputAudioAtMs === null) {
+      return;
+    }
+    const firstAudioAtMs = Date.now();
+    this.pendingInputAudioToFirstAssistantAudioAtMs = null;
+    this.events.emit('latency', {
+      stage: 'turn',
+      durationMs: Math.max(0, firstAudioAtMs - inputAudioAtMs),
+      details: {
+        metric: 'input-audio-to-first-audio',
+        inputAudioAtMs,
+        firstAudioAtMs,
+      },
     });
   }
 
@@ -482,15 +533,28 @@ export class VoiceSessionImpl implements VoiceSession {
       this.resetAssistantTranscriptDedup();
       this.resetConversationOrderState();
       this.resetSpokenSynthesisState();
+      this.lastOutboundAudioAtMs = null;
+      this.lastOutboundSpeechAtMs = null;
+      this.clearInputAudioToFirstAssistantAudioMetric();
       this.events.emit('disconnected', reason);
     });
 
     this.adapter.on('stateChange', (state: VoiceState) => {
+      const previousState = this.state;
       this.state = state;
+      if (state === 'thinking' && previousState !== 'thinking') {
+        this.armInputAudioToFirstAssistantAudioMetric();
+      } else if (
+        (state === 'listening' || state === 'idle') &&
+        previousState === 'thinking'
+      ) {
+        this.clearInputAudioToFirstAssistantAudioMetric();
+      }
       this.events.emit('stateChange', state);
     });
 
     this.adapter.on('audio', (frame: AudioFrame) => {
+      this.maybeEmitInputAudioToFirstAssistantAudioMetric();
       this.forwardAssistantAudio(frame);
     });
 
@@ -691,10 +755,12 @@ export class VoiceSessionImpl implements VoiceSession {
 
     this.adapter.on('turnStarted', () => {
       this.resetAssistantTranscriptDedup();
+      this.armInputAudioToFirstAssistantAudioMetric();
       this.events.emit('turnStarted');
     });
 
     this.adapter.on('turnComplete', () => {
+      this.clearInputAudioToFirstAssistantAudioMetric();
       this.emitSynthesizedSpokenProgress();
       this.emitSynthesizedSpokenFinal();
       this.events.emit('turnComplete');
@@ -1002,6 +1068,20 @@ function countWords(text: string): number {
     return 0;
   }
   return trimmed.split(/\s+/).length;
+}
+
+function computeRmsPcm16(data: ArrayBuffer): number {
+  const bytes = new DataView(data);
+  const sampleCount = Math.floor(bytes.byteLength / 2);
+  if (sampleCount <= 0) return 0;
+
+  let sumSquares = 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    const sample = bytes.getInt16(i * 2, true) / 32768;
+    sumSquares += sample * sample;
+  }
+
+  return Math.sqrt(sumSquares / sampleCount);
 }
 
 function joinSpokenChunks(previous: string, delta: string): string {

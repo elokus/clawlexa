@@ -798,18 +798,28 @@ button:focus-visible {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   FLOATING VOICE ORB CARD
+   RIGHT SIDEBAR — Voice card + Thread rail
    ═══════════════════════════════════════════════════════════════════════════ */
 
-.voice-orb-card-float {
+.right-sidebar {
   position: absolute;
   top: 12px;
   right: 12px;
+  bottom: 12px;
   width: 300px;
   z-index: 15;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.right-sidebar > * {
+  pointer-events: auto;
 }
 
 .voice-orb-card {
+  flex-shrink: 0;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -821,95 +831,22 @@ button:focus-visible {
   box-shadow: 0 4px 24px oklch(0 0 0 / 30%);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   FLOATING THREAD RAIL
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.thread-rail-float {
-  position: absolute;
-  top: 240px;
-  right: 12px;
-  width: 300px;
-  max-height: 55%;
+/* Thread rail — content-sized with max-height cap */
+.right-sidebar > :last-child {
+  max-height: 320px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
-  z-index: 15;
   box-shadow: 0 4px 24px oklch(0 0 0 / 12%);
   display: flex;
   flex-direction: column;
 }
 
-.dark .thread-rail-float {
+.dark .right-sidebar > :last-child {
   box-shadow: 0 4px 24px oklch(0 0 0 / 30%);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   VOICE VISUALIZATION (prominent, in empty state)
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.voice-orb {
-  position: relative;
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.voice-orb-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1.5px solid var(--muted-foreground);
-  opacity: 0.15;
-  transition: all 0.4s ease;
-}
-
-.voice-orb[data-state="listening"] .voice-orb-ring {
-  border-color: var(--color-blue);
-  opacity: 0.5;
-  animation: orb-pulse 1.5s ease-in-out infinite;
-}
-
-.voice-orb[data-state="thinking"] .voice-orb-ring {
-  border-color: var(--color-purple);
-  opacity: 0.5;
-  animation: orb-spin 2s linear infinite;
-}
-
-.voice-orb[data-state="speaking"] .voice-orb-ring {
-  border-color: var(--color-green);
-  opacity: 0.6;
-  animation: orb-pulse 0.8s ease-in-out infinite;
-}
-
-.voice-orb-ring-outer {
-  position: absolute;
-  inset: -8px;
-  border-radius: 50%;
-  border: 1px solid var(--muted-foreground);
-  opacity: 0.08;
-  transition: all 0.4s ease;
-}
-
-.voice-orb[data-state="listening"] .voice-orb-ring-outer,
-.voice-orb[data-state="speaking"] .voice-orb-ring-outer {
-  opacity: 0.2;
-  animation: orb-pulse 2s ease-in-out infinite 0.3s;
-}
-
-@keyframes orb-pulse {
-  0%, 100% { transform: scale(1); opacity: var(--ring-opacity, 0.5); }
-  50% { transform: scale(1.06); opacity: calc(var(--ring-opacity, 0.5) * 0.6); }
-}
-
-@keyframes orb-spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    SPOKEN WORD HIGHLIGHTING

@@ -52,6 +52,10 @@ interface CliSessionDeletedPayload {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+const pendingVoiceLatencyBySession = new Map<
+  string,
+  { sttMs?: number; llmMs?: number }
+>();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helper Functions
@@ -195,6 +199,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
     case 'session_started': {
       store.clearVoiceTimeline();
       store.setVoiceActive(true);
+      pendingVoiceLatencyBySession.clear();
       break;
     }
 
@@ -202,6 +207,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
       store.setVoiceState('idle');
       store.setVoiceActive(false);
       store.setCurrentTool(null);
+      pendingVoiceLatencyBySession.clear();
       break;
     }
 
@@ -289,6 +295,38 @@ export function handleWebSocketMessage(msg: WSMessage): void {
         sessionTree?.type === 'voice';
 
       if (isVoiceSession) {
+        const consumePendingVoiceLatency = (): Partial<TranscriptItem> => {
+          const pending = pendingVoiceLatencyBySession.get(sessionId);
+          if (!pending) {
+            return {};
+          }
+          pendingVoiceLatencyBySession.delete(sessionId);
+          const updates: Partial<TranscriptItem> = {};
+          if (typeof pending.sttMs === 'number') {
+            updates.sttMs = pending.sttMs;
+          }
+          if (typeof pending.llmMs === 'number') {
+            updates.llmMs = pending.llmMs;
+          }
+          return updates;
+        };
+        const stashPendingVoiceLatency = (updates: {
+          sttMs?: number | null;
+          llmMs?: number | null;
+        }): void => {
+          const existing = pendingVoiceLatencyBySession.get(sessionId) ?? {};
+          const next = { ...existing };
+          if (typeof updates.sttMs === 'number' && typeof next.sttMs !== 'number') {
+            next.sttMs = updates.sttMs;
+          }
+          if (typeof updates.llmMs === 'number' && typeof next.llmMs !== 'number') {
+            next.llmMs = updates.llmMs;
+          }
+          if (typeof next.sttMs === 'number' || typeof next.llmMs === 'number') {
+            pendingVoiceLatencyBySession.set(sessionId, next);
+          }
+        };
+
         // Convert AI SDK events to voiceTimeline format
         switch (event.type) {
           case 'user-placeholder': {
@@ -344,6 +382,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               pending: true,
               itemId: event.itemId,
               order: event.order,
+              ...consumePendingVoiceLatency(),
             };
             const insertIndex = findVoiceTimelineInsertIndex(
               voiceTimeline,
@@ -407,6 +446,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 pending: true,
                 itemId: event.itemId,
                 order: event.order,
+                ...consumePendingVoiceLatency(),
               };
               const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.order);
               store.addVoiceTimelineItem(spokenSeed, insertIndex);
@@ -450,6 +490,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 pending: true,
                 itemId: event.itemId,
                 order: event.order,
+                ...consumePendingVoiceLatency(),
               };
               const insertIndex = findVoiceTimelineInsertIndex(
                 voiceTimeline,
@@ -488,6 +529,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 timestamp,
                 pending: true,
                 order: event.order,
+                ...consumePendingVoiceLatency(),
               };
               store.addVoiceTimelineItem(newItem);
             }
@@ -556,6 +598,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               pending: true,
               itemId: event.itemId,
               order: event.order,
+              ...consumePendingVoiceLatency(),
             };
             const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.order);
             store.addVoiceTimelineItem(newItem, insertIndex);
@@ -584,6 +627,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 timestamp,
                 pending: true,
                 itemId: event.itemId,
+                ...consumePendingVoiceLatency(),
               };
               store.addVoiceTimelineItem(fallbackItem);
               break;
@@ -671,6 +715,7 @@ export function handleWebSocketMessage(msg: WSMessage): void {
               pending: false,
               itemId: event.itemId,
               order: event.order,
+              ...consumePendingVoiceLatency(),
             };
             const insertIndex = findVoiceTimelineInsertIndex(voiceTimeline, event.order);
             store.addVoiceTimelineItem(newItem, insertIndex);
@@ -779,15 +824,39 @@ export function handleWebSocketMessage(msg: WSMessage): void {
           }
 
           case 'latency': {
-            if (event.stage !== 'tts') {
-              break;
+            let ttfbMs: number | null = null;
+            let audioRoundtripMs: number | null = null;
+            let sttMs: number | null = null;
+            let llmMs: number | null = null;
+
+            if (event.stage === 'tts') {
+              const firstAudioLatencyMs = event.details?.firstAudioLatencyMs;
+              if (
+                typeof firstAudioLatencyMs === 'number' &&
+                Number.isFinite(firstAudioLatencyMs)
+              ) {
+                const segmentIndex = event.details?.segmentIndex;
+                if (!(typeof segmentIndex === 'number' && segmentIndex > 1)) {
+                  ttfbMs = Math.max(0, Math.round(firstAudioLatencyMs));
+                }
+              }
+            } else if (
+              event.stage === 'turn' &&
+              event.details?.metric === 'input-audio-to-first-audio'
+            ) {
+              audioRoundtripMs = Math.max(0, Math.round(event.durationMs));
+            } else if (event.stage === 'stt') {
+              sttMs = Math.max(0, Math.round(event.durationMs));
+            } else if (event.stage === 'llm') {
+              llmMs = Math.max(0, Math.round(event.durationMs));
             }
-            const firstAudioLatencyMs = event.details?.firstAudioLatencyMs;
-            if (typeof firstAudioLatencyMs !== 'number' || !Number.isFinite(firstAudioLatencyMs)) {
-              break;
-            }
-            const segmentIndex = event.details?.segmentIndex;
-            if (typeof segmentIndex === 'number' && segmentIndex > 1) {
+
+            if (
+              ttfbMs === null &&
+              audioRoundtripMs === null &&
+              sttMs === null &&
+              llmMs === null
+            ) {
               break;
             }
 
@@ -803,11 +872,47 @@ export function handleWebSocketMessage(msg: WSMessage): void {
 
             if (assistantIdx !== undefined && assistantIdx >= 0) {
               const target = voiceTimeline[assistantIdx];
-              if (target?.type === 'transcript' && typeof target.ttfbMs !== 'number') {
-                store.updateVoiceTimelineItem(target.id, {
-                  ttfbMs: Math.max(0, Math.round(firstAudioLatencyMs)),
-                } as Partial<TranscriptItem>);
+              const shouldUpdateTtfb =
+                target?.type === 'transcript' &&
+                ttfbMs !== null &&
+                typeof target.ttfbMs !== 'number';
+              const shouldUpdateRoundtrip =
+                target?.type === 'transcript' &&
+                audioRoundtripMs !== null &&
+                typeof target.audioRoundtripMs !== 'number';
+              const shouldUpdateStt =
+                target?.type === 'transcript' &&
+                sttMs !== null &&
+                typeof target.sttMs !== 'number';
+              const shouldUpdateLlm =
+                target?.type === 'transcript' &&
+                llmMs !== null &&
+                typeof target.llmMs !== 'number';
+
+              if (
+                target?.type === 'transcript' &&
+                (shouldUpdateTtfb ||
+                  shouldUpdateRoundtrip ||
+                  shouldUpdateStt ||
+                  shouldUpdateLlm)
+              ) {
+                const latencyUpdates: Partial<TranscriptItem> = {};
+                if (shouldUpdateTtfb && ttfbMs !== null) {
+                  latencyUpdates.ttfbMs = ttfbMs;
+                }
+                if (shouldUpdateRoundtrip && audioRoundtripMs !== null) {
+                  latencyUpdates.audioRoundtripMs = audioRoundtripMs;
+                }
+                if (shouldUpdateStt && sttMs !== null) {
+                  latencyUpdates.sttMs = sttMs;
+                }
+                if (shouldUpdateLlm && llmMs !== null) {
+                  latencyUpdates.llmMs = llmMs;
+                }
+                store.updateVoiceTimelineItem(target.id, latencyUpdates);
               }
+            } else {
+              stashPendingVoiceLatency({ sttMs, llmMs });
             }
             break;
           }

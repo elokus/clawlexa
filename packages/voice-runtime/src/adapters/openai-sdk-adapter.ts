@@ -6,11 +6,21 @@ import {
   type TransportEvent,
   type TransportLayerAudio,
 } from '@openai/agents/realtime';
-import { parseOpenAIProviderConfig } from '../provider-config.js';
+import {
+  parseDecomposedProviderConfig,
+  parseOpenAIProviderConfig,
+} from '../provider-config.js';
+import { countWords, splitSpeakableText } from './decomposed-utils.js';
+import {
+  resolveSharedTtsConfig,
+  synthesizeWithSharedTts,
+  type SharedTtsConfig,
+} from './shared/tts-engine.js';
 import { TypedEventEmitter } from '../runtime/typed-emitter.js';
 import type {
   AudioFrame,
   AudioNegotiation,
+  DecomposedProviderConfig,
   EventHandler,
   OpenAIProviderConfig,
   ProviderAdapter,
@@ -31,20 +41,41 @@ interface InputAudioTranscriptionCompletedEvent {
   transcript: string;
 }
 
+interface InputAudioTranscriptionFailedEvent {
+  type: 'conversation.item.input_audio_transcription.failed';
+  item_id: string;
+  error?: {
+    code?: string;
+    message?: string;
+    type?: string;
+    param?: string;
+  };
+}
+
 interface OutputAudioTranscriptDeltaEvent {
   type: 'response.output_audio_transcript.delta';
   item_id: string;
   delta: string;
 }
 
+interface OutputTextDeltaEvent {
+  type: 'response.output_text.delta';
+  item_id: string;
+  delta: string;
+}
+
 interface ConversationItemAddedEvent {
-  type: 'conversation.item.added';
-  previous_item_id: string | null;
+  type: 'conversation.item.added' | 'conversation.item.done' | 'conversation.item.retrieved';
+  previous_item_id?: string | null;
   item: {
     id: string;
     type: string;
     role?: 'user' | 'assistant' | 'system';
-    content?: unknown[];
+    content?: Array<{
+      type?: string;
+      text?: string | null;
+      transcript?: string | null;
+    }>;
   };
 }
 
@@ -173,8 +204,12 @@ const OPENAI_CONFIG_SCHEMA: ProviderConfigSchema = {
     { id: 'sage', name: 'Sage', language: 'multi', gender: 'female' },
     { id: 'shimmer', name: 'Shimmer', language: 'multi', gender: 'female' },
     { id: 'verse', name: 'Verse', language: 'multi', gender: 'male' },
+    { id: 'marin', name: 'Marin', language: 'multi', gender: 'female' },
+    { id: 'cedar', name: 'Cedar', language: 'multi', gender: 'male' },
   ],
 };
+
+const OPENAI_DEFAULT_SESSION_VOICE = 'alloy';
 
 export class OpenAISdkAdapter implements ProviderAdapter {
   readonly id = 'openai-sdk' as const;
@@ -184,6 +219,19 @@ export class OpenAISdkAdapter implements ProviderAdapter {
   private state: VoiceState = 'idle';
   private history: VoiceHistoryItem[] = [];
   private outputSampleRateHz = 24000;
+  private outputMode: 'provider-audio' | 'text-tts' = 'provider-audio';
+  private externalTtsConfig: SharedTtsConfig | null = null;
+  private activeTtsAbortController: AbortController | null = null;
+  private assistantGeneration = 0;
+  private activeAssistantItemId: string | null = null;
+  private assistantDeltaSeenThisTurn = false;
+  private readonly outputTextRawByItemId = new Map<string, string>();
+  private readonly outputTextEmittedLengthByItemId = new Map<string, number>();
+  private readonly assistantDeltaSourceByItemId = new Map<
+    string,
+    'output_text' | 'output_audio_transcript'
+  >();
+  private readonly emittedUserTranscripts = new Map<string, string>();
 
   capabilities(): ProviderCapabilities {
     return OPENAI_SDK_CAPABILITIES;
@@ -196,17 +244,40 @@ export class OpenAISdkAdapter implements ProviderAdapter {
   async connect(input: SessionInput): Promise<AudioNegotiation> {
     this.history = [];
     this.outputSampleRateHz = 24000;
+    this.outputMode = 'provider-audio';
+    this.externalTtsConfig = null;
+    this.abortActiveTts();
+    this.assistantGeneration = 0;
+    this.activeAssistantItemId = null;
+    this.assistantDeltaSeenThisTurn = false;
+    this.outputTextRawByItemId.clear();
+    this.outputTextEmittedLengthByItemId.clear();
+    this.assistantDeltaSourceByItemId.clear();
+    this.emittedUserTranscripts.clear();
 
     const providerConfig = this.getProviderConfig(input);
+    const decomposedConfig = this.getDecomposedProviderConfig(input);
+    const outputAudioMode = this.resolveOutputAudioMode(providerConfig);
+    this.outputMode =
+      outputAudioMode === 'text-tts' ? 'text-tts' : 'provider-audio';
+    if (this.outputMode === 'text-tts') {
+      this.externalTtsConfig = this.buildExternalTtsConfig({
+        input,
+        providerConfig,
+        decomposedConfig,
+      });
+    }
+
     const apiKey = providerConfig.apiKey;
     if (!apiKey) {
       throw new Error('OpenAI adapter requires providerConfig.apiKey');
     }
+    const sessionVoice = this.resolveSessionVoice(input.voice);
 
     const realtimeAgent = new RealtimeAgent({
       name: 'voiceclaw-openai',
       instructions: input.instructions,
-      voice: input.voice,
+      voice: sessionVoice,
       tools: this.buildTools(input.tools ?? [], input),
     });
 
@@ -230,31 +301,28 @@ export class OpenAISdkAdapter implements ProviderAdapter {
     const turnDetection = buildTurnDetection();
 
     const sessionConfig: Record<string, unknown> = {
-      // Legacy config keys supported by the SDK.
-      inputAudioFormat: 'pcm16',
-      outputAudioFormat: 'pcm16',
-      // GA-style config with explicit PCM rate. This helps avoid ambiguous defaults
-      // that can produce playback-speed mismatches on some clients.
+      // Use GA-style config only. Mixing legacy + GA keys forces the SDK down
+      // deprecated normalization paths that drop outputModalities.
       audio: {
         input: {
           format: { type: 'audio/pcm', rate: 24000 },
+          transcription: {
+            model: providerConfig.transcriptionModel ?? 'gpt-4o-mini-transcribe',
+            language: input.language ?? providerConfig.language,
+          },
           ...(turnDetection
-            ? { turn_detection: turnDetection }
-            : { turn_detection: null }),
+            ? { turnDetection }
+            : { turnDetection: null }),
         },
         output: {
           format: { type: 'audio/pcm', rate: 24000 },
-          voice: input.voice,
+          voice: sessionVoice,
         },
       },
-      voice: input.voice,
-      inputAudioTranscription: {
-        model: providerConfig.transcriptionModel ?? 'gpt-4o-mini-transcribe',
-        language: input.language ?? providerConfig.language,
-      },
-      ...(turnDetection
-        ? { turnDetection }
-        : { turnDetection: null }),
+      voice: sessionVoice,
+      ...(this.outputMode === 'text-tts'
+        ? { outputModalities: ['text'] }
+        : {}),
     };
 
     this.session = new RealtimeSession(realtimeAgent, {
@@ -283,6 +351,16 @@ export class OpenAISdkAdapter implements ProviderAdapter {
   }
 
   async disconnect(): Promise<void> {
+    this.abortActiveTts();
+    this.externalTtsConfig = null;
+    this.outputMode = 'provider-audio';
+    this.assistantGeneration += 1;
+    this.activeAssistantItemId = null;
+    this.assistantDeltaSeenThisTurn = false;
+    this.outputTextRawByItemId.clear();
+    this.outputTextEmittedLengthByItemId.clear();
+    this.assistantDeltaSourceByItemId.clear();
+    this.emittedUserTranscripts.clear();
     if (!this.session) {
       this.setState('idle');
       this.events.emit('disconnected');
@@ -322,6 +400,13 @@ export class OpenAISdkAdapter implements ProviderAdapter {
 
   interrupt(): void {
     this.session?.interrupt();
+    this.assistantGeneration += 1;
+    this.abortActiveTts();
+    this.outputTextRawByItemId.clear();
+    this.outputTextEmittedLengthByItemId.clear();
+    if (this.outputMode === 'text-tts') {
+      this.events.emit('audioInterrupted');
+    }
     this.setState('listening');
   }
 
@@ -376,6 +461,9 @@ export class OpenAISdkAdapter implements ProviderAdapter {
     if (!this.session) return;
 
     this.session.on('audio', (audio: TransportLayerAudio) => {
+      if (this.outputMode === 'text-tts') {
+        return;
+      }
       this.setState('speaking');
       this.events.emit('audio', {
         data: audio.data,
@@ -385,20 +473,30 @@ export class OpenAISdkAdapter implements ProviderAdapter {
     });
 
     this.session.on('audio_interrupted', () => {
+      this.abortActiveTts();
       this.setState('listening');
       this.events.emit('audioInterrupted');
     });
 
     this.session.on('agent_start', () => {
+      this.assistantGeneration += 1;
+      this.abortActiveTts();
+      this.activeAssistantItemId = null;
+      this.assistantDeltaSeenThisTurn = false;
+      this.outputTextRawByItemId.clear();
+      this.outputTextEmittedLengthByItemId.clear();
+      this.assistantDeltaSourceByItemId.clear();
       this.setState('thinking');
       this.events.emit('turnStarted');
     });
 
     this.session.on('agent_end', (_ctx, _agent, textOutput) => {
-      if (textOutput) {
-        this.events.emit('transcript', textOutput, 'assistant');
-      }
-      this.events.emit('turnComplete');
+      const generation = this.assistantGeneration;
+      void this.handleAgentEnd(
+        generation,
+        textOutput ?? '',
+        this.activeAssistantItemId ?? undefined
+      );
     });
 
     this.session.on('agent_tool_start', (_ctx, _agent, toolDef, details) => {
@@ -429,6 +527,9 @@ export class OpenAISdkAdapter implements ProviderAdapter {
 
     this.session.on('history_updated', (history: RealtimeItem[]) => {
       this.history = history.map((item) => this.toHistoryItem(item));
+      for (const item of history) {
+        this.maybeEmitUserTranscriptFromRealtimeItem(item);
+      }
       this.events.emit('historyUpdated', [...this.history]);
     });
 
@@ -442,6 +543,7 @@ export class OpenAISdkAdapter implements ProviderAdapter {
         // Otherwise this event is just normal user turn onset and should not
         // clear local playback buffers.
         if (this.state === 'speaking') {
+          this.abortActiveTts();
           this.events.emit('audioInterrupted');
         }
         this.setState('listening');
@@ -450,41 +552,534 @@ export class OpenAISdkAdapter implements ProviderAdapter {
       if (event.type === 'conversation.item.added') {
         const itemEvent = event as ConversationItemAddedEvent;
         const { item, previous_item_id } = itemEvent;
-        const contentArray = item.content as Array<{ type?: string }> | undefined;
+        const contentArray = item.content;
         const hasAudioContent =
           Array.isArray(contentArray) && contentArray.some((content) => content.type === 'input_audio');
 
         if (item.role === 'user' && item.type === 'message' && hasAudioContent) {
           this.events.emit('userItemCreated', item.id);
         } else if (item.role === 'assistant' && item.type === 'message') {
+          this.activeAssistantItemId = item.id;
           this.events.emit('assistantItemCreated', item.id, previous_item_id ?? undefined);
+        }
+      }
+
+      if (
+        event.type === 'conversation.item.done'
+        || event.type === 'conversation.item.retrieved'
+      ) {
+        const itemEvent = event as ConversationItemAddedEvent;
+        const { item } = itemEvent;
+        if (item.role === 'user' && item.type === 'message') {
+          const transcript = this.extractConversationItemTranscript(item.content);
+          if (transcript) {
+            this.emitUserTranscript(item.id, transcript);
+          }
         }
       }
 
       if (event.type === 'response.output_audio_transcript.delta') {
         const deltaEvent = event as OutputAudioTranscriptDeltaEvent;
-        if (deltaEvent.delta) {
-          this.events.emit('transcriptDelta', deltaEvent.delta, 'assistant', deltaEvent.item_id);
+        if (!deltaEvent.delta) {
+          return;
         }
+        this.emitAssistantDelta(
+          deltaEvent.delta,
+          deltaEvent.item_id,
+          'output_audio_transcript'
+        );
+      }
+
+      if (event.type === 'response.output_text.delta') {
+        if (this.outputMode !== 'text-tts') {
+          return;
+        }
+        const deltaEvent = event as OutputTextDeltaEvent;
+        if (!deltaEvent.delta) {
+          return;
+        }
+        this.emitAssistantDelta(deltaEvent.delta, deltaEvent.item_id, 'output_text');
       }
 
       if (event.type === 'conversation.item.input_audio_transcription.completed') {
         const transcriptEvent = event as InputAudioTranscriptionCompletedEvent;
         if (transcriptEvent.transcript) {
-          this.events.emit('transcript', transcriptEvent.transcript, 'user', transcriptEvent.item_id);
+          this.emitUserTranscript(transcriptEvent.item_id, transcriptEvent.transcript);
         }
+      }
+
+      if (event.type === 'conversation.item.input_audio_transcription.failed') {
+        const failedEvent = event as InputAudioTranscriptionFailedEvent;
+        const details = failedEvent.error;
+        const messageParts = [
+          'Input audio transcription failed',
+          failedEvent.item_id ? `(item ${failedEvent.item_id})` : null,
+          details?.message ?? null,
+          details?.code ? `[${details.code}]` : null,
+        ].filter(Boolean);
+        this.events.emit('error', new Error(messageParts.join(' ')));
       }
     });
 
     this.session.on('audio_stopped', () => {
+      if (this.outputMode === 'text-tts') {
+        return;
+      }
       this.setState('listening');
     });
 
     this.session.on('error', (errorEvent) => {
-      const error =
-        errorEvent.error instanceof Error ? errorEvent.error : new Error(String(errorEvent.error));
+      const error = this.normalizeError(errorEvent.error);
       this.events.emit('error', error);
     });
+  }
+
+  private async handleAgentEnd(
+    generation: number,
+    textOutput: string,
+    assistantItemId?: string
+  ): Promise<void> {
+    if (!this.isCurrentGeneration(generation)) {
+      return;
+    }
+
+    const normalizedText = this.normalizeAssistantTextOutput(
+      textOutput,
+      assistantItemId
+    );
+    if (this.outputMode === 'text-tts' && normalizedText) {
+      if (!this.assistantDeltaSeenThisTurn) {
+        this.emitAssistantDelta(normalizedText, assistantItemId, 'output_text');
+      }
+      try {
+        await this.speakWithExternalTts(
+          normalizedText,
+          generation,
+          assistantItemId
+        );
+      } catch (error) {
+        if (!this.isCurrentGeneration(generation) || this.isAbortError(error)) {
+          return;
+        }
+        this.events.emit(
+          'error',
+          error instanceof Error ? error : new Error(String(error))
+        );
+        this.setState('listening');
+        return;
+      }
+    }
+
+    if (!this.isCurrentGeneration(generation)) {
+      return;
+    }
+
+    if (normalizedText) {
+      this.events.emit('transcript', normalizedText, 'assistant', assistantItemId);
+    }
+    if (assistantItemId) {
+      this.outputTextRawByItemId.delete(assistantItemId);
+      this.outputTextEmittedLengthByItemId.delete(assistantItemId);
+    }
+    this.events.emit('turnComplete');
+  }
+
+  private async speakWithExternalTts(
+    text: string,
+    generation: number,
+    assistantItemId?: string
+  ): Promise<void> {
+    if (this.outputMode !== 'text-tts') {
+      return;
+    }
+    if (!this.externalTtsConfig) {
+      throw new Error('OpenAI text->TTS mode is enabled but TTS config is missing');
+    }
+
+    const normalized = text.trim();
+    if (!normalized) {
+      return;
+    }
+
+    this.abortActiveTts();
+    const controller = new AbortController();
+    this.activeTtsAbortController = controller;
+    this.setState('speaking');
+
+    const startedAtMs = Date.now();
+    let playbackMs = 0;
+    let emittedChunks = 0;
+    let firstAudioAtMs: number | null = null;
+    let spokenText = '';
+    let spokenPrecision:
+      | 'ratio'
+      | 'segment'
+      | 'aligned'
+      | 'provider-word-timestamps' = 'segment';
+    const spokenItemId = assistantItemId ?? this.activeAssistantItemId ?? undefined;
+    const emitChunk = async (chunk: ArrayBuffer): Promise<boolean> => {
+      if (!this.isCurrentGeneration(generation) || controller.signal.aborted) {
+        return false;
+      }
+      emittedChunks += 1;
+      if (firstAudioAtMs === null) {
+        firstAudioAtMs = Date.now();
+      }
+      playbackMs += (chunk.byteLength / 2 / this.outputSampleRateHz) * 1000;
+      this.events.emit('audio', {
+        data: chunk,
+        sampleRate: this.outputSampleRateHz,
+        format: 'pcm16',
+      });
+      return true;
+    };
+
+    const emitSpokenDelta = (
+      delta: string,
+      precision:
+        | 'ratio'
+        | 'segment'
+        | 'aligned'
+        | 'provider-word-timestamps',
+      wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>,
+      wordTimestampsTimeBase?: 'segment' | 'utterance'
+    ): void => {
+      if (!this.isCurrentGeneration(generation) || controller.signal.aborted) {
+        return;
+      }
+      spokenText = this.joinSpokenChunks(spokenText, delta);
+      const spokenChars = spokenText.length;
+      const spokenWords = countWords(spokenText);
+      spokenPrecision = precision;
+
+      this.events.emit('spokenDelta', delta, 'assistant', spokenItemId, {
+        spokenChars,
+        spokenWords,
+        playbackMs: Math.round(playbackMs),
+        precision,
+        wordTimestamps,
+        wordTimestampsTimeBase,
+      });
+
+      if (spokenItemId) {
+        this.events.emit('spokenProgress', spokenItemId, {
+          spokenChars,
+          spokenWords,
+          playbackMs: Math.round(playbackMs),
+          precision: 'segment',
+        });
+      }
+    };
+
+    if (spokenItemId) {
+      // Mark adapter-provided spoken tracking before first audio chunk so
+      // runtime-level fallback synthesis does not latch full text too early.
+      this.events.emit('spokenProgress', spokenItemId, {
+        spokenChars: 0,
+        spokenWords: 0,
+        playbackMs: 0,
+        precision: 'segment',
+      });
+    }
+
+    const split = splitSpeakableText(normalized);
+    const segments = [...split.segments];
+    const trailing = split.remainder.trim();
+    if (trailing) {
+      segments.push(trailing);
+    }
+    if (segments.length === 0) {
+      segments.push(normalized);
+    }
+
+    try {
+      for (const segment of segments) {
+        if (!this.isCurrentGeneration(generation) || controller.signal.aborted) {
+          break;
+        }
+        const synthesisResult = await synthesizeWithSharedTts({
+          text: segment,
+          config: this.externalTtsConfig,
+          signal: controller.signal,
+          emitChunk,
+        });
+        emitSpokenDelta(
+          segment,
+          synthesisResult.precision ?? 'segment',
+          synthesisResult.wordTimestamps,
+          synthesisResult.wordTimestampsTimeBase
+        );
+      }
+
+      if (
+        this.isCurrentGeneration(generation) &&
+        !controller.signal.aborted &&
+        spokenText
+      ) {
+        this.events.emit('spokenFinal', normalized, 'assistant', spokenItemId, {
+          spokenChars: normalized.length,
+          spokenWords: countWords(normalized),
+          playbackMs: Math.round(playbackMs),
+          precision: spokenPrecision,
+        });
+      }
+    } finally {
+      if (this.activeTtsAbortController === controller) {
+        this.activeTtsAbortController = null;
+      }
+      if (this.isCurrentGeneration(generation)) {
+        this.setState('listening');
+        this.events.emit('latency', {
+          stage: 'tts',
+          durationMs: Date.now() - startedAtMs,
+          provider: this.externalTtsConfig.provider,
+          model: this.externalTtsConfig.model,
+          details: {
+            textChars: normalized.length,
+            playbackMs: Math.round(playbackMs),
+            chunks: emittedChunks,
+            firstAudioLatencyMs:
+              firstAudioAtMs === null
+                ? null
+                : Math.max(0, firstAudioAtMs - startedAtMs),
+          },
+        });
+      }
+    }
+  }
+
+  private abortActiveTts(): void {
+    if (!this.activeTtsAbortController) {
+      return;
+    }
+    this.activeTtsAbortController.abort();
+    this.activeTtsAbortController = null;
+  }
+
+  private isCurrentGeneration(generation: number): boolean {
+    return generation === this.assistantGeneration;
+  }
+
+  private isAbortError(error: unknown): boolean {
+    if (!error) return false;
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return true;
+    }
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        return true;
+      }
+      return /aborted|abort/i.test(error.message);
+    }
+    return false;
+  }
+
+  private normalizeError(error: unknown): Error {
+    if (error && typeof error === 'object') {
+      const nested = (error as { error?: unknown }).error;
+      if (nested && nested !== error) {
+        return this.normalizeError(nested);
+      }
+    }
+
+    if (error instanceof Error) {
+      return error;
+    }
+
+    if (typeof error === 'string') {
+      return new Error(error);
+    }
+
+    if (error && typeof error === 'object') {
+      const withMessage = error as { message?: unknown; type?: unknown; code?: unknown };
+      if (typeof withMessage.message === 'string' && withMessage.message.trim()) {
+        return new Error(withMessage.message);
+      }
+
+      const type = typeof withMessage.type === 'string' ? withMessage.type : null;
+      const code = typeof withMessage.code === 'string' ? withMessage.code : null;
+      const summary =
+        [type, code].filter(Boolean).join(': ')
+        || 'OpenAI realtime error';
+      return new Error(summary);
+    }
+
+    return new Error('OpenAI realtime error');
+  }
+
+  private emitAssistantDelta(
+    delta: string,
+    itemId: string | undefined,
+    source: 'output_text' | 'output_audio_transcript'
+  ): void {
+    const resolvedItemId = itemId ?? this.activeAssistantItemId ?? undefined;
+
+    let normalizedDelta = delta;
+    if (source === 'output_text') {
+      normalizedDelta = this.normalizeOutputTextDelta(normalizedDelta, resolvedItemId);
+      if (!normalizedDelta) {
+        return;
+      }
+    } else if (resolvedItemId) {
+      // Drop any temporary output_text cleanup state when audio transcript takes over.
+      this.outputTextRawByItemId.delete(resolvedItemId);
+      this.outputTextEmittedLengthByItemId.delete(resolvedItemId);
+    }
+
+    if (resolvedItemId) {
+      const existingSource = this.assistantDeltaSourceByItemId.get(resolvedItemId);
+      if (existingSource && existingSource !== source) {
+        return;
+      }
+      this.assistantDeltaSourceByItemId.set(resolvedItemId, source);
+      this.activeAssistantItemId = resolvedItemId;
+    }
+
+    this.assistantDeltaSeenThisTurn = true;
+    this.events.emit('transcriptDelta', normalizedDelta, 'assistant', resolvedItemId);
+  }
+
+  private normalizeOutputTextDelta(delta: string, itemId?: string): string {
+    if (!itemId) {
+      return this.normalizeQuotedWrapperText(delta);
+    }
+
+    const prevRaw = this.outputTextRawByItemId.get(itemId) ?? '';
+    const nextRaw = prevRaw + delta;
+    this.outputTextRawByItemId.set(itemId, nextRaw);
+
+    const normalized = this.normalizeQuotedWrapperText(nextRaw);
+    const emittedLength = this.outputTextEmittedLengthByItemId.get(itemId) ?? 0;
+    if (normalized.length <= emittedLength) {
+      return '';
+    }
+
+    this.outputTextEmittedLengthByItemId.set(itemId, normalized.length);
+    return normalized.slice(emittedLength);
+  }
+
+  private normalizeQuotedWrapperText(text: string): string {
+    // Some realtime text channels occasionally stream utterances wrapped as {"..."}.
+    // Convert that transport artifact back into plain conversational text.
+    if (!text.startsWith('{"') || text.includes('":')) {
+      return text;
+    }
+
+    let normalized = text.slice(2);
+    if (normalized.endsWith('"}')) {
+      normalized = normalized.slice(0, -2);
+    } else if (normalized.endsWith('"')) {
+      normalized = normalized.slice(0, -1);
+    }
+
+    return normalized
+      .replace(/\\\\/g, '\\')
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, '\n');
+  }
+
+  private normalizeAssistantTextOutput(text: string, itemId?: string): string {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    if (itemId) {
+      const rawFromDeltas = this.outputTextRawByItemId.get(itemId);
+      if (rawFromDeltas) {
+        const normalizedFromDeltas =
+          this.normalizeQuotedWrapperText(rawFromDeltas).trim();
+        if (normalizedFromDeltas) {
+          return normalizedFromDeltas;
+        }
+      }
+    }
+
+    return this.normalizeQuotedWrapperText(trimmed).trim();
+  }
+
+  private joinSpokenChunks(previous: string, delta: string): string {
+    if (!previous) {
+      return delta;
+    }
+    if (!delta) {
+      return previous;
+    }
+    const previousEndsWithWhitespace = /\s$/u.test(previous);
+    const deltaStartsWithWhitespace = /^\s/u.test(delta);
+    if (previousEndsWithWhitespace || deltaStartsWithWhitespace) {
+      return previous + delta;
+    }
+
+    const previousTail = previous[previous.length - 1] ?? '';
+    const deltaHead = delta[0] ?? '';
+    const needsSeparator =
+      /[\p{L}\p{N}]/u.test(previousTail) && /[\p{L}\p{N}]/u.test(deltaHead);
+    const punctuationBoundary =
+      /[.,!?;:]/u.test(previousTail) && /[\p{L}\p{N}]/u.test(deltaHead);
+    if (needsSeparator || punctuationBoundary) {
+      return `${previous} ${delta}`;
+    }
+
+    return previous + delta;
+  }
+
+  private emitUserTranscript(itemId: string, transcript: string): void {
+    const normalized = transcript.trim();
+    if (!normalized) {
+      return;
+    }
+    const previous = this.emittedUserTranscripts.get(itemId);
+    if (previous === normalized) {
+      return;
+    }
+    this.emittedUserTranscripts.set(itemId, normalized);
+    this.events.emit('transcript', normalized, 'user', itemId);
+  }
+
+  private extractConversationItemTranscript(
+    content: ConversationItemAddedEvent['item']['content']
+  ): string {
+    if (!Array.isArray(content)) {
+      return '';
+    }
+
+    const chunks: string[] = [];
+    for (const part of content) {
+      const transcript = typeof part?.transcript === 'string' ? part.transcript.trim() : '';
+      if (transcript) {
+        chunks.push(transcript);
+        continue;
+      }
+      const text = typeof part?.text === 'string' ? part.text.trim() : '';
+      if (text) {
+        chunks.push(text);
+      }
+    }
+
+    return chunks.join(' ').trim();
+  }
+
+  private maybeEmitUserTranscriptFromRealtimeItem(item: RealtimeItem): void {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+
+    const message = item as {
+      type?: string;
+      role?: string;
+      itemId?: string;
+      content?: ConversationItemAddedEvent['item']['content'];
+    };
+
+    if (message.type !== 'message' || message.role !== 'user' || !message.itemId) {
+      return;
+    }
+
+    const transcript = this.extractConversationItemTranscript(message.content);
+    if (transcript) {
+      this.emitUserTranscript(message.itemId, transcript);
+    }
   }
 
   private buildTools(definitions: ToolDefinition[], input: SessionInput) {
@@ -568,8 +1163,69 @@ export class OpenAISdkAdapter implements ProviderAdapter {
     this.events.emit('stateChange', next);
   }
 
+  private resolveOutputAudioMode(
+    providerConfig: OpenAIProviderConfig
+  ): 'provider-audio' | 'text-tts' {
+    const raw = (providerConfig as Record<string, unknown>).outputAudioMode;
+    return raw === 'text-tts' ? 'text-tts' : 'provider-audio';
+  }
+
+  private resolveSessionVoice(raw: string): string {
+    const normalized = raw.trim();
+    if (normalized.length > 0) {
+      return normalized;
+    }
+    return OPENAI_DEFAULT_SESSION_VOICE;
+  }
+
   private getProviderConfig(input: SessionInput): OpenAIProviderConfig {
     return parseOpenAIProviderConfig(input.providerConfig);
+  }
+
+  private getDecomposedProviderConfig(input: SessionInput): DecomposedProviderConfig {
+    return parseDecomposedProviderConfig(input.providerConfig);
+  }
+
+  private buildExternalTtsConfig(input: {
+    input: SessionInput;
+    providerConfig: OpenAIProviderConfig;
+    decomposedConfig: DecomposedProviderConfig;
+  }): SharedTtsConfig {
+    const language =
+      input.input.language ??
+      input.providerConfig.language ??
+      'en';
+    const config = resolveSharedTtsConfig({
+      provider: input.decomposedConfig.ttsProvider,
+      model: input.decomposedConfig.ttsModel,
+      voice: input.decomposedConfig.ttsVoice ?? input.input.voice,
+      language,
+      openaiApiKey:
+        input.decomposedConfig.openaiApiKey ?? input.providerConfig.apiKey,
+      deepgramApiKey: input.decomposedConfig.deepgramApiKey,
+      googleApiKey: input.decomposedConfig.googleApiKey,
+      cartesiaApiKey: input.decomposedConfig.cartesiaApiKey,
+      fishAudioApiKey: input.decomposedConfig.fishAudioApiKey,
+      rimeApiKey: input.decomposedConfig.rimeApiKey,
+      kokoroEndpoint: input.decomposedConfig.kokoroEndpoint,
+      pocketTtsEndpoint: input.decomposedConfig.pocketTtsEndpoint,
+      localEndpoint: input.decomposedConfig.localEndpoint,
+      localTtsStreamingIntervalSec:
+        input.decomposedConfig.localTtsStreamingIntervalSec,
+      voiceRefAudio: input.decomposedConfig.voiceRefAudio,
+      voiceRefText: input.decomposedConfig.voiceRefText,
+      googleChirpEndpoint: input.decomposedConfig.googleChirpEndpoint,
+      cartesiaTtsWsUrl: input.decomposedConfig.cartesiaTtsWsUrl,
+      fishTtsWsUrl: input.decomposedConfig.fishTtsWsUrl,
+      rimeTtsWsUrl: input.decomposedConfig.rimeTtsWsUrl,
+    });
+    if (config.provider === 'deepgram') {
+      throw new Error(
+        'realtime-text-tts mode does not support deepgram segment synthesis. '
+          + 'Set decomposed TTS provider to local/openai/cartesia/fish/rime/google-chirp/kokoro/pocket-tts.'
+      );
+    }
+    return config;
   }
 
   private updateOutputSampleRateFromSession(session: unknown): void {

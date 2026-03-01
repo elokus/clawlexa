@@ -35,6 +35,19 @@ export interface PromptVersion {
   createdAt: number;
 }
 
+export interface ToolCatalogEntry {
+  name: string;
+  label: string;
+  description: string;
+  source: 'core' | 'manifest';
+  selectable: boolean;
+}
+
+export interface PromptSettingsCatalog {
+  wakeWords: string[];
+  tools: ToolCatalogEntry[];
+}
+
 /**
  * Fetch all prompts with metadata
  */
@@ -128,6 +141,29 @@ export async function updateMetadata(
   });
   if (!res.ok) {
     throw new Error(`Failed to update metadata: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateName(
+  id: string,
+  name: string
+): Promise<{ success: boolean; promptId: string; name: string }> {
+  const res = await fetch(`${API_BASE}/api/prompts/${encodeURIComponent(id)}/name`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update prompt name: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPromptSettingsCatalog(): Promise<PromptSettingsCatalog> {
+  const res = await fetch(`${API_BASE}/api/prompts/catalog`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch prompt settings catalog: ${res.status}`);
   }
   return res.json();
 }

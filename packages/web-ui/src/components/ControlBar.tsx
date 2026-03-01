@@ -1,7 +1,6 @@
 import { usePromptsState } from '../stores';
 import type { ProfileId, AudioMode } from '../hooks/useAudioSession';
 import type { AgentState } from '../types';
-import { VoiceIndicator } from './VoiceIndicator';
 import { RecordButton } from './RecordButton';
 
 interface ControlBarProps {
@@ -114,7 +113,12 @@ export function ControlBar({
 
       {/* Center — Visualizer + Mic */}
       <div className="flex-1 flex items-center justify-center gap-3">
-        <VoiceIndicator state={agentState} size="md" />
+        <span className={`w-2.5 h-2.5 rounded-full transition-colors ${
+          agentState === 'speaking' ? 'bg-green-500 animate-pulse' :
+          agentState === 'listening' ? 'bg-blue-500 animate-pulse' :
+          agentState === 'thinking' ? 'bg-purple-500 animate-pulse' :
+          'bg-muted-foreground/30'
+        }`} />
 
         {isMaster ? (
           <button

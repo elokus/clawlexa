@@ -57,6 +57,7 @@ import {
   saveVoice,
   deleteVoice,
 } from '../voice/voices.js';
+import { listToolCatalog } from '../tools/catalog.js';
 import {
   fetchRuntimeProviderCatalogFromAuthProfiles,
   getRuntimeConfigManifest,
@@ -1114,6 +1115,29 @@ async function handleWebhook(
     return;
   }
 
+  // GET /api/prompts/catalog - Prompt settings catalog (wake words + tools)
+  if (req.method === 'GET' && req.url === '/api/prompts/catalog') {
+    try {
+      const wakeWords = Array.from(
+        new Set(
+          Object.values(profiles)
+            .map((profile) => profile.wakeWord)
+            .filter((value) => typeof value === 'string' && value.trim().length > 0)
+        )
+      ).sort((a, b) => a.localeCompare(b));
+
+      const tools = await listToolCatalog();
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ wakeWords, tools }));
+    } catch (error) {
+      console.error('[API] Error fetching prompt catalog:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch prompt catalog' }));
+    }
+    return;
+  }
+
   // GET /api/prompts/:id - Get prompt config + active version content
   const promptMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'GET' && promptMatch) {
@@ -1258,6 +1282,35 @@ async function handleWebhook(
         console.error('[API] Error updating metadata:', error);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to update metadata' }));
+      }
+    });
+    return;
+  }
+
+  // PUT /api/prompts/:id/name - Update prompt display name
+  const nameMatch = req.url?.match(/^\/api\/prompts\/([a-zA-Z0-9_-]+)\/name$/);
+  if (req.method === 'PUT' && nameMatch) {
+    const promptId = nameMatch[1]!;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { name } = JSON.parse(body) as { name?: string };
+        const trimmedName = typeof name === 'string' ? name.trim() : '';
+        if (!trimmedName) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'name is required' }));
+          return;
+        }
+
+        await updatePromptConfig(promptId, { name: trimmedName });
+        console.log(`[API] Updated name for ${promptId}: ${trimmedName}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, promptId, name: trimmedName }));
+      } catch (error) {
+        console.error('[API] Error updating prompt name:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to update prompt name' }));
       }
     });
     return;

@@ -23,6 +23,10 @@ export class AudioController {
   private onAudio: AudioSendFn | null = null;
   private onError: ((error: Error) => void) | null = null;
 
+  // Audio analysis (visualization)
+  private micAnalyser: AnalyserNode | null = null;
+  private speakerAnalyser: AnalyserNode | null = null;
+
   // Playback
   private playbackContext: AudioContext | null = null;
   private playbackQueue: ArrayBuffer[] = [];
@@ -92,8 +96,14 @@ export class AudioController {
         }
       };
 
-      // Connect: microphone -> worklet (no output, we just capture)
-      this.sourceNode.connect(this.workletNode);
+      // Create analyser for mic visualization (pass-through, does not alter audio)
+      this.micAnalyser = this.context.createAnalyser();
+      this.micAnalyser.fftSize = 256;
+      this.micAnalyser.smoothingTimeConstant = 0.8;
+
+      // Connect: microphone -> analyser -> worklet
+      this.sourceNode.connect(this.micAnalyser);
+      this.micAnalyser.connect(this.workletNode);
 
       // Initialize playback context
       this.playbackContext = new AudioContext({
@@ -120,6 +130,11 @@ export class AudioController {
       this.workletNode = null;
     }
 
+    if (this.micAnalyser) {
+      this.micAnalyser.disconnect();
+      this.micAnalyser = null;
+    }
+
     if (this.sourceNode) {
       this.sourceNode.disconnect();
       this.sourceNode = null;
@@ -144,6 +159,8 @@ export class AudioController {
     this.playbackStartTime = 0;
     this.samplesScheduled = 0;
     this.stopAllSources();
+
+    this.speakerAnalyser = null;
 
     if (this.playbackContext) {
       this.playbackContext.close();
@@ -237,10 +254,11 @@ export class AudioController {
       );
       audioBuffer.getChannelData(0).set(float32);
 
-      // Create buffer source
+      // Create buffer source, route through analyser for visualization
       const source = this.playbackContext.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(this.playbackContext.destination);
+      this.ensureSpeakerAnalyser();
+      source.connect(this.speakerAnalyser ?? this.playbackContext.destination);
 
       // Calculate when to start this buffer
       const currentTime = this.playbackContext.currentTime;
@@ -303,6 +321,7 @@ export class AudioController {
     this.playbackStartTime = 0;
     this.isPlaying = false;
     this.stopAllSources();
+    this.speakerAnalyser = null;
 
     if (this.playbackContext) {
       const oldContext = this.playbackContext;
@@ -314,10 +333,36 @@ export class AudioController {
   }
 
   /**
+   * Get the mic AnalyserNode for visualization.
+   */
+  getMicAnalyser(): AnalyserNode | null {
+    return this.micAnalyser;
+  }
+
+  /**
+   * Get the speaker AnalyserNode for visualization.
+   */
+  getSpeakerAnalyser(): AnalyserNode | null {
+    return this.speakerAnalyser;
+  }
+
+  /**
    * Check if capture is active.
    */
   isCapturing(): boolean {
     return this.context !== null && this.context.state === 'running';
+  }
+
+  /**
+   * Ensure speaker analyser exists when playback context is available.
+   */
+  private ensureSpeakerAnalyser(): void {
+    if (this.playbackContext && !this.speakerAnalyser) {
+      this.speakerAnalyser = this.playbackContext.createAnalyser();
+      this.speakerAnalyser.fftSize = 256;
+      this.speakerAnalyser.smoothingTimeConstant = 0.8;
+      this.speakerAnalyser.connect(this.playbackContext.destination);
+    }
   }
 
   /**

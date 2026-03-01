@@ -66,6 +66,9 @@ export interface Message {
   parts: MessagePart[];
   createdAt: number;
   ttfbMs?: number;
+  audioRoundtripMs?: number;
+  sttMs?: number;
+  llmMs?: number;
   itemId?: string;
   order?: number;
   generatedText?: string;
@@ -89,6 +92,10 @@ export interface SessionState {
   goal?: string;
   profile?: string;
   messages: Message[];
+  pendingTurnLatency?: {
+    sttMs?: number;
+    llmMs?: number;
+  };
   children: string[];
 }
 
@@ -263,6 +270,7 @@ interface UnifiedSessionsStore {
   setPromptContent: (content: string) => void;
   savePromptVersion: () => Promise<void>;
   setPromptActiveVersion: (version: string) => Promise<void>;
+  updatePromptName: (id: string, name: string) => Promise<void>;
   updatePromptMetadata: (id: string, metadata: PromptInfo['metadata']) => Promise<void>;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -396,6 +404,9 @@ function buildVoiceTimelineFromMessages(messages: Message[]): TimelineItem[] {
           role: message.role as 'user' | 'assistant',
           content,
           ttfbMs: message.ttfbMs,
+          audioRoundtripMs: message.audioRoundtripMs,
+          sttMs: message.sttMs,
+          llmMs: message.llmMs,
           generatedContent,
           spokenContent,
           spokenChars: message.spokenChars,
@@ -1008,6 +1019,39 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
         (s.sessionTree?.id === sessionId && s.sessionTree?.type === 'voice');
       const lastMessage = messages[messages.length - 1];
       const isAssistantMessage = lastMessage?.role === 'assistant';
+      let pendingTurnLatency = { ...(session.pendingTurnLatency ?? {}) };
+      const hasPendingTurnLatency = (): boolean =>
+        typeof pendingTurnLatency.sttMs === 'number' ||
+        typeof pendingTurnLatency.llmMs === 'number';
+      const consumePendingTurnLatency = (): Partial<Message> => {
+        if (!hasPendingTurnLatency()) {
+          return {};
+        }
+        const updates: Partial<Message> = {};
+        if (typeof pendingTurnLatency.sttMs === 'number') {
+          updates.sttMs = pendingTurnLatency.sttMs;
+        }
+        if (typeof pendingTurnLatency.llmMs === 'number') {
+          updates.llmMs = pendingTurnLatency.llmMs;
+        }
+        pendingTurnLatency = {};
+        return updates;
+      };
+      const attachPendingTurnLatency = (message: Message): Message => ({
+        ...message,
+        ...consumePendingTurnLatency(),
+      });
+      const stashPendingTurnLatency = (updates: {
+        sttMs?: number | null;
+        llmMs?: number | null;
+      }): void => {
+        if (typeof updates.sttMs === 'number' && typeof pendingTurnLatency.sttMs !== 'number') {
+          pendingTurnLatency.sttMs = updates.sttMs;
+        }
+        if (typeof updates.llmMs === 'number' && typeof pendingTurnLatency.llmMs !== 'number') {
+          pendingTurnLatency.llmMs = updates.llmMs;
+        }
+      };
       const findMessageInsertIndexByOrder = (order?: number): number | null => {
         const targetOrder = toOrderValue(order);
         if (targetOrder === null) return null;
@@ -1164,7 +1208,10 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               generatedText: deltaText,
               spokenFinalized: false,
             };
-            insertMessage(created, findMessageInsertIndexByOrder(event.order));
+            insertMessage(
+              attachPendingTurnLatency(created),
+              findMessageInsertIndexByOrder(event.order)
+            );
             break;
           }
 
@@ -1189,7 +1236,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             setTextForMessage(messages.length - 1, displayText);
           } else {
             // Create new assistant message
-            messages.push({
+            messages.push(attachPendingTurnLatency({
               id: generateId(),
               role: 'assistant',
               parts: [{ type: 'text', text: spokenFirstVoiceSession ? '' : deltaText }],
@@ -1197,7 +1244,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               order: event.order,
               generatedText: deltaText,
               spokenFinalized: false,
-            });
+            }));
           }
           break;
         }
@@ -1242,7 +1289,10 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               ),
               spokenFinalized: false,
             };
-            insertMessage(created, findMessageInsertIndexByOrder(event.order));
+            insertMessage(
+              attachPendingTurnLatency(created),
+              findMessageInsertIndexByOrder(event.order)
+            );
             break;
           }
 
@@ -1292,7 +1342,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               precision: event.precision,
               spokenFinalized: false,
             };
-            messages.push(created);
+            messages.push(attachPendingTurnLatency(created));
             break;
           }
 
@@ -1347,7 +1397,10 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
               spokenFinalized: true,
               pending: false,
             };
-            insertMessage(created, findMessageInsertIndexByOrder(event.order));
+            insertMessage(
+              attachPendingTurnLatency(created),
+              findMessageInsertIndexByOrder(event.order)
+            );
             break;
           }
 
@@ -1418,12 +1471,12 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             lastMessage.parts.push(toolPart);
             messages[messages.length - 1] = { ...lastMessage };
           } else {
-            messages.push({
+            messages.push(attachPendingTurnLatency({
               id: generateId(),
               role: 'assistant',
               parts: [toolPart],
               createdAt: Date.now(),
-            });
+            }));
           }
           break;
         }
@@ -1439,12 +1492,12 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             lastMessage.parts.push(resultPart);
             messages[messages.length - 1] = { ...lastMessage };
           } else {
-            messages.push({
+            messages.push(attachPendingTurnLatency({
               id: generateId(),
               role: 'assistant',
               parts: [resultPart],
               createdAt: Date.now(),
-            });
+            }));
           }
           break;
         }
@@ -1463,12 +1516,12 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
             }
             messages[messages.length - 1] = { ...lastMessage };
           } else {
-            messages.push({
+            messages.push(attachPendingTurnLatency({
               id: generateId(),
               role: 'assistant',
               parts: [reasoningPart],
               createdAt: Date.now(),
-            });
+            }));
           }
           break;
         }
@@ -1502,13 +1555,39 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
           break;
 
         case 'latency': {
-          if (event.stage !== 'tts') break;
-          const firstAudioLatencyMs = event.details?.firstAudioLatencyMs;
-          if (typeof firstAudioLatencyMs !== 'number' || !Number.isFinite(firstAudioLatencyMs)) {
-            break;
+          let ttfbMs: number | null = null;
+          let audioRoundtripMs: number | null = null;
+          let sttMs: number | null = null;
+          let llmMs: number | null = null;
+
+          if (event.stage === 'tts') {
+            const firstAudioLatencyMs = event.details?.firstAudioLatencyMs;
+            if (
+              typeof firstAudioLatencyMs === 'number' &&
+              Number.isFinite(firstAudioLatencyMs)
+            ) {
+              const segmentIndex = event.details?.segmentIndex;
+              if (!(typeof segmentIndex === 'number' && segmentIndex > 1)) {
+                ttfbMs = Math.max(0, Math.round(firstAudioLatencyMs));
+              }
+            }
+          } else if (
+            event.stage === 'turn' &&
+            event.details?.metric === 'input-audio-to-first-audio'
+          ) {
+            audioRoundtripMs = Math.max(0, Math.round(event.durationMs));
+          } else if (event.stage === 'stt') {
+            sttMs = Math.max(0, Math.round(event.durationMs));
+          } else if (event.stage === 'llm') {
+            llmMs = Math.max(0, Math.round(event.durationMs));
           }
-          const segmentIndex = event.details?.segmentIndex;
-          if (typeof segmentIndex === 'number' && segmentIndex > 1) {
+
+          if (
+            ttfbMs === null &&
+            audioRoundtripMs === null &&
+            sttMs === null &&
+            llmMs === null
+          ) {
             break;
           }
 
@@ -1522,12 +1601,41 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
 
           if (targetIndex >= 0) {
             const target = messages[targetIndex]!;
-            if (typeof target.ttfbMs !== 'number') {
+            const shouldUpdateTtfb =
+              ttfbMs !== null && typeof target.ttfbMs !== 'number';
+            const shouldUpdateRoundtrip =
+              audioRoundtripMs !== null &&
+              typeof target.audioRoundtripMs !== 'number';
+            const shouldUpdateStt =
+              sttMs !== null && typeof target.sttMs !== 'number';
+            const shouldUpdateLlm =
+              llmMs !== null && typeof target.llmMs !== 'number';
+            if (
+              shouldUpdateTtfb ||
+              shouldUpdateRoundtrip ||
+              shouldUpdateStt ||
+              shouldUpdateLlm
+            ) {
+              const latencyUpdates: Partial<Message> = {};
+              if (shouldUpdateTtfb && ttfbMs !== null) {
+                latencyUpdates.ttfbMs = ttfbMs;
+              }
+              if (shouldUpdateRoundtrip && audioRoundtripMs !== null) {
+                latencyUpdates.audioRoundtripMs = audioRoundtripMs;
+              }
+              if (shouldUpdateStt && sttMs !== null) {
+                latencyUpdates.sttMs = sttMs;
+              }
+              if (shouldUpdateLlm && llmMs !== null) {
+                latencyUpdates.llmMs = llmMs;
+              }
               messages[targetIndex] = {
                 ...target,
-                ttfbMs: Math.max(0, Math.round(firstAudioLatencyMs)),
+                ...latencyUpdates,
               };
             }
+          } else {
+            stashPendingTurnLatency({ sttMs, llmMs });
           }
           break;
         }
@@ -1542,7 +1650,11 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
           break;
       }
 
-      newSessions.set(sessionId, { ...session, messages });
+      newSessions.set(sessionId, {
+        ...session,
+        messages,
+        ...(hasPendingTurnLatency() ? { pendingTurnLatency } : { pendingTurnLatency: undefined }),
+      });
       return { sessions: newSessions };
     });
   },
@@ -1745,6 +1857,23 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
     } catch (error) {
       set({
         promptsError: error instanceof Error ? error.message : 'Failed to set active version',
+        promptsLoading: false,
+      });
+    }
+  },
+
+  updatePromptName: async (id, name) => {
+    const { prompts } = get();
+    set({ promptsLoading: true, promptsError: null });
+    try {
+      await promptsApi.updateName(id, name);
+      const updatedPrompts = prompts.map((p) =>
+        p.id === id ? { ...p, name } : p
+      );
+      set({ prompts: updatedPrompts, promptsLoading: false });
+    } catch (error) {
+      set({
+        promptsError: error instanceof Error ? error.message : 'Failed to update prompt name',
         promptsLoading: false,
       });
     }

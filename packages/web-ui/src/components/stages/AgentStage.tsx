@@ -12,7 +12,6 @@ import {
   ConversationScrollButton,
   ConversationEmptyState,
 } from '@/components/ai-elements/conversation';
-import { VoiceOrb } from '../VoiceOrb';
 import {
   Message,
   MessageContent,
@@ -49,6 +48,9 @@ interface DisplayMessage {
   parts: MessagePart[];
   timestamp: number;
   ttfbMs?: number;
+  audioRoundtripMs?: number;
+  sttMs?: number;
+  llmMs?: number;
   pending?: boolean;
   /** Full LLM-generated text (for spoken highlighting) */
   generatedText?: string;
@@ -85,6 +87,9 @@ function timelineToMessages(timeline: TimelineItem[]): DisplayMessage[] {
         parts: [{ type: 'text', text: transcript.content }],
         timestamp: transcript.timestamp,
         ttfbMs: transcript.ttfbMs,
+        audioRoundtripMs: transcript.audioRoundtripMs,
+        sttMs: transcript.sttMs,
+        llmMs: transcript.llmMs,
         pending: transcript.pending,
         generatedText: transcript.generatedContent,
         spokenWords: transcript.spokenWords,
@@ -133,6 +138,9 @@ function sessionToMessages(session: SessionState | undefined): DisplayMessage[] 
     parts: msg.parts,
     timestamp: msg.createdAt,
     ttfbMs: msg.ttfbMs,
+    audioRoundtripMs: msg.audioRoundtripMs,
+    sttMs: msg.sttMs,
+    llmMs: msg.llmMs,
   }));
 }
 
@@ -351,6 +359,7 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
                     pending={message.pending && idx === message.parts.length - 1}
                     turnKey={message.id}
                     wordCues={message.wordCues}
+                    spokenWords={message.spokenWords}
                   />
                 );
               }
@@ -396,9 +405,39 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
           }
         })}
       </MessageContent>
-      {!isUser && typeof message.ttfbMs === 'number' && (
+      {!isUser &&
+        (typeof message.ttfbMs === 'number' ||
+          typeof message.audioRoundtripMs === 'number' ||
+          typeof message.sttMs === 'number' ||
+          typeof message.llmMs === 'number') && (
         <div className="mt-1 pl-3 text-[10px] font-mono text-muted-foreground/70">
-          TTFB {message.ttfbMs} ms
+          {typeof message.ttfbMs === 'number' ? `TTFB ${message.ttfbMs} ms` : null}
+          {typeof message.ttfbMs === 'number' &&
+          typeof message.audioRoundtripMs === 'number'
+            ? ' · '
+            : null}
+          {typeof message.audioRoundtripMs === 'number'
+            ? `Audio RTT ${message.audioRoundtripMs} ms`
+            : null}
+          {typeof message.ttfbMs !== 'number' &&
+          typeof message.audioRoundtripMs !== 'number' &&
+          (typeof message.sttMs === 'number' || typeof message.llmMs === 'number')
+            ? 'Pipeline'
+            : null}
+          {(typeof message.sttMs === 'number' || typeof message.llmMs === 'number') && (
+            <span
+              className="ml-2 cursor-help rounded border border-border/60 px-1 text-[9px] text-muted-foreground"
+              title={
+                `STT: ${
+                  typeof message.sttMs === 'number' ? `${message.sttMs} ms` : 'n/a'
+                }\nLLM: ${
+                  typeof message.llmMs === 'number' ? `${message.llmMs} ms` : 'n/a'
+                }`
+              }
+            >
+              i
+            </span>
+          )}
         </div>
       )}
     </Message>
@@ -470,8 +509,7 @@ export function AgentStage({ stage }: AgentStageProps) {
         >
           {messages.length === 0 ? (
             isVoiceSession ? (
-              <div className="h-full flex flex-col items-center justify-center gap-6">
-                <VoiceOrb state={voiceState} />
+              <div className="h-full flex flex-col items-center justify-center gap-4">
                 <div className="text-center">
                   <div className="text-sm font-medium text-foreground/60 mb-1">
                     {voiceState === 'idle' ? 'Awaiting Input' :

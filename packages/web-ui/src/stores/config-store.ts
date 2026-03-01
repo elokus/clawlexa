@@ -169,6 +169,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
   activePage: 'agents',
   advancedVisible: {
     agents: false,
+    'tool-generator': false,
     'voice-pipeline': false,
     voices: false,
     audio: false,

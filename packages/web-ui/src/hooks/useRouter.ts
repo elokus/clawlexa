@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from 'react';
 
 export type SettingsPage =
   | 'agents'
+  | 'tool-generator'
   | 'voice-pipeline'
   | 'voices'
   | 'audio'
@@ -33,6 +34,7 @@ export interface RouterState {
  */
 const SETTINGS_PAGES: Set<string> = new Set([
   'agents',
+  'tool-generator',
   'voice-pipeline',
   'voices',
   'audio',

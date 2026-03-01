@@ -83,19 +83,29 @@ export function SettingsVoicePipeline() {
   const toggleAdvanced = useConfigStore((s) => s.toggleAdvanced);
 
   const manifest = catalog?.manifest;
-  const modeOptions = manifest?.modes ?? ['voice-to-voice', 'decomposed'];
+  const modeOptions = manifest?.modes ?? ['voice-to-voice', 'realtime-text-tts', 'decomposed'];
   const realtimeProviderPath = manifest?.realtimeProviderPath ?? 'voice.voiceToVoice.provider';
   const realtimeProviders = manifest?.realtimeProviders ?? [];
 
+  const isDecomposed = config?.voice.mode === 'decomposed';
+  const isRealtimeTextTts = config?.voice.mode === 'realtime-text-tts';
+  const isPipelineMode = isDecomposed || isRealtimeTextTts;
+
   const selectedRealtimeProviderId = config
-    ? asString(getPathValue(config, realtimeProviderPath), config.voice.voiceToVoice.provider)
+    ? isRealtimeTextTts
+      ? 'openai-realtime'
+      : asString(getPathValue(config, realtimeProviderPath), config.voice.voiceToVoice.provider)
     : '';
   const selectedRealtimeProvider =
     realtimeProviders.find((p) => p.id === selectedRealtimeProviderId) ??
     realtimeProviders[0];
-
-  const isDecomposed = config?.voice.mode === 'decomposed';
   const authProfileNames = catalog?.authProfileNames ?? [];
+
+  const visibleStages = isDecomposed
+    ? manifest?.decomposedStages ?? []
+    : isRealtimeTextTts
+      ? (manifest?.decomposedStages ?? []).filter((stage) => stage.id === 'tts')
+      : [];
 
   const handleRealtimeProviderChange = useCallback(
     (nextProviderId: string) => {
@@ -160,6 +170,38 @@ export function SettingsVoicePipeline() {
     [config, catalog, updateMany]
   );
 
+  const handleModeChange = useCallback(
+    (nextMode: string) => {
+      if (!config) return;
+      const updates: Array<{ path: string; value: unknown }> = [
+        { path: 'voice.mode', value: nextMode },
+      ];
+
+      if (nextMode === 'realtime-text-tts') {
+        const openaiProvider = realtimeProviders.find((provider) => provider.id === 'openai-realtime');
+        updates.push({ path: realtimeProviderPath, value: 'openai-realtime' });
+        if (openaiProvider) {
+          for (const field of openaiProvider.fields) {
+            if (field.kind !== 'model' && field.kind !== 'voice') continue;
+            const current = asString(getPathValue(config, field.path));
+            if (field.kind === 'model') {
+              const options = asModelList(catalog, field.catalogKey);
+              const next = pickMatchingOrFirst(options, current, current);
+              if (next) updates.push({ path: field.path, value: next });
+            } else {
+              const voiceOptions = asVoiceList(catalog, field.catalogKey).map((voice) => voice.id);
+              const next = pickMatchingOrFirst(voiceOptions, current, current);
+              if (next) updates.push({ path: field.path, value: next });
+            }
+          }
+        }
+      }
+
+      updateMany(updates);
+    },
+    [config, catalog, realtimeProviders, realtimeProviderPath, updateMany]
+  );
+
   if (!config) return null;
 
   if (catalogError) {
@@ -183,7 +225,7 @@ export function SettingsVoicePipeline() {
         <SettingsField label="Mode">
           <select
             value={config.voice.mode}
-            onChange={(e) => updatePath('voice.mode', e.target.value)}
+            onChange={(e) => handleModeChange(e.target.value)}
           >
             {modeOptions.map((mode) => (
               <option key={mode} value={mode}>{mode}</option>
@@ -191,7 +233,7 @@ export function SettingsVoicePipeline() {
           </select>
         </SettingsField>
 
-        {!isDecomposed ? (
+        {!isPipelineMode ? (
           <SettingsField label="Provider">
             <select
               value={selectedRealtimeProvider?.id ?? selectedRealtimeProviderId}
@@ -204,7 +246,14 @@ export function SettingsVoicePipeline() {
           </SettingsField>
         ) : (
           <SettingsField label="Pipeline">
-            <input value="stt -> llm -> tts" readOnly />
+            <input
+              value={
+                isDecomposed
+                  ? 'stt -> llm -> tts'
+                  : 'realtime(stt+vad+llm) -> tts'
+              }
+              readOnly
+            />
           </SettingsField>
         )}
 
@@ -293,7 +342,7 @@ export function SettingsVoicePipeline() {
       )}
 
       {/* Decomposed Stage Cards */}
-      {isDecomposed && (manifest?.decomposedStages ?? []).map((stage) => {
+      {visibleStages.map((stage) => {
         const selectedProviderId = asString(getPathValue(config, stage.providerPath));
         const selectedProvider =
           stage.providers.find((p) => p.id === selectedProviderId) ??
@@ -425,8 +474,8 @@ export function SettingsVoicePipeline() {
           columns={1}
         >
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted-foreground)', lineHeight: 1.6 }}>
-            {isDecomposed
-              ? `Pipeline: ${(manifest?.decomposedStages ?? []).map((s) => s.id.toUpperCase()).join(' -> ')}`
+            {isPipelineMode
+              ? `Pipeline: ${visibleStages.map((s) => s.id.toUpperCase()).join(' -> ')}`
               : `Provider: ${selectedRealtimeProvider?.id ?? 'unknown'}`
             }
             {'\n'}Manifest providers: {realtimeProviders.map((p) => p.id).join(', ')}

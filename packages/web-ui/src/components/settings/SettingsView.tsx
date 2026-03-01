@@ -7,6 +7,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { SettingsSidebar } from './SettingsSidebar';
 import { SaveBar } from './SaveBar';
 import { SettingsAgents } from './SettingsAgents';
+import { SettingsToolGenerator } from './SettingsToolGenerator';
 import { SettingsVoicePipeline } from './SettingsVoicePipeline';
 import { SettingsVoices } from './SettingsVoices';
 import { SettingsAudio } from './SettingsAudio';
@@ -19,6 +20,10 @@ const PAGE_META: Record<SettingsPage, { title: string; description: string }> = 
   agents: {
     title: 'Agents',
     description: 'Voice profiles, prompts, voice pipeline, and tool configuration.',
+  },
+  'tool-generator': {
+    title: 'Tool Generator',
+    description: 'Generate and register tool manifests (placeholder page).',
   },
   'voice-pipeline': {
     title: 'Default Pipeline',
@@ -50,6 +55,8 @@ function PageContent({ page }: { page: SettingsPage }) {
   switch (page) {
     case 'agents':
       return <SettingsAgents />;
+    case 'tool-generator':
+      return <SettingsToolGenerator />;
     case 'voice-pipeline':
       return <SettingsVoicePipeline />;
     case 'voices':

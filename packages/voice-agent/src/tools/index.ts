@@ -59,6 +59,48 @@ export type ToolName =
   | 'background_task'
   | DirectTerminalToolName;
 
+export interface ToolCatalogEntry {
+  name: string;
+  label: string;
+  description: string;
+  source: 'core' | 'manifest';
+  selectable: boolean;
+}
+
+function coreTool(name: ToolName, label: string, description: string): ToolCatalogEntry {
+  return {
+    name,
+    label,
+    description,
+    source: 'core',
+    selectable: true,
+  };
+}
+
+export const CORE_TOOL_CATALOG: readonly ToolCatalogEntry[] = [
+  coreTool('web_search', 'Web Search', 'Search the web for current information.'),
+  coreTool('add_todo', 'Add Todo', 'Create a new todo item.'),
+  coreTool('view_todos', 'View Todos', 'List todo items.'),
+  coreTool('delete_todo', 'Delete Todo', 'Remove a todo item by ID.'),
+  coreTool('control_light', 'Control Light', 'Control smart lights (power, brightness, color).'),
+  coreTool('deep_thinking', 'Deep Thinking', 'Delegate complex planning and analysis.'),
+  coreTool('set_timer', 'Set Timer', 'Set a timer or reminder.'),
+  coreTool('list_timers', 'List Timers', 'Show active timers.'),
+  coreTool('cancel_timer', 'Cancel Timer', 'Cancel an active timer.'),
+  coreTool('check_coding_session', 'Check Coding Session', 'Check status of coding sessions.'),
+  coreTool('send_session_feedback', 'Send Session Feedback', 'Send feedback/instructions to a coding session.'),
+  coreTool('stop_coding_session', 'Stop Coding Session', 'Stop a coding session.'),
+  coreTool('view_past_sessions', 'View Past Sessions', 'Review completed coding sessions.'),
+  coreTool('developer_session', 'Developer Session', 'Start a delegated coding workflow.'),
+  coreTool('background_task', 'Background Task', 'Run a long-running delegated task in the background.'),
+  coreTool('open_claude', 'Open Claude', 'Open a direct Claude terminal session.'),
+  coreTool('open_codex', 'Open Codex', 'Open a direct Codex terminal session.'),
+  coreTool('dictate_to_session', 'Dictate to Session', 'Send input to an existing terminal session.'),
+  coreTool('read_session', 'Read Session', 'Read output from an existing terminal session.'),
+  coreTool('close_session', 'Close Session', 'Close a terminal session.'),
+  coreTool('arrange_window', 'Arrange Window', 'Arrange a session window on screen.'),
+] as const;
+
 /**
  * Options for creating tools with injected dependencies.
  */

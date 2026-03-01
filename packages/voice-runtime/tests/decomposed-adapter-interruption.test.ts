@@ -509,17 +509,17 @@ describe('DecomposedAdapter interruption hardening', () => {
     await adapter.disconnect();
   });
 
-  test('starts local TTS warmup on connect and prefers model-load API', async () => {
+  test('starts local TTS warmup on connect and runs speech warmup after model preload API', async () => {
     const adapter = new DecomposedAdapter();
     const adapterAny = adapter as unknown as {
-      warmupLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
+      preloadLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
       warmupLocalTtsViaSpeechRequest: (...args: unknown[]) => Promise<void>;
     };
 
     let modelLoadWarmupCalls = 0;
     let speechWarmupCalls = 0;
 
-    adapterAny.warmupLocalTtsViaModelLoadApi = async () => {
+    adapterAny.preloadLocalTtsViaModelLoadApi = async () => {
       modelLoadWarmupCalls += 1;
       return true;
     };
@@ -540,22 +540,22 @@ describe('DecomposedAdapter interruption hardening', () => {
     );
 
     await waitFor(() => modelLoadWarmupCalls === 1, 300);
-    expect(speechWarmupCalls).toBe(0);
+    await waitFor(() => speechWarmupCalls === 1, 300);
 
     await adapter.disconnect();
   });
 
-  test('falls back to local speech warmup when model-load API warmup is unavailable', async () => {
+  test('falls back to local speech warmup when model preload API is unavailable', async () => {
     const adapter = new DecomposedAdapter();
     const adapterAny = adapter as unknown as {
-      warmupLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
+      preloadLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
       warmupLocalTtsViaSpeechRequest: (...args: unknown[]) => Promise<void>;
     };
 
     let modelLoadWarmupCalls = 0;
     let speechWarmupCalls = 0;
 
-    adapterAny.warmupLocalTtsViaModelLoadApi = async () => {
+    adapterAny.preloadLocalTtsViaModelLoadApi = async () => {
       modelLoadWarmupCalls += 1;
       return false;
     };
@@ -581,17 +581,51 @@ describe('DecomposedAdapter interruption hardening', () => {
     await adapter.disconnect();
   });
 
+  test('awaits pending local TTS warmup before local segment synthesis', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      interruptionGeneration: number;
+      speakSegment: (text: string, turnGeneration: number) => Promise<unknown>;
+      waitForLocalTtsWarmupIfNeeded: () => Promise<void>;
+    };
+
+    await adapter.connect(
+      createInput({
+        providerConfig: {
+          llmProvider: 'openai',
+          sttProvider: 'openai',
+          ttsProvider: 'local',
+          openaiApiKey: 'test-key',
+          ttsModel: 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16',
+        },
+      })
+    );
+
+    let waitCalled = 0;
+    adapterAny.waitForLocalTtsWarmupIfNeeded = async () => {
+      waitCalled += 1;
+      throw new Error('warmup-wait-sentinel');
+    };
+
+    await expect(
+      adapterAny.speakSegment('Hallo Welt.', adapterAny.interruptionGeneration)
+    ).rejects.toThrow('warmup-wait-sentinel');
+    expect(waitCalled).toBe(1);
+
+    await adapter.disconnect();
+  });
+
   test('does not trigger local TTS warmup for non-local TTS providers', async () => {
     const adapter = new DecomposedAdapter();
     const adapterAny = adapter as unknown as {
-      warmupLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
+      preloadLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
       warmupLocalTtsViaSpeechRequest: (...args: unknown[]) => Promise<void>;
     };
 
     let modelLoadWarmupCalls = 0;
     let speechWarmupCalls = 0;
 
-    adapterAny.warmupLocalTtsViaModelLoadApi = async () => {
+    adapterAny.preloadLocalTtsViaModelLoadApi = async () => {
       modelLoadWarmupCalls += 1;
       return true;
     };

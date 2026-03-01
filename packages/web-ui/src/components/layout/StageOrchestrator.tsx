@@ -160,13 +160,9 @@ export function StageOrchestrator() {
             )}
           </AnimatePresence>
 
-          {/* Floating voice orb card */}
-          <div className="voice-orb-card-float">
+          {/* Right sidebar — voice card + thread rail in flex column */}
+          <div className="right-sidebar">
             <VoiceOrbCard />
-          </div>
-
-          {/* Floating thread rail — pushed down below orb card */}
-          <div className="thread-rail-float">
             <ThreadRail />
           </div>
         </div>

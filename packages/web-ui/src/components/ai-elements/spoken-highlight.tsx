@@ -17,6 +17,8 @@ interface SpokenTextHighlightProps {
   turnKey?: string | number | null;
   /** Runtime-supplied canonical cue timeline (preferred over heuristic) */
   wordCues?: SpokenWordCue[];
+  /** Server-reported spoken word count for the turn */
+  spokenWords?: number;
 }
 
 /**
@@ -33,6 +35,7 @@ export function SpokenTextHighlight({
   pending,
   turnKey = null,
   wordCues,
+  spokenWords,
 }: SpokenTextHighlightProps) {
   const { voiceState } = useVoiceState();
   const audioControllerRef = useAudioControllerRef();
@@ -48,6 +51,14 @@ export function SpokenTextHighlight({
     () => wordCuesToCueEndMs(wordCues, words.length),
     [words, wordCues]
   );
+  const safeSpokenWords = Number.isFinite(spokenWords ?? NaN)
+    ? Math.max(0, Math.min(words.length, spokenWords as number))
+    : 0;
+  const cueWordCount = wordCueEndMs?.length ?? 0;
+  const hasCueOrServerBoundary = cueWordCount > 0 || safeSpokenWords > 0;
+  const highlightLimit = hasCueOrServerBoundary
+    ? Math.max(cueWordCount, safeSpokenWords)
+    : words.length;
 
   const highlightedCount = useSpokenHighlight({
     totalWords: words.length,
@@ -56,6 +67,7 @@ export function SpokenTextHighlight({
     audioController: audioControllerRef.current,
     turnKey,
     wordCueEndMs,
+    spokenWords: safeSpokenWords,
   });
 
   if (words.length === 0) {
@@ -65,19 +77,28 @@ export function SpokenTextHighlight({
   return (
     <div className="spoken-highlight-container">
       <span className="spoken-highlight">
-        {words.map((word, i) => (
-          <span
-            key={`${i}-${word}`}
-            className={cn(
-              'spoken-word',
-              i < highlightedCount && 'spoken',
-              i === highlightedCount && 'current',
-              i > highlightedCount && 'pending',
-            )}
-          >
-            {word}{' '}
-          </span>
-        ))}
+        {words.map((word, i) => {
+          const boundaryCompleted =
+            spokenFinalized &&
+            highlightedCount >= highlightLimit &&
+            highlightLimit < words.length;
+          const isSpoken = i < highlightedCount || (boundaryCompleted && i >= highlightLimit);
+          const isCurrent = i === highlightedCount && i < highlightLimit;
+          const isPending = !isSpoken && !isCurrent;
+          return (
+            <span
+              key={`${i}-${word}`}
+              className={cn(
+                'spoken-word',
+                isSpoken && 'spoken',
+                isCurrent && 'current',
+                isPending && 'pending',
+              )}
+            >
+              {word}{' '}
+            </span>
+          );
+        })}
       </span>
       {pending && <TypingIndicator />}
     </div>

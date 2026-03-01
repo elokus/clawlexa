@@ -94,10 +94,19 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
   if (!config || !effective) return null;
 
   const isDecomposed = effective.mode === 'decomposed';
+  const isRealtimeTextTts = effective.mode === 'realtime-text-tts';
+  const effectiveRealtimeProviderId = isRealtimeTextTts
+    ? 'openai-realtime'
+    : effective.voiceToVoice.provider;
   const stages = manifest?.decomposedStages ?? [];
+  const visibleStages = isDecomposed
+    ? stages
+    : isRealtimeTextTts
+      ? stages.filter((stage) => stage.id === 'tts')
+      : [];
   const realtimeProviders = manifest?.realtimeProviders ?? [];
   const selectedRealtimeProvider =
-    realtimeProviders.find((p) => p.id === effective.voiceToVoice.provider) ??
+    realtimeProviders.find((p) => p.id === effectiveRealtimeProviderId) ??
     realtimeProviders[0];
   const realtimeModelField = selectedRealtimeProvider?.fields.find(
     (field) => field.kind === 'model' && field.path === 'voice.voiceToVoice.model'
@@ -180,6 +189,7 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
               onChange={(e) => handleOverride('mode', e.target.value)}
             >
               <option value="voice-to-voice">voice-to-voice</option>
+              <option value="realtime-text-tts">realtime-text-tts</option>
               <option value="decomposed">decomposed</option>
             </select>
           </SettingsField>
@@ -190,9 +200,11 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
             <ResetButton visible={isOverridden('voiceToVoice.provider')} onClick={() => handleClear('voiceToVoice.provider')} />
             <SettingsField label="Provider">
               <select
-                value={effective.voiceToVoice.provider}
+                value={effectiveRealtimeProviderId}
                 onChange={(e) => {
-                  const nextProviderId = e.target.value;
+                  const nextProviderId = isRealtimeTextTts
+                    ? 'openai-realtime'
+                    : e.target.value;
                   handleOverride('voiceToVoice.provider', nextProviderId);
 
                   const providerManifest = realtimeProviders.find((p) => p.id === nextProviderId);
@@ -219,7 +231,10 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
                   }
                 }}
               >
-                {realtimeProviders.map((p) => (
+                {(isRealtimeTextTts
+                  ? realtimeProviders.filter((p) => p.id === 'openai-realtime')
+                  : realtimeProviders
+                ).map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
@@ -276,7 +291,7 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
       </SettingsSection>
 
       {/* Decomposed Stages */}
-      {isDecomposed && stages.map((stage) => {
+      {visibleStages.map((stage) => {
         const stageKey = stage.id as 'stt' | 'llm' | 'tts';
         const effectiveStage = effective.decomposed[stageKey];
         const providerValue = 'provider' in effectiveStage ? effectiveStage.provider : '';

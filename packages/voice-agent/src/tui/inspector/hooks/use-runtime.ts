@@ -27,18 +27,20 @@ function getProfile(name: string): AgentProfile {
 
 function buildConfigDisplay(profile: AgentProfile, providerOverride?: string): ResolvedConfigDisplay {
   const config = resolveVoiceRuntimeConfig(profile);
+  const isDecomposed = config.mode === 'decomposed';
+  const isRealtimeTextTts = config.mode === 'realtime-text-tts';
   return {
     provider: (providerOverride ?? config.provider) as VoiceProviderName,
     mode: config.mode,
     model: config.model,
     voice: config.voice ?? profile.voice,
     language: config.language,
-    sttProvider: config.mode === 'decomposed' ? config.decomposedSttProvider : undefined,
-    sttModel: config.mode === 'decomposed' ? config.decomposedSttModel : undefined,
-    llmProvider: config.mode === 'decomposed' ? config.decomposedLlmProvider : undefined,
-    llmModel: config.mode === 'decomposed' ? config.decomposedLlmModel : undefined,
-    ttsProvider: config.mode === 'decomposed' ? config.decomposedTtsProvider : undefined,
-    ttsModel: config.mode === 'decomposed' ? config.decomposedTtsModel : undefined,
+    sttProvider: isDecomposed ? config.decomposedSttProvider : undefined,
+    sttModel: isDecomposed ? config.decomposedSttModel : undefined,
+    llmProvider: isDecomposed ? config.decomposedLlmProvider : undefined,
+    llmModel: isDecomposed ? config.decomposedLlmModel : undefined,
+    ttsProvider: isDecomposed || isRealtimeTextTts ? config.decomposedTtsProvider : undefined,
+    ttsModel: isDecomposed || isRealtimeTextTts ? config.decomposedTtsModel : undefined,
   };
 }
 
