@@ -45,6 +45,41 @@ const voiceConfigSchema: z.ZodType<VoiceConfigDocument> = z.object({
         mode: z.enum(RUNTIME_VOICE_MODES).optional(),
         voice: z.string().optional(),
         provider: z.enum(RUNTIME_VOICE_TO_VOICE_PROVIDERS).optional(),
+        decomposed: z
+          .object({
+            stt: z
+              .object({
+                provider: z.enum(RUNTIME_STT_PROVIDERS).optional(),
+                model: z.string().optional(),
+                language: z.string().optional(),
+                authProfile: z.string().optional(),
+              })
+              .optional(),
+            llm: z
+              .object({
+                provider: z.enum(RUNTIME_LLM_PROVIDERS).optional(),
+                model: z.string().optional(),
+                authProfile: z.string().optional(),
+              })
+              .optional(),
+            tts: z
+              .object({
+                provider: z.enum(RUNTIME_TTS_PROVIDERS).optional(),
+                model: z.string().optional(),
+                voice: z.string().optional(),
+                authProfile: z.string().optional(),
+                voiceRef: z.string().optional(),
+              })
+              .optional(),
+          })
+          .optional(),
+        voiceToVoice: z
+          .object({
+            provider: z.enum(RUNTIME_VOICE_TO_VOICE_PROVIDERS).optional(),
+            model: z.string().optional(),
+            voice: z.string().optional(),
+          })
+          .optional(),
       })
     ),
     voiceToVoice: z.object({
@@ -76,6 +111,7 @@ const voiceConfigSchema: z.ZodType<VoiceConfigDocument> = z.object({
         model: z.string(),
         voice: z.string(),
         authProfile: z.string().optional(),
+        voiceRef: z.string().optional(),
       }),
     }),
     turn: z.object({

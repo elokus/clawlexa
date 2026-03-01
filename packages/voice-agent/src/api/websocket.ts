@@ -20,6 +20,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { CliSessionsRepository, SessionMessagesRepository } from '../db/index.js';
 import { eventRecorder } from './event-recorder.js';
 import { logStreamEvent } from '../logging/session-logger.js';
+import type { WSMessage, WSMessageType } from '@voiceclaw/voice-runtime';
 
 // Repository instance for persisting stream events
 const messagesRepo = new SessionMessagesRepository();
@@ -63,45 +64,6 @@ export interface ClientCommand {
   command: 'start_session' | 'stop_session' | 'start_service' | 'stop_service' | 'set_audio_mode';
   profile?: string;
   mode?: 'web' | 'local';
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// WebSocket Message Types (Phase 5: Simplified Protocol)
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Core Types (7):
-// - welcome            : Client identity + service state on connect
-// - stream_chunk       : All agent message events (AI SDK format)
-// - session_tree_update: Session hierarchy changes
-// - state_change       : Voice UI state (listening/thinking/speaking)
-// - master_changed     : Multi-client coordination
-// - service_state_changed: Service active/dormant + audio mode
-// - audio_control      : Audio playback control (start/stop/interrupt)
-//
-// Lifecycle Types (3):
-// - session_started/ended: Voice session lifecycle
-// - cli_session_deleted  : Terminal session cleanup
-// - error                : Error messages
-//
-export type WSMessageType =
-  // Core unified protocol
-  | 'welcome'               // Client identity on connect
-  | 'stream_chunk'          // All agent events (AI SDK format: text-delta, tool-call, etc.)
-  | 'session_tree_update'   // Session hierarchy for ThreadRail
-  | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
-  | 'master_changed'        // Multi-client master coordination
-  | 'service_state_changed' // Service active/dormant + audio mode
-  | 'audio_control'         // Audio playback control (start/stop/interrupt)
-  // Lifecycle events
-  | 'session_started'       // Voice session activated
-  | 'session_ended'         // Voice session deactivated
-  | 'cli_session_deleted'   // Terminal session removed
-  | 'error';                // Error messages
-
-interface WSMessage {
-  type: WSMessageType;
-  payload: unknown;
-  timestamp: number;
 }
 
 let wss: WebSocketServer | null = null;

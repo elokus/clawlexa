@@ -2,6 +2,25 @@
 // VΞRTΞX Types
 // ═══════════════════════════════════════════════════════════════════════════
 
+import type {
+  MasterChangedPayload,
+  ServiceStateChangedPayload,
+  SessionStartedPayload,
+  StateChangePayload as RuntimeStateChangePayload,
+  WelcomePayload,
+  WSMessage,
+  WSMessageType,
+} from '@voiceclaw/voice-runtime';
+
+export type {
+  MasterChangedPayload,
+  ServiceStateChangedPayload,
+  SessionStartedPayload,
+  WelcomePayload,
+  WSMessage,
+  WSMessageType,
+};
+
 export type AgentState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
@@ -56,74 +75,7 @@ export interface AgentProfile {
   voice: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// WebSocket Message Types (Phase 5: Simplified Protocol)
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Core types (7):
-// - welcome            : Client identity + service state on connect
-// - stream_chunk       : All agent message events (AI SDK format)
-// - session_tree_update: Session hierarchy changes
-// - state_change       : Voice UI state (listening/thinking/speaking)
-// - master_changed     : Multi-client coordination
-// - service_state_changed: Service active/dormant + audio mode
-// - audio_control      : Audio playback control (start/stop/interrupt)
-//
-// Lifecycle types (3):
-// - session_started/ended: Voice session lifecycle
-// - cli_session_deleted  : Terminal session cleanup
-// - error                : Error messages
-//
-export type WSMessageType =
-  // Core unified protocol
-  | 'welcome'               // Client identity on connect
-  | 'stream_chunk'          // All agent events (AI SDK format: text-delta, tool-call, etc.)
-  | 'session_tree_update'   // Session hierarchy for ThreadRail
-  | 'state_change'          // Voice UI state (listening/thinking/speaking/idle)
-  | 'master_changed'        // Multi-client master coordination
-  | 'service_state_changed' // Service active/dormant + audio mode
-  | 'audio_control'         // Audio playback control (start/stop/interrupt)
-  // Lifecycle events
-  | 'session_started'       // Voice session activated
-  | 'session_ended'         // Voice session deactivated
-  | 'cli_session_deleted'   // Terminal session removed
-  | 'error';                // Error messages
-
-export interface WSMessage {
-  type: WSMessageType;
-  payload: unknown;
-  timestamp: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// WebSocket Payload Types (Phase 5: Simplified)
-// ═══════════════════════════════════════════════════════════════════════════
-
-export interface WelcomePayload {
-  clientId: string;
-  isMaster: boolean;
-  serviceActive: boolean;
-  audioMode: 'web' | 'local';
-}
-
-export interface ServiceStateChangedPayload {
-  active: boolean;
-  mode: 'web' | 'local';
-}
-
-export interface MasterChangedPayload {
-  masterId: string;
-}
-
-export interface StateChangePayload {
-  state: AgentState;
-  profile: string | null;
-}
-
-export interface SessionStartedPayload {
-  sessionId?: string;
-  profile?: string;
-}
+export type StateChangePayload = RuntimeStateChangePayload;
 
 // Activity Block types for UI rendering
 export type ActivityBlockType = 'reasoning' | 'tool' | 'content' | 'error';

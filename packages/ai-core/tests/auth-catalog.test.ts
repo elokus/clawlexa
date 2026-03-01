@@ -86,4 +86,14 @@ describe('ai-core voice auth catalog', () => {
       'mlx-community/Kokoro-82M-bf16'
     );
   });
+
+  it('includes gpt-realtime-1.5 in OpenAI realtime fallback models', async () => {
+    const catalog = await fetchRuntimeProviderCatalog({
+      openaiApiKey: '',
+      deepgramApiKey: '',
+      ultravoxApiKey: '',
+    });
+
+    expect(catalog.entries['openai-realtime']?.models).toContain('gpt-realtime-1.5');
+  });
 });

@@ -1,150 +1,38 @@
+import type {
+  ConfigFieldDescriptor,
+  ConfigFieldOption,
+  ConfigFieldType,
+  ProviderConfigSchema,
+  ProviderVoiceEntry,
+  RuntimeAuthProfilesDocument as AuthProfilesDocument,
+  RuntimeCatalogEntry,
+  RuntimeConfigManifest,
+  RuntimeDecomposedStageManifest,
+  RuntimeDecomposedStageProviderManifest,
+  RuntimeFieldBinding,
+  RuntimeRealtimeProviderManifest,
+  RuntimeVoiceConfigDocument as VoiceConfigDocument,
+  RuntimeVoiceMode as VoiceMode,
+} from '@voiceclaw/voice-runtime';
+
+export type {
+  ConfigFieldDescriptor,
+  ConfigFieldOption,
+  ConfigFieldType,
+  ProviderConfigSchema,
+  ProviderVoiceEntry,
+  AuthProfilesDocument,
+  RuntimeCatalogEntry,
+  RuntimeConfigManifest,
+  RuntimeDecomposedStageManifest,
+  RuntimeDecomposedStageProviderManifest,
+  RuntimeFieldBinding,
+  RuntimeRealtimeProviderManifest,
+  VoiceConfigDocument,
+  VoiceMode,
+};
+
 const API_BASE = process.env.PUBLIC_API_URL || '';
-
-export type VoiceMode = 'voice-to-voice' | 'decomposed';
-
-// Provider config schema types (mirrored from @voiceclaw/voice-runtime)
-export type ConfigFieldType = 'select' | 'number' | 'boolean' | 'string' | 'range';
-
-export interface ConfigFieldOption {
-  value: string;
-  label: string;
-}
-
-export interface ConfigFieldDescriptor {
-  key: string;
-  label: string;
-  type: ConfigFieldType;
-  group: 'vad' | 'advanced' | 'audio';
-  description?: string;
-  options?: ConfigFieldOption[];
-  min?: number;
-  max?: number;
-  step?: number;
-  defaultValue?: string | number | boolean;
-  dependsOn?: { field: string; value: string | boolean };
-}
-
-export interface ProviderVoiceEntry {
-  id: string;
-  name: string;
-  language?: string;
-  gender?: string;
-}
-
-export interface ProviderConfigSchema {
-  providerId: string;
-  displayName: string;
-  fields: ConfigFieldDescriptor[];
-  voices?: ProviderVoiceEntry[];
-}
-
-export interface VoiceConfigDocument {
-  voice: {
-    mode: VoiceMode;
-    language: string;
-    profileOverrides: Record<string, {
-      mode?: VoiceMode;
-      voice?: string;
-      provider?: string;
-      decomposed?: {
-        stt?: { provider?: string; model?: string; language?: string; authProfile?: string };
-        llm?: { provider?: string; model?: string; authProfile?: string };
-        tts?: { provider?: string; model?: string; voice?: string; authProfile?: string; voiceRef?: string };
-      };
-      voiceToVoice?: {
-        provider?: string;
-        model?: string;
-        voice?: string;
-      };
-    }>;
-    voiceToVoice: {
-      provider: string;
-      [key: string]: unknown;
-    };
-    decomposed: {
-      stt: { provider: string; model: string; language: string; authProfile?: string; [key: string]: unknown };
-      llm: { provider: string; model: string; authProfile?: string; [key: string]: unknown };
-      tts: { provider: string; model: string; voice: string; authProfile?: string; voiceRef?: string; [key: string]: unknown };
-    };
-    turn: {
-      strategy: 'provider-native' | 'layered';
-      silenceMs: number;
-      minSpeechMs: number;
-      minRms: number;
-      spokenHighlightMsPerWord: number;
-      spokenHighlightPunctuationPauseMs: number;
-      preferProviderTimestamps: boolean;
-      llmCompletion: {
-        enabled: boolean;
-        shortTimeoutMs: number;
-        longTimeoutMs: number;
-        shortReprompt: string;
-        longReprompt: string;
-      };
-    };
-    providerSettings?: Record<string, Record<string, unknown>>;
-  };
-}
-
-export interface AuthProfilesDocument {
-  profiles: Record<string, {
-    provider: string;
-    type: 'api-key' | 'oauth';
-    enabled: boolean;
-    apiKey?: string;
-    oauth?: {
-      clientId?: string;
-      clientSecret?: string;
-      refreshToken?: string;
-      scopes?: string[];
-    };
-  }>;
-  defaults: Partial<Record<string, string>>;
-}
-
-export interface RuntimeCatalogEntry {
-  models?: string[];
-  voices?: ProviderVoiceEntry[];
-}
-
-export interface RuntimeFieldBinding {
-  path: string;
-  label: string;
-  kind: 'model' | 'voice' | 'auth' | 'string' | 'select';
-  catalogKey?: string;
-  placeholder?: string;
-  options?: Array<{ value: string; label: string }>;
-}
-
-export interface RuntimeRealtimeProviderManifest {
-  id: string;
-  label: string;
-  fields: RuntimeFieldBinding[];
-}
-
-export interface RuntimeDecomposedStageProviderManifest {
-  id: string;
-  label: string;
-  modelCatalogKey?: string;
-  voiceCatalogKey?: string;
-}
-
-export interface RuntimeDecomposedStageManifest {
-  id: 'stt' | 'llm' | 'tts';
-  label: string;
-  providerPath: string;
-  modelPath: string;
-  voicePath?: string;
-  authPath: string;
-  providers: RuntimeDecomposedStageProviderManifest[];
-}
-
-export interface RuntimeConfigManifest {
-  modes: VoiceMode[];
-  realtimeProviderPath: string;
-  realtimeProviders: RuntimeRealtimeProviderManifest[];
-  decomposedStages: RuntimeDecomposedStageManifest[];
-}
 
 export interface VoiceCatalog {
   manifest: RuntimeConfigManifest;

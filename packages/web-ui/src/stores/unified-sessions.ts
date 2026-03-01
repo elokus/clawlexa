@@ -14,6 +14,10 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/shallow';
 import type {
+  AISDKStreamEvent,
+  SpokenPrecision,
+} from '@voiceclaw/voice-runtime';
+import type {
   AgentState,
   RealtimeEvent,
   SessionTreeNode,
@@ -43,10 +47,10 @@ export type SessionType = 'voice' | 'subagent' | 'terminal';
 
 /** Re-export for convenience */
 export type { SessionStatus, AgentState, ActivityBlock, ReasoningBlock, ToolBlock, ContentBlock, ErrorBlock };
+export type { AISDKStreamEvent, SpokenPrecision };
 
 /** Message role in AI SDK format */
 export type MessageRole = 'user' | 'assistant' | 'system';
-export type SpokenPrecision = 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
 
 /** Message part types following AI SDK format */
 export type MessagePart =
@@ -87,71 +91,6 @@ export interface SessionState {
   messages: Message[];
   children: string[];
 }
-
-/** AI SDK stream event types */
-export type AISDKStreamEvent =
-  | {
-      type: 'text-delta';
-      textDelta: string;
-      itemId?: string;
-      order?: number;
-      channel?: 'generated' | 'spoken';
-    }
-  | {
-      type: 'spoken-delta';
-      textDelta: string;
-      itemId?: string;
-      order?: number;
-      spokenChars?: number;
-      spokenWords?: number;
-      playbackMs?: number;
-      precision?: SpokenPrecision;
-      wordCues?: SpokenWordCue[];
-      wordCueUpdate?: SpokenWordCueUpdate;
-    }
-  | {
-      type: 'spoken-progress';
-      itemId: string;
-      spokenChars: number;
-      spokenWords: number;
-      playbackMs: number;
-      precision: SpokenPrecision;
-    }
-  | {
-      type: 'spoken-final';
-      text: string;
-      itemId?: string;
-      order?: number;
-      spokenChars?: number;
-      spokenWords?: number;
-      playbackMs?: number;
-      precision?: SpokenPrecision;
-      wordCues?: SpokenWordCue[];
-      wordCueUpdate?: SpokenWordCueUpdate;
-    }
-  | { type: 'user-transcript'; text: string; itemId?: string; order?: number } // Custom extension for voice user messages
-  // Placeholders for message ordering (custom extension for voice sessions)
-  | { type: 'user-placeholder'; itemId: string; previousItemId?: string; order?: number }
-  | { type: 'assistant-placeholder'; itemId: string; previousItemId?: string; order?: number }
-  | { type: 'tool-call'; toolName: string; toolCallId: string; input: unknown }
-  | { type: 'tool-result'; toolName: string; toolCallId: string; output: unknown }
-  | { type: 'reasoning-start' }
-  | { type: 'reasoning-delta'; text: string }
-  | { type: 'reasoning-end'; text: string; durationMs?: number }
-  | { type: 'start' }
-  | { type: 'start-step' }
-  | { type: 'finish-step'; finishReason?: string; usage?: Record<string, number> }
-  | { type: 'finish'; finishReason: string }
-  | { type: 'error'; error: string }
-  | {
-      type: 'latency';
-      stage: 'stt' | 'llm' | 'tts' | 'turn' | 'tool' | 'connection';
-      durationMs: number;
-      provider?: string;
-      model?: string;
-      details?: Record<string, unknown>;
-    }
-  | { type: 'process-status'; processName: string; sessionId: string; status: 'completed' | 'error'; summary?: string };
 
 /** Re-export timeline types for message-handler compatibility */
 export type { TimelineItem, TranscriptItem, ToolItem };
@@ -1413,10 +1352,12 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
           }
 
           const target = messages[messageIdx]!;
-          const generatedText =
+          const previousGenerated =
             target.generatedText ??
             readTextFromMessage(messageIdx);
           const spokenText = event.text;
+          const generatedText =
+            previousGenerated.length > spokenText.length ? previousGenerated : spokenText;
           const currentText = readTextFromMessage(messageIdx);
           const displayText = resolveDisplayText(spokenText, generatedText, currentText);
           const nextWordCues = applyWordCueUpdate(
@@ -1426,7 +1367,7 @@ export const useUnifiedSessionsStore = create<UnifiedSessionsStore>((set, get) =
           messages[messageIdx] = {
             ...target,
             order: event.order ?? target.order,
-            generatedText: spokenText,
+            generatedText,
             spokenText,
             spokenChars: event.spokenChars ?? spokenText.length,
             spokenWords: event.spokenWords ?? target.spokenWords,

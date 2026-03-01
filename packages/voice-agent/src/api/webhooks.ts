@@ -56,7 +56,6 @@ import {
   getVoice,
   saveVoice,
   deleteVoice,
-  type VoiceMeta,
 } from '../voice/voices.js';
 import {
   fetchRuntimeProviderCatalogFromAuthProfiles,

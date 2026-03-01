@@ -2,28 +2,7 @@
  * API Types - Shared types for WebSocket and HTTP API communication.
  */
 
-/**
- * WebSocket message types.
- */
-export type WSMessageType =
-  | 'state_change'
-  | 'transcript'
-  | 'audio_start'
-  | 'audio_end'
-  | 'error'
-  | 'session_started'
-  | 'session_ended'
-  | 'tool_start'
-  | 'tool_end'
-  | 'item_pending'
-  | 'item_completed'
-  | 'cli_session_update'
-  | 'cli_session_created'
-  | 'cli_session_output'
-  | 'subagent_activity'
-  | 'welcome'
-  | 'master_changed'
-  | 'request_master';
+export type { WSMessageType } from '@voiceclaw/voice-runtime';
 
 /**
  * Payload for session handoff events.

@@ -32,6 +32,11 @@ function withCurrent(options: string[], current: string): string[] {
   return options.includes(current) ? options : [current, ...options];
 }
 
+function pickMatchingOrFirst(options: string[], current: string): string {
+  if (options.length === 0) return current;
+  return options.includes(current) ? current : options[0]!;
+}
+
 // ─── Reset Button ──────────────────────────────────────────────────────
 
 function ResetButton({ visible, onClick }: { visible: boolean; onClick: () => void }) {
@@ -91,6 +96,21 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
   const isDecomposed = effective.mode === 'decomposed';
   const stages = manifest?.decomposedStages ?? [];
   const realtimeProviders = manifest?.realtimeProviders ?? [];
+  const selectedRealtimeProvider =
+    realtimeProviders.find((p) => p.id === effective.voiceToVoice.provider) ??
+    realtimeProviders[0];
+  const realtimeModelField = selectedRealtimeProvider?.fields.find(
+    (field) => field.kind === 'model' && field.path === 'voice.voiceToVoice.model'
+  );
+  const realtimeVoiceField = selectedRealtimeProvider?.fields.find(
+    (field) => field.kind === 'voice'
+  );
+  const realtimeModelOptions = realtimeModelField?.catalogKey
+    ? withCurrent(asModelList(catalog, realtimeModelField.catalogKey), effective.voiceToVoice.model)
+    : [];
+  const realtimeVoiceOptions = realtimeVoiceField?.catalogKey
+    ? asVoiceList(catalog, realtimeVoiceField.catalogKey)
+    : [];
 
   return (
     <div className="agent-voice-pipeline">
@@ -171,7 +191,33 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
             <SettingsField label="Provider">
               <select
                 value={effective.voiceToVoice.provider}
-                onChange={(e) => handleOverride('voiceToVoice.provider', e.target.value)}
+                onChange={(e) => {
+                  const nextProviderId = e.target.value;
+                  handleOverride('voiceToVoice.provider', nextProviderId);
+
+                  const providerManifest = realtimeProviders.find((p) => p.id === nextProviderId);
+                  if (!providerManifest) return;
+
+                  const modelField = providerManifest.fields.find(
+                    (field) => field.kind === 'model' && field.path === 'voice.voiceToVoice.model'
+                  );
+                  if (modelField?.catalogKey) {
+                    const modelOptions = asModelList(catalog, modelField.catalogKey);
+                    const nextModel = pickMatchingOrFirst(modelOptions, effective.voiceToVoice.model);
+                    if (nextModel) {
+                      handleOverride('voiceToVoice.model', nextModel);
+                    }
+                  }
+
+                  const voiceField = providerManifest.fields.find((field) => field.kind === 'voice');
+                  if (voiceField?.catalogKey) {
+                    const voiceOptions = asVoiceList(catalog, voiceField.catalogKey).map((voice) => voice.id);
+                    const nextVoice = pickMatchingOrFirst(voiceOptions, effective.voiceToVoice.voice);
+                    if (nextVoice) {
+                      handleOverride('voiceToVoice.voice', nextVoice);
+                    }
+                  }
+                }}
               >
                 {realtimeProviders.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
@@ -182,15 +228,49 @@ export function AgentVoicePipeline({ agentName }: { agentName: string }) {
         )}
 
         {!isDecomposed && (
+          <div className={`agent-pipeline-field-wrap ${isOverridden('voiceToVoice.model') ? 'agent-pipeline-overridden' : 'agent-pipeline-inherited'}`}>
+            <ResetButton visible={isOverridden('voiceToVoice.model')} onClick={() => handleClear('voiceToVoice.model')} />
+            <SettingsField label="Model">
+              {realtimeModelOptions.length > 0 ? (
+                <select
+                  value={effective.voiceToVoice.model}
+                  onChange={(e) => handleOverride('voiceToVoice.model', e.target.value)}
+                >
+                  {realtimeModelOptions.map((model) => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={effective.voiceToVoice.model}
+                  onChange={(e) => handleOverride('voiceToVoice.model', e.target.value)}
+                />
+              )}
+            </SettingsField>
+          </div>
+        )}
+
+        {!isDecomposed && (
           <div className={`agent-pipeline-field-wrap ${isOverridden('voiceToVoice.voice') ? 'agent-pipeline-overridden' : 'agent-pipeline-inherited'}`}>
             <ResetButton visible={isOverridden('voiceToVoice.voice')} onClick={() => handleClear('voiceToVoice.voice')} />
-            <SettingsField label="Voice">
-              <input
-                type="text"
+            {realtimeVoiceOptions.length > 0 ? (
+              <VoiceSelector
+                label="Voice"
+                voices={realtimeVoiceOptions}
                 value={effective.voiceToVoice.voice}
-                onChange={(e) => handleOverride('voiceToVoice.voice', e.target.value)}
+                onChange={(voiceId) => handleOverride('voiceToVoice.voice', voiceId)}
+                languageFilter={config.voice.language}
               />
-            </SettingsField>
+            ) : (
+              <SettingsField label="Voice">
+                <input
+                  type="text"
+                  value={effective.voiceToVoice.voice}
+                  onChange={(e) => handleOverride('voiceToVoice.voice', e.target.value)}
+                />
+              </SettingsField>
+            )}
           </div>
         )}
       </SettingsSection>

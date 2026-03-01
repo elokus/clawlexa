@@ -509,6 +509,105 @@ describe('DecomposedAdapter interruption hardening', () => {
     await adapter.disconnect();
   });
 
+  test('starts local TTS warmup on connect and prefers model-load API', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      warmupLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
+      warmupLocalTtsViaSpeechRequest: (...args: unknown[]) => Promise<void>;
+    };
+
+    let modelLoadWarmupCalls = 0;
+    let speechWarmupCalls = 0;
+
+    adapterAny.warmupLocalTtsViaModelLoadApi = async () => {
+      modelLoadWarmupCalls += 1;
+      return true;
+    };
+    adapterAny.warmupLocalTtsViaSpeechRequest = async () => {
+      speechWarmupCalls += 1;
+    };
+
+    await adapter.connect(
+      createInput({
+        providerConfig: {
+          llmProvider: 'openai',
+          sttProvider: 'openai',
+          ttsProvider: 'local',
+          openaiApiKey: 'test-key',
+          ttsModel: 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16',
+        },
+      })
+    );
+
+    await waitFor(() => modelLoadWarmupCalls === 1, 300);
+    expect(speechWarmupCalls).toBe(0);
+
+    await adapter.disconnect();
+  });
+
+  test('falls back to local speech warmup when model-load API warmup is unavailable', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      warmupLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
+      warmupLocalTtsViaSpeechRequest: (...args: unknown[]) => Promise<void>;
+    };
+
+    let modelLoadWarmupCalls = 0;
+    let speechWarmupCalls = 0;
+
+    adapterAny.warmupLocalTtsViaModelLoadApi = async () => {
+      modelLoadWarmupCalls += 1;
+      return false;
+    };
+    adapterAny.warmupLocalTtsViaSpeechRequest = async () => {
+      speechWarmupCalls += 1;
+    };
+
+    await adapter.connect(
+      createInput({
+        providerConfig: {
+          llmProvider: 'openai',
+          sttProvider: 'openai',
+          ttsProvider: 'local',
+          openaiApiKey: 'test-key',
+          ttsModel: 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16',
+        },
+      })
+    );
+
+    await waitFor(() => speechWarmupCalls === 1, 300);
+    expect(modelLoadWarmupCalls).toBe(1);
+
+    await adapter.disconnect();
+  });
+
+  test('does not trigger local TTS warmup for non-local TTS providers', async () => {
+    const adapter = new DecomposedAdapter();
+    const adapterAny = adapter as unknown as {
+      warmupLocalTtsViaModelLoadApi: (...args: unknown[]) => Promise<boolean>;
+      warmupLocalTtsViaSpeechRequest: (...args: unknown[]) => Promise<void>;
+    };
+
+    let modelLoadWarmupCalls = 0;
+    let speechWarmupCalls = 0;
+
+    adapterAny.warmupLocalTtsViaModelLoadApi = async () => {
+      modelLoadWarmupCalls += 1;
+      return true;
+    };
+    adapterAny.warmupLocalTtsViaSpeechRequest = async () => {
+      speechWarmupCalls += 1;
+    };
+
+    await adapter.connect(createInput());
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(modelLoadWarmupCalls).toBe(0);
+    expect(speechWarmupCalls).toBe(0);
+
+    await adapter.disconnect();
+  });
+
   test('drains pending Deepgram flush text when final flush event is missing', async () => {
     const adapter = new DecomposedAdapter();
     const adapterAny = adapter as unknown as {

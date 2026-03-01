@@ -119,6 +119,24 @@ export {
   type RuntimeVoiceMode,
   type RuntimeVoiceToVoiceProvider,
 } from './control-plane.js';
+export {
+  createStreamChunk,
+  type AudioControlPayload,
+  type AISDKFinishStepUsage,
+  type AISDKStreamEvent,
+  type MasterChangedPayload,
+  type SpokenPrecision,
+  type ServiceStateChangedPayload,
+  type SessionStartedPayload,
+  type StateChangePayload,
+  type StreamChunkMessage,
+  type StreamChunkPayload,
+  type StreamSessionMeta,
+  type StreamSessionStatus,
+  type WelcomePayload,
+  type WSMessage,
+  type WSMessageType,
+} from './stream-protocol.js';
 export { InterruptionTracker } from './runtime/interruption-tracker.js';
 export { TypedEventEmitter } from './runtime/typed-emitter.js';
 export { VoiceSessionImpl } from './runtime/voice-session.js';

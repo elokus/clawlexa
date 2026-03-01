@@ -3,6 +3,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { MessageRole } from './index';
+import type {
+  SpokenPrecision,
+  SpokenWordCue,
+  SpokenWordCueUpdate,
+} from '@voiceclaw/voice-runtime';
+
+export type { SpokenPrecision, SpokenWordCue, SpokenWordCueUpdate } from '@voiceclaw/voice-runtime';
 
 export type TimelineItemType = 'transcript' | 'tool';
 
@@ -10,19 +17,6 @@ export interface BaseTimelineItem {
   id: string;
   type: TimelineItemType;
   timestamp: number;
-}
-
-export interface SpokenWordCue {
-  word: string;
-  startMs: number;
-  endMs: number;
-  source: 'provider' | 'synthetic';
-  timeBase: 'utterance';
-}
-
-export interface SpokenWordCueUpdate {
-  mode: 'append' | 'replace';
-  cues: SpokenWordCue[];
 }
 
 export interface TranscriptItem extends BaseTimelineItem {
@@ -35,7 +29,7 @@ export interface TranscriptItem extends BaseTimelineItem {
   spokenChars?: number;
   spokenWords?: number;
   playbackMs?: number;
-  precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
+  precision?: SpokenPrecision;
   wordCues?: SpokenWordCue[];
   spokenFinalized?: boolean;
   pending?: boolean;

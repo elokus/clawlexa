@@ -60,6 +60,7 @@ export interface RuntimeProviderCatalog {
 }
 
 const DEFAULT_OPENAI_REALTIME_MODELS = [
+  'gpt-realtime-1.5',
   'gpt-realtime-mini-2025-10-06',
   'gpt-realtime',
 ];

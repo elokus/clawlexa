@@ -1,8 +1,12 @@
 import type { IAudioTransport } from '../transport/types.js';
 import type {
+  LatencyMetric,
   RuntimeProviderName,
   RuntimeResolvedConfig,
   RuntimeVoiceMode,
+  SpokenWordCue,
+  SpokenWordCueUpdate,
+  SpokenWordTimestamp,
 } from '@voiceclaw/voice-runtime';
 
 export type AgentState = 'idle' | 'listening' | 'thinking' | 'speaking';
@@ -22,19 +26,6 @@ export interface VoiceRuntimeHistoryItem {
   role: 'user' | 'assistant' | 'system';
   content: Array<{ type: 'text'; text: string }>;
 }
-
-type SpokenWordCue = {
-  word: string;
-  startMs: number;
-  endMs: number;
-  source: 'provider' | 'synthetic';
-  timeBase: 'utterance';
-};
-
-type SpokenWordCueUpdate = {
-  mode: 'append' | 'replace';
-  cues: SpokenWordCue[];
-};
 
 export interface VoiceRuntimeEvents {
   stateChange: (state: AgentState) => void;
@@ -61,7 +52,7 @@ export interface VoiceRuntimeEvents {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
-      wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+      wordTimestamps?: SpokenWordTimestamp[];
       wordTimestampsTimeBase?: 'segment' | 'utterance';
       wordCues?: SpokenWordCue[];
       wordCueUpdate?: SpokenWordCueUpdate;
@@ -85,7 +76,7 @@ export interface VoiceRuntimeEvents {
       spokenWords?: number;
       playbackMs?: number;
       precision?: 'ratio' | 'segment' | 'aligned' | 'provider-word-timestamps';
-      wordTimestamps?: Array<{ word: string; startMs: number; endMs: number }>;
+      wordTimestamps?: SpokenWordTimestamp[];
       wordTimestampsTimeBase?: 'segment' | 'utterance';
       wordCues?: SpokenWordCue[];
       wordCueUpdate?: SpokenWordCueUpdate;
@@ -103,13 +94,7 @@ export interface VoiceRuntimeEvents {
   disconnected: () => void;
   toolStart: (name: string, args: Record<string, unknown>, callId?: string) => void;
   toolEnd: (name: string, result: string, callId?: string) => void;
-  latency: (metric: {
-    stage: 'stt' | 'llm' | 'tts' | 'turn' | 'tool' | 'connection';
-    durationMs: number;
-    provider?: string;
-    model?: string;
-    details?: Record<string, unknown>;
-  }) => void;
+  latency: (metric: LatencyMetric) => void;
 }
 
 export interface VoiceRuntime {

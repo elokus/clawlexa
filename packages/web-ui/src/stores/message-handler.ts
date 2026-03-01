@@ -15,38 +15,23 @@ import {
   type TranscriptItem,
   type ToolItem,
 } from './unified-sessions';
-import type { WSMessage } from '../types';
+import type {
+  MasterChangedPayload,
+  ServiceStateChangedPayload,
+  StateChangePayload,
+  WelcomePayload,
+  WSMessage,
+} from '../types';
 import { applyWordCueUpdate } from '../lib/spoken-cues';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types (Phase 5: Simplified Protocol)
 // ═══════════════════════════════════════════════════════════════════════════
 
-interface StateChangePayload {
-  state: 'idle' | 'listening' | 'thinking' | 'speaking';
-  profile: string | null;
-}
-
-interface WelcomePayload {
-  clientId: string;
-  isMaster: boolean;
-  serviceActive: boolean;
-  audioMode: 'web' | 'local';
-}
-
-interface ServiceStateChangedPayload {
-  active: boolean;
-  mode: 'web' | 'local';
-}
-
-interface MasterChangedPayload {
-  masterId: string;
-}
-
 interface SessionTreeUpdatePayload {
   tree?: {
     id: string;
-    type: 'voice' | 'orchestrator' | 'terminal';
+    type: 'voice' | 'subagent' | 'orchestrator' | 'terminal';
     status: string;
     goal: string;
     agent_name: string | null;
@@ -647,9 +632,12 @@ export function handleWebSocketMessage(msg: WSMessage): void {
                 event.wordCueUpdate
               );
               // `spoken-final` is the authoritative spoken output (possibly
-              // truncated by interruption). Keep generated content aligned with
-              // spoken text so overlays/highlighting stop at the spoken boundary.
-              const generatedContent = event.text;
+              // truncated by interruption). Keep spoken/display text anchored to
+              // that boundary, but do not clobber a longer generated transcript
+              // accumulated from text-delta events.
+              const previousGenerated = targetItem.generatedContent ?? targetItem.content ?? '';
+              const generatedContent =
+                previousGenerated.length > event.text.length ? previousGenerated : event.text;
               store.updateVoiceTimelineItem(targetItem.id, {
                 content: event.text,
                 generatedContent,

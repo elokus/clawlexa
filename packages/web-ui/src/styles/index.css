@@ -912,6 +912,41 @@ button:focus-visible {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   SPOKEN WORD HIGHLIGHTING
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.spoken-highlight-container {
+  line-height: 1.7;
+}
+
+.spoken-highlight {
+  display: inline;
+}
+
+.spoken-word {
+  display: inline;
+  transition: color 0.12s ease;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.spoken-word.spoken {
+  color: var(--foreground);
+  opacity: 1;
+}
+
+.spoken-word.current {
+  color: var(--color-blue);
+  opacity: 1;
+  text-shadow: 0 0 6px rgba(10, 132, 255, 0.35);
+}
+
+.spoken-word.pending {
+  color: var(--muted-foreground);
+  opacity: 0.55;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    BASE LAYER — shadcn/ui
    ═══════════════════════════════════════════════════════════════════════════ */
 

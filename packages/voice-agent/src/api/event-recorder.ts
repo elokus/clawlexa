@@ -16,7 +16,7 @@
  *   const scenario = eventRecorder.exportScenario('my-scenario', 'Description');
  */
 
-import type { WSMessageType } from './websocket.js';
+import type { WSMessageType } from '@voiceclaw/voice-runtime';
 
 export interface RecordedEvent {
   type: WSMessageType;

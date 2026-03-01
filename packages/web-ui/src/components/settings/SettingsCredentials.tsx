@@ -43,7 +43,10 @@ export function SettingsCredentials() {
     });
   };
 
-  const updateDefault = (provider: string, profileId: string | undefined) => {
+  const updateDefault = (
+    provider: keyof typeof authProfiles.defaults,
+    profileId: string | undefined
+  ) => {
     const next = { ...authProfiles.defaults };
     if (profileId) {
       next[provider] = profileId;
@@ -54,7 +57,9 @@ export function SettingsCredentials() {
   };
 
   // Collect unique providers from profiles
-  const providers = [...new Set(profileEntries.map(([, p]) => p.provider))].sort();
+  const providers = [...new Set(profileEntries.map(([, p]) => p.provider))].sort() as Array<
+    keyof typeof authProfiles.defaults
+  >;
 
   return (
     <>
