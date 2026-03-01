@@ -462,7 +462,7 @@ export function AgentStage({ stage }: AgentStageProps) {
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
     >
-      <Conversation className="flex-1 min-h-0">
+      <Conversation className="flex-1 min-h-0 pr-[320px]">
         <ConversationContent
           className={cn(
             messages.length === 0 ? 'h-full p-0' : 'gap-6 py-4 px-4'

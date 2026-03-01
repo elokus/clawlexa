@@ -8,6 +8,7 @@ import {
 } from '../../stores';
 import { HistoryPanel } from '../rails/HistoryPanel';
 import { ThreadRail } from '../rails/ThreadRail';
+import { VoiceOrbCard } from '../rails/VoiceOrbCard';
 import { AgentStage } from '../stages/AgentStage';
 import { TerminalStage } from '../stages/TerminalStage';
 import { GlassHUD } from '../overlays/GlassHUD';
@@ -130,7 +131,7 @@ export function StageOrchestrator() {
         </div>
       ) : (
         <div className="relative h-full w-full overflow-hidden">
-          {/* Main content - full width */}
+          {/* Main content - full width, messages constrained via CSS */}
           <div className="h-full w-full overflow-hidden">
             <AnimatePresence mode="wait">
               <ActiveStage key={stageKey} session={focusedSession} />
@@ -159,7 +160,12 @@ export function StageOrchestrator() {
             )}
           </AnimatePresence>
 
-          {/* Floating thread rail */}
+          {/* Floating voice orb card */}
+          <div className="voice-orb-card-float">
+            <VoiceOrbCard />
+          </div>
+
+          {/* Floating thread rail — pushed down below orb card */}
           <div className="thread-rail-float">
             <ThreadRail />
           </div>

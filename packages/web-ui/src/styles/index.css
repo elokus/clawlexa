@@ -798,12 +798,36 @@ button:focus-visible {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   FLOATING VOICE ORB CARD
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.voice-orb-card-float {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 300px;
+  z-index: 15;
+}
+
+.voice-orb-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px oklch(0 0 0 / 12%);
+}
+
+.dark .voice-orb-card {
+  box-shadow: 0 4px 24px oklch(0 0 0 / 30%);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    FLOATING THREAD RAIL
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .thread-rail-float {
   position: absolute;
-  top: 12px;
+  top: 240px;
   right: 12px;
   width: 300px;
   max-height: 55%;
