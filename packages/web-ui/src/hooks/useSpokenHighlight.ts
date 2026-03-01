@@ -17,7 +17,7 @@ interface UseSpokenHighlightOptions {
   wordCueEndMs?: number[];
   /**
    * Server-reported spoken word count for this turn.
-   * Used as a floor/completion boundary when cue timelines are shorter.
+   * Used only when cue timelines are unavailable.
    */
   spokenWords?: number;
   /** Fallback pace in ms/word when no cue timeline is provided */
@@ -25,6 +25,7 @@ interface UseSpokenHighlightOptions {
 }
 
 const DEFAULT_MS_PER_WORD = 340;
+const CUE_BOUNDARY_TOLERANCE_MS = 32;
 
 /**
  * Drives word-by-word highlighting from the client's AudioContext clock.
@@ -86,15 +87,17 @@ export function useSpokenHighlight({
     const cueTimeline =
       Array.isArray(wordCueEndMs) && wordCueEndMs.length > 0 ? wordCueEndMs : undefined;
     const cueWordCount = cueTimeline?.length ?? 0;
+    const hasCueTimeline = cueWordCount > 0;
     const clampedSpokenWords = clamp(
       Number.isFinite(spokenWords) ? (spokenWords as number) : 0,
       0,
       totalWords
     );
-    const hasCueOrServerBoundary = cueWordCount > 0 || clampedSpokenWords > 0;
-    const completionWordCount = hasCueOrServerBoundary
-      ? clamp(Math.max(cueWordCount, clampedSpokenWords), 0, totalWords)
-      : totalWords;
+    const completionWordCount = hasCueTimeline
+      ? clamp(cueWordCount, 0, totalWords)
+      : clampedSpokenWords > 0
+        ? clampedSpokenWords
+        : totalWords;
     const msPerWord = normalizePositive(fallbackMsPerWord, DEFAULT_MS_PER_WORD);
 
     const tick = () => {
@@ -122,9 +125,18 @@ export function useSpokenHighlight({
         ? countCuesForPlayback(cueTimeline, playbackMs)
         : Math.floor(playbackMs / msPerWord);
 
-      // Keep highlight in sync with server-side spoken progress when provided.
-      // This covers cases where cue timelines are temporarily incomplete.
-      nextWordCount = Math.max(nextWordCount, clampedSpokenWords);
+      // When runtime cues are present, they are authoritative for progression.
+      // Server spokenWords can be a completion boundary, not a per-frame cursor.
+      if (!hasCueTimeline) {
+        nextWordCount = Math.max(nextWordCount, clampedSpokenWords);
+      }
+
+      if (cueTimeline && cueTimeline.length > 0) {
+        const finalCueEndMs = cueTimeline[cueTimeline.length - 1] ?? 0;
+        if (playbackMs + CUE_BOUNDARY_TOLERANCE_MS >= finalCueEndMs) {
+          nextWordCount = Math.max(nextWordCount, completionWordCount);
+        }
+      }
 
       if (isFinalized && !hasPendingAudio) {
         // Audio fully drained — force-complete regardless of cue mode.

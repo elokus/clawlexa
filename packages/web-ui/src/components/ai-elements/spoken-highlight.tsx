@@ -55,10 +55,12 @@ export function SpokenTextHighlight({
     ? Math.max(0, Math.min(words.length, spokenWords as number))
     : 0;
   const cueWordCount = wordCueEndMs?.length ?? 0;
-  const hasCueOrServerBoundary = cueWordCount > 0 || safeSpokenWords > 0;
-  const highlightLimit = hasCueOrServerBoundary
-    ? Math.max(cueWordCount, safeSpokenWords)
-    : words.length;
+  const hasCueTimeline = cueWordCount > 0;
+  const highlightLimit = hasCueTimeline
+    ? cueWordCount
+    : safeSpokenWords > 0
+      ? safeSpokenWords
+      : words.length;
 
   const highlightedCount = useSpokenHighlight({
     totalWords: words.length,
@@ -67,7 +69,7 @@ export function SpokenTextHighlight({
     audioController: audioControllerRef.current,
     turnKey,
     wordCueEndMs,
-    spokenWords: safeSpokenWords,
+    spokenWords: hasCueTimeline ? undefined : safeSpokenWords,
   });
 
   if (words.length === 0) {

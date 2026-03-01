@@ -19,6 +19,12 @@ import {
 } from '@/components/ai-elements/message';
 import { SpokenTextHighlight } from '@/components/ai-elements/spoken-highlight';
 import { Loader } from '@/components/ai-elements/loader';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   useUnifiedSessionsStore,
@@ -425,18 +431,26 @@ function MessageBlock({ message, isLatest, childSessions, onNavigateToSession }:
             ? 'Pipeline'
             : null}
           {(typeof message.sttMs === 'number' || typeof message.llmMs === 'number') && (
-            <span
-              className="ml-2 cursor-help rounded border border-border/60 px-1 text-[9px] text-muted-foreground"
-              title={
-                `STT: ${
-                  typeof message.sttMs === 'number' ? `${message.sttMs} ms` : 'n/a'
-                }\nLLM: ${
-                  typeof message.llmMs === 'number' ? `${message.llmMs} ms` : 'n/a'
-                }`
-              }
-            >
-              i
-            </span>
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="ml-2 cursor-help rounded border border-border/60 px-1 text-[9px] text-muted-foreground hover:text-foreground"
+                    aria-label="Pipeline latency details"
+                  >
+                    i
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="whitespace-pre font-mono text-[10px] leading-tight">
+                  {`STT: ${
+                    typeof message.sttMs === 'number' ? `${message.sttMs} ms` : 'n/a'
+                  }\nLLM: ${
+                    typeof message.llmMs === 'number' ? `${message.llmMs} ms` : 'n/a'
+                  }`}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
       )}

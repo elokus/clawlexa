@@ -276,6 +276,7 @@ Hard-won patterns from development. Each entry: problem, fix, file reference.
 - **Echo prevention**: Don't send mic audio while agent is speaking/thinking. Fix: gate `sendBinary()` on `stateRef.current`. See `packages/web-ui/src/hooks/useAudioSession.ts`.
 - **Interruption handling**: Buffered TTS continues playing during barge-in. Fix: propagate `audio_interrupted` through transport layer to frontend `audioController.interrupt()`. See `packages/voice-agent/src/agent/voice-agent.ts`.
 - **Playback scheduling**: Checking `playbackStartTime < currentTime` resets scheduling in tight loops. Fix: check if scheduled END time is in the past. See `packages/web-ui/src/hooks/useAudioSession.ts`.
+- **Spoken highlight source of truth**: When `wordCues`/word timestamps are present, highlight progression must follow cue end-times only (ignore `spokenWords`/`spokenChars` as cursor drivers). `spoken-final` is for turn completion/truncation metadata, not per-word progression. Also force-complete highlighting when playback reaches the final cue boundary (small ms tolerance) to avoid the last word getting stuck. See `packages/web-ui/src/hooks/useSpokenHighlight.ts`, `packages/web-ui/src/components/ai-elements/spoken-highlight.tsx`.
 
 ### React
 
