@@ -71,7 +71,7 @@ export class VoiceSessionImpl implements VoiceSession {
     const configuredMsPerWord = turnConfig?.spokenHighlightMsPerWord;
     const minMsPerWord =
       typeof configuredMsPerWord === 'number' && configuredMsPerWord > 0
-        ? Math.max(100, configuredMsPerWord * 0.5)
+        ? Math.max(100, configuredMsPerWord)
         : undefined;
     const punctuationPauseMs =
       typeof turnConfig?.spokenHighlightPunctuationPauseMs === 'number' &&
